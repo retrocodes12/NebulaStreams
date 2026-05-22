@@ -1,6 +1,7 @@
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
+import { promisify } from 'node:util';
 
 import { config } from '../../config.js';
 import { PluginProviderAdapter } from './PluginProviderAdapter.js';
@@ -8,27 +9,32 @@ import { normalizePluginStreams } from '../normalizers/pluginStreamNormalizer.js
 import { withTimeout } from '../utils/timeout.js';
 
 const DEFAULT_SERVICE_URL = 'http://127.0.0.1:8787';
+const execFileAsync = promisify(execFile);
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const sharedState = {
+  child: null,
+  startPromise: null,
+  shutdownHandlerRegistered: false
+};
 
 export class ScraplingServiceAdapter extends PluginProviderAdapter {
   constructor({
     logger = console,
     serviceUrl = config.SCRAPLING_SERVICE_URL || DEFAULT_SERVICE_URL,
-    timeoutMs = config.SCRAPLING_SERVICE_TIMEOUT_MS || 14_000,
+    timeoutMs = config.SCRAPLING_SERVICE_TIMEOUT_MS || 32_000,
     autoStart = config.SCRAPLING_SERVICE_AUTOSTART !== false
   } = {}) {
     super({ id: 'scrapling', logger });
     this.serviceUrl = String(serviceUrl || DEFAULT_SERVICE_URL).replace(/\/+$/u, '');
     this.timeoutMs = timeoutMs;
     this.autoStart = autoStart;
-    this.child = null;
-    this.startPromise = null;
   }
 
   async getManifest() {
     return {
-      providers: ['scrapling-hdhub4u', 'scrapling-4khdhub']
+      providers: ['scrapling-hdhub4u', 'scrapling-4khdhub', 'uhdmovies']
     };
   }
 
@@ -81,11 +87,12 @@ export class ScraplingServiceAdapter extends PluginProviderAdapter {
   getProviderLabel(providerId) {
     if (providerId === 'scrapling-hdhub4u') return 'Scrapling HDHub4u';
     if (providerId === 'scrapling-4khdhub') return 'Scrapling 4KHDHub';
+    if (providerId === 'uhdmovies') return 'UHDMovies';
     return providerId;
   }
 
   async ensureService(signal = null) {
-    if (await this.isHealthy(signal)) {
+    if (await this.isHealthy()) {
       return;
     }
 
@@ -97,32 +104,62 @@ export class ScraplingServiceAdapter extends PluginProviderAdapter {
   }
 
   async isHealthy(signal = null) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5_000);
+    timeout.unref?.();
+
+    const onAbort = () => controller.abort(signal.reason);
+    if (signal) {
+      if (signal.aborted) {
+        clearTimeout(timeout);
+        return false;
+      }
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
+
     try {
-      const response = await fetch(`${this.serviceUrl}/health`, { signal });
+      const response = await fetch(`${this.serviceUrl}/health`, { signal: controller.signal });
       return response.ok;
     } catch {
       return false;
+    } finally {
+      clearTimeout(timeout);
+      signal?.removeEventListener?.('abort', onAbort);
     }
   }
 
   async startService(signal = null) {
-    if (this.startPromise) {
-      return this.startPromise;
+    if (sharedState.startPromise) {
+      return sharedState.startPromise;
     }
 
-    this.startPromise = this.spawnAndWait(signal).finally(() => {
-      this.startPromise = null;
+    if (await this.isHealthy()) {
+      return;
+    }
+
+    sharedState.startPromise = this.spawnAndWait(signal).finally(() => {
+      sharedState.startPromise = null;
     });
 
-    return this.startPromise;
+    return sharedState.startPromise;
   }
 
   async spawnAndWait(signal = null) {
-    if (!this.child || this.child.exitCode !== null) {
+    if (await this.isHealthy()) {
+      return;
+    }
+
+    await this.stopStaleSidecar();
+
+    if (await this.isHealthy()) {
+      return;
+    }
+
+    if (!sharedState.child || sharedState.child.exitCode !== null) {
       const scriptPath = path.resolve(process.cwd(), 'services/scrapling_service/server.py');
       const venvPython = path.resolve(process.cwd(), 'services/scrapling_service/.venv/bin/python');
       const pythonBin = String(process.env.SCRAPLING_PYTHON_BIN || (existsSync(venvPython) ? venvPython : 'python3')).trim() || 'python3';
-      this.child = spawn(pythonBin, [scriptPath], {
+      sharedState.child = spawn(pythonBin, [scriptPath], {
         cwd: process.cwd(),
         env: {
           ...process.env,
@@ -132,19 +169,23 @@ export class ScraplingServiceAdapter extends PluginProviderAdapter {
         stdio: ['ignore', 'pipe', 'pipe']
       });
 
-      this.child.stdout?.on('data', (chunk) => {
+      sharedState.child.stdout?.on('data', (chunk) => {
         this.logger.info?.('scrapling service stdout', { message: String(chunk).trim() });
       });
-      this.child.stderr?.on('data', (chunk) => {
-        this.logger.warn?.('scrapling service stderr', { message: String(chunk).trim() });
+      sharedState.child.stderr?.on('data', (chunk) => {
+        const message = this.summarizeChildLog(chunk);
+        const isAccessNoise = /"GET \/health HTTP\/1\.1" 200|"POST \/scrape HTTP\/1\.1" 200|INFO: Fetched \(200\)/u.test(message);
+        const log = isAccessNoise ? this.logger.info : this.logger.warn;
+        log?.call(this.logger, 'scrapling service stderr', { message });
       });
-      this.child.on('exit', (code, childSignal) => {
+      sharedState.child.on('exit', (code, childSignal) => {
         this.logger.warn?.('scrapling service exited', { code, signal: childSignal });
       });
-      this.child.unref?.();
+      this.registerShutdownHandler();
+      sharedState.child.unref?.();
     }
 
-    const deadline = Date.now() + 4_000;
+    const deadline = Date.now() + 16_000;
     while (Date.now() < deadline) {
       if (signal?.aborted) {
         throw signal.reason || new Error('Scrapling service start aborted');
@@ -156,5 +197,68 @@ export class ScraplingServiceAdapter extends PluginProviderAdapter {
     }
 
     throw new Error('Scrapling service did not become healthy');
+  }
+
+  summarizeChildLog(chunk) {
+    return String(chunk)
+      .trim()
+      .replace(/([?&](?:sid|key|token|sig|signature)=)[^&\s"]+/giu, '$1<redacted>')
+      .split('\n')
+      .map((line) => line.slice(0, 700))
+      .join('\n');
+  }
+
+  async stopStaleSidecar() {
+    const port = new URL(this.serviceUrl).port || '8787';
+    let stdout = '';
+
+    try {
+      ({ stdout } = await execFileAsync('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'], { timeout: 1_000 }));
+    } catch {
+      return;
+    }
+
+    const pids = [...new Set(String(stdout).split(/\s+/u).map((pid) => Number(pid)).filter(Boolean))];
+    for (const pid of pids) {
+      if (pid === process.pid || pid === sharedState.child?.pid) {
+        continue;
+      }
+
+      try {
+        const { stdout: psOutput } = await execFileAsync('ps', ['-o', 'args=', '-p', String(pid)], { timeout: 1_000 });
+        if (!psOutput.includes('services/scrapling_service/server.py')) {
+          continue;
+        }
+
+        this.logger.warn?.('stopping stale scrapling sidecar', { pid, port });
+        process.kill(pid, 'SIGTERM');
+        await wait(800);
+        try {
+          process.kill(pid, 0);
+          process.kill(pid, 'SIGKILL');
+        } catch {
+          // Process already exited.
+        }
+      } catch {
+        // Best effort only. Spawn path will report real failure if port stays blocked.
+      }
+    }
+  }
+
+  registerShutdownHandler() {
+    if (sharedState.shutdownHandlerRegistered) {
+      return;
+    }
+
+    sharedState.shutdownHandlerRegistered = true;
+    const stopChild = () => {
+      if (sharedState.child && sharedState.child.exitCode === null) {
+        sharedState.child.kill('SIGTERM');
+      }
+    };
+
+    process.once('SIGINT', stopChild);
+    process.once('SIGTERM', stopChild);
+    process.once('exit', stopChild);
   }
 }

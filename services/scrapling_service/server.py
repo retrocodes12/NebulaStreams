@@ -35,6 +35,10 @@ USER_AGENT = os.environ.get(
     "(KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
 )
 
+
+class ReusableThreadingHTTPServer(ThreadingHTTPServer):
+    allow_reuse_address = True
+
 HDHUB4U_DOMAINS = [
     "https://new1.hdhub4u.limo",
     "https://new3.hdhub4u.fo",
@@ -50,6 +54,11 @@ FOURKHDHUB_DOMAINS = [
     "https://4khdhub.link",
     "https://4khdhub.fans",
     "https://4khdhub.click",
+]
+
+UHDMOVIES_DOMAINS = [
+    "https://uhdmovies.rip",
+    "https://uhdmovies.pink",
 ]
 
 STREAM_HOST_PATTERNS = [
@@ -120,6 +129,22 @@ def fetch_text(url: str, *, stealth: bool = False) -> tuple[str, str]:
         return response.read().decode("utf-8", "ignore"), response.geturl()
 
 
+def fetch_text_post(url: str, data: dict[str, str], *, referer: str | None = None, extra_headers: dict[str, str] | None = None) -> tuple[str, str]:
+    body = "&".join(f"{quote_plus(str(key))}={quote_plus(str(value))}" for key, value in data.items()).encode("utf-8")
+    headers = {
+        "User-Agent": USER_AGENT,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Content-Type": "application/x-www-form-urlencoded",
+    }
+    if referer:
+        headers["Referer"] = referer
+    if extra_headers:
+        headers.update(extra_headers)
+    request = Request(url, data=body, headers=headers)
+    with urlopen(request, timeout=TIMEOUT_SECONDS) as response:
+        return response.read().decode("utf-8", "ignore"), response.geturl()
+
+
 def tmdb_details(tmdb_id: int, media_type: str) -> dict[str, Any]:
     endpoint = "tv" if media_type in {"tv", "series"} else "movie"
     url = f"https://api.themoviedb.org/3/{endpoint}/{tmdb_id}?api_key={TMDB_API_KEY}&append_to_response=external_ids"
@@ -144,6 +169,26 @@ def extract_links(html: str, base_url: str) -> list[dict[str, str]]:
         label = compact_text(re.sub(r"<[^>]+>", " ", label_html))
         links.append({"url": urljoin(base_url, href), "label": label})
     return links
+
+
+def extract_form_action(html: str) -> str | None:
+    match = re.search(r"<form[^>]*action=[\"']([^\"']+)", html or "", re.I)
+    return unescape(match.group(1)).strip() if match else None
+
+
+def extract_form_inputs(html: str) -> dict[str, str]:
+    inputs: dict[str, str] = {}
+    for tag in re.findall(r"<input[^>]+>", html or "", re.I):
+        name = re.search(r"name=[\"']([^\"']+)", tag, re.I)
+        value = re.search(r"value=[\"']([^\"']*)", tag, re.I)
+        if name:
+            inputs[unescape(name.group(1))] = unescape(value.group(1)) if value else ""
+    return inputs
+
+
+def extract_meta_refresh_url(html: str) -> str | None:
+    match = re.search(r"<meta[^>]*http-equiv=[\"']?refresh[\"']?[^>]*content=[\"'][^\"']*url=([^\"'>]+)", html or "", re.I)
+    return unescape(match.group(1)).strip() if match else None
 
 
 def link_score(link: dict[str, str], title: str, year: int, season: int | None = None) -> int:
@@ -175,6 +220,14 @@ def should_follow(url: str, label: str = "") -> bool:
     if "how-to-download" in raw or "download-tutorial" in raw:
         return False
     return any(token in raw for token in FOLLOW_LINK_PATTERNS)
+
+
+def is_hubcloud_wrapper(url: str) -> bool:
+    try:
+        host = urlparse(url).hostname or ""
+    except Exception:
+        host = ""
+    return "hubcloud" in host.lower()
 
 
 def quality_from_text(text: str) -> str:
@@ -359,7 +412,16 @@ def scrape_4khdhub(payload: dict[str, Any]) -> list[dict[str, Any]]:
             header_match = re.search(r'<div class="flex-1[^>]*>([\s\S]*?)</div>', block, re.I)
             header_title = compact_text(re.sub(r"<[^>]+>", " ", header_match.group(1))) if header_match else ""
             stream_title = compact_text(file_title or header_title or post["label"])
-            for link in extract_links(block, final_url):
+            block_links = [
+                link for link in extract_links(block, final_url)
+                if is_streamish(link["url"], link["label"])
+            ]
+            if any(not is_hubcloud_wrapper(link["url"]) for link in block_links):
+                block_links = [
+                    link for link in block_links
+                    if not is_hubcloud_wrapper(link["url"])
+                ]
+            for link in block_links:
                 if not is_streamish(link["url"], link["label"]):
                     continue
                 streams.append(make_stream(
@@ -373,6 +435,134 @@ def scrape_4khdhub(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return dedupe_streams(streams)
 
 
+def uhdmovies_search_posts(title: str, year: int) -> list[dict[str, str]]:
+    posts: list[dict[str, str]] = []
+    for domain in UHDMOVIES_DOMAINS:
+        try:
+            html, final_url = fetch_text(f"{domain}/?s={quote_plus(f'{title} {year}'.strip())}")
+        except Exception:
+            continue
+        for link in extract_links(html, final_url):
+            if "uhdmovies" not in urlparse(link["url"]).hostname.lower():
+                continue
+            if title_word_hits(link, title) <= 0:
+                continue
+            score = link_score(link, title, year)
+            if score <= 0:
+                continue
+            posts.append({"url": link["url"], "label": link["label"], "score": str(score)})
+        if posts:
+            break
+    posts.sort(key=lambda item: int(item.get("score") or "0"), reverse=True)
+    seen: set[str] = set()
+    deduped: list[dict[str, str]] = []
+    for post in posts:
+        if post["url"] in seen:
+            continue
+        seen.add(post["url"])
+        deduped.append(post)
+    return deduped[:3]
+
+
+def uhdmovies_post_source_links(post_url: str) -> list[dict[str, str]]:
+    try:
+        html, final_url = fetch_text(post_url)
+    except Exception:
+        return []
+    links: list[dict[str, str]] = []
+    anchor_pattern = re.compile(r"<a\b([^>]*)href=[\"']([^\"']+)[\"']([^>]*)>([\s\S]*?)</a>", re.I)
+    for match in anchor_pattern.finditer(html or ""):
+        attrs = f"{match.group(1)} {match.group(3)}"
+        href = unescape(match.group(2)).strip()
+        label = compact_text(re.sub(r"<[^>]+>", " ", match.group(4)))
+        raw = f"{href} {label} {attrs}".lower()
+        if "cloud.unblockedgames.world" not in raw or "maxbutton" not in raw:
+            continue
+        if not any(token in raw for token in ("download", "g-drive", "drive")):
+            continue
+        links.append({"url": urljoin(final_url, href), "label": label})
+    return links[:8]
+
+
+def uhdmovies_bypass_unblocked(url: str) -> str | None:
+    try:
+        html, final_url = fetch_text(url)
+        form_action = extract_form_action(html)
+        form_data = extract_form_inputs(html)
+        if not form_action or not form_data:
+            return None
+
+        html, final_url = fetch_text_post(form_action, form_data, referer=final_url)
+        form_action = extract_form_action(html)
+        form_data = extract_form_inputs(html)
+        wp_http2 = form_data.get("_wp_http2", "")
+        if not form_action or not form_data:
+            return None
+
+        html, final_url = fetch_text_post(form_action, form_data, referer=final_url)
+        go_match = re.search(r"\?go=([^\"'&<]+)", html or "", re.I)
+        if not go_match:
+            return extract_meta_refresh_url(html)
+
+        go_token = go_match.group(1)
+        go_url = f"{urlparse(url).scheme}://{urlparse(url).netloc}/?go={go_token}"
+        request = Request(go_url, headers={
+            "User-Agent": USER_AGENT,
+            "Cookie": f"{go_token}={wp_http2}",
+            "Referer": final_url,
+        })
+        with urlopen(request, timeout=TIMEOUT_SECONDS) as response:
+            go_html = response.read().decode("utf-8", "ignore")
+        return extract_meta_refresh_url(go_html)
+    except Exception:
+        return None
+
+
+def uhdmovies_extract_driveseed(url: str, label: str) -> list[dict[str, Any]]:
+    streams: list[dict[str, Any]] = []
+    try:
+        html, final_url = fetch_text(url)
+        replace_match = re.search(r"replace\([\"']([^\"']+)", html or "", re.I)
+        if replace_match:
+            html, final_url = fetch_text(urljoin(final_url, replace_match.group(1)))
+    except Exception:
+        return streams
+
+    file_title_match = re.search(r'og:title["\']\s+content=["\']([^"\']+)', html or "", re.I)
+    file_title = compact_text(file_title_match.group(1)) if file_title_match else label
+    for link in extract_links(html, final_url):
+        text = link["label"].lower()
+        href = link["url"]
+        if "instant download" in text and href.startswith("http"):
+            streams.append(make_stream(href, file_title, "uhdmovies", "UHDMovies", final_url))
+    return streams
+
+
+def scrape_uhdmovies(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    tmdb_id = int(payload.get("tmdbId") or 0)
+    media_type = str(payload.get("mediaType") or "movie").lower()
+    details = tmdb_details(tmdb_id, media_type)
+    title = details["title"]
+    year = details["year"]
+    streams: list[dict[str, Any]] = []
+
+    for post in uhdmovies_search_posts(title, year):
+        for source in uhdmovies_post_source_links(post["url"]):
+            final_url = uhdmovies_bypass_unblocked(source["url"]) if "cloud.unblockedgames.world" in source["url"] else source["url"]
+            if not final_url:
+                continue
+            if "driveseed" in final_url or "driveleech" in final_url:
+                streams.extend(uhdmovies_extract_driveseed(final_url, source["label"] or post["label"]))
+            elif final_url.startswith("http"):
+                streams.append(make_stream(final_url, source["label"] or post["label"], "uhdmovies", "UHDMovies", post["url"]))
+            if len(streams) >= 12:
+                break
+        if streams:
+            break
+
+    return dedupe_streams(streams, limit=20)
+
+
 def handle_scrape(payload: dict[str, Any]) -> dict[str, Any]:
     provider = str(payload.get("provider") or "").lower()
     start = time.time()
@@ -380,6 +570,8 @@ def handle_scrape(payload: dict[str, Any]) -> dict[str, Any]:
         streams = scrape_hdhub4u(payload)
     elif provider == "scrapling-4khdhub":
         streams = scrape_4khdhub(payload)
+    elif provider == "uhdmovies":
+        streams = scrape_uhdmovies(payload)
     else:
         return {"streams": [], "error": f"unsupported provider {provider}"}
     return {
@@ -398,11 +590,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def _json(self, status: int, body: dict[str, Any]) -> None:
         data = json.dumps(body).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError):
+            return
 
     def do_GET(self) -> None:  # noqa: N802
         if self.path == "/health":
@@ -418,16 +613,19 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
             payload = json.loads(self.rfile.read(min(length, 64 * 1024)) or b"{}")
             self._json(200, handle_scrape(payload))
+        except (BrokenPipeError, ConnectionResetError):
+            return
         except Exception as error:
-            self._json(500, {"streams": [], "error": str(error)})
+            self._json(200, {"streams": [], "error": str(error)})
 
     def log_message(self, fmt: str, *args: Any) -> None:
         sys.stderr.write("[scrapling-service] " + (fmt % args) + "\n")
 
 
 def main() -> None:
-    server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    server = ReusableThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     signal.signal(signal.SIGTERM, lambda *_: server.shutdown())
+    signal.signal(signal.SIGINT, lambda *_: server.shutdown())
     print(json.dumps({"status": "listening", "port": PORT, "scraplingAvailable": Fetcher is not None}), flush=True)
     server.serve_forever()
 

@@ -6,6 +6,7 @@ import { createClient } from 'redis';
 import { config, cacheConfig } from '../config.js';
 import { enhanceMagnet, extractInfoHash } from '../utils/magnet.js';
 import { logger } from '../utils/logger.js';
+import { RogPlayAdapter } from '../providers/rogplay/RogPlayAdapter.js';
 
 const { mkdir, readFile, readdir, rm, writeFile } = fsPromises;
 
@@ -39,6 +40,13 @@ const detectSourceType = (source) => {
 
 const SIGNED_STREAM_CACHE_SAFETY_SECONDS = 60;
 const MIN_SIGNED_STREAM_CACHE_TTL_SECONDS = 15;
+const SIGNED_URL_EXPIRY_PARAM_NAMES = Object.freeze([
+  'token',
+  'KEY2',
+  'expires',
+  'expire',
+  'exp'
+]);
 const SOURCE_TOKEN_VERSION = 2;
 const CINESTREAM_RESULT_CACHE_TTL_SECONDS = 6 * 60 * 60;
 const DEFAULT_NON_EMPTY_RESULT_CACHE_TTL_SECONDS = 24 * 60 * 60;
@@ -47,19 +55,28 @@ const SHOWBOX_RESULT_CACHE_TTL_SECONDS = 120;
 const getSignedUrlExpiryTtlSeconds = (url, nowMs = Date.now()) => {
   try {
     const parsedUrl = new URL(String(url || '').trim());
-    const token = parsedUrl.searchParams.get('token')
-      || parsedUrl.searchParams.get('KEY2')
-      || parsedUrl.searchParams.get('expires')
-      || parsedUrl.searchParams.get('expire')
-      || parsedUrl.searchParams.get('exp');
+    const expiryTokens = SIGNED_URL_EXPIRY_PARAM_NAMES
+      .map((name) => parsedUrl.searchParams.get(name))
+      .filter((token) => /^\d{10,13}$/u.test(String(token || '')));
 
-    if (!/^\d{10,13}$/u.test(String(token || ''))) {
+    for (const pathPart of parsedUrl.pathname.split('/')) {
+      if (/^\d{10,13}$/u.test(pathPart)) {
+        expiryTokens.push(pathPart);
+      }
+    }
+
+    if (expiryTokens.length === 0) {
       return null;
     }
 
-    const rawExpiry = Number(token);
-    const expiryMs = rawExpiry > 1_000_000_000_000 ? rawExpiry : rawExpiry * 1000;
-    const ttlSeconds = Math.floor((expiryMs - nowMs) / 1000) - SIGNED_STREAM_CACHE_SAFETY_SECONDS;
+    const ttlSeconds = expiryTokens.reduce((lowestTtlSeconds, token) => {
+      const rawExpiry = Number(token);
+      const expiryMs = rawExpiry > 1_000_000_000_000 ? rawExpiry : rawExpiry * 1000;
+      const tokenTtlSeconds = Math.floor((expiryMs - nowMs) / 1000) - SIGNED_STREAM_CACHE_SAFETY_SECONDS;
+      return Number.isFinite(tokenTtlSeconds)
+        ? Math.min(lowestTtlSeconds, tokenTtlSeconds)
+        : lowestTtlSeconds;
+    }, Number.POSITIVE_INFINITY);
 
     return Number.isFinite(ttlSeconds)
       ? Math.max(MIN_SIGNED_STREAM_CACHE_TTL_SECONDS, ttlSeconds)
@@ -74,11 +91,20 @@ const getSourceTokenTtlMs = (preparedSource) => {
   const signedTtlSeconds = preparedSource?.type === 'http'
     ? getSignedUrlExpiryTtlSeconds(preparedSource.source)
     : null;
+  const metadataExpiryMs = Number(preparedSource?.metadata?.expiresAt);
+  const metadataTtlSeconds = Number.isFinite(metadataExpiryMs)
+    ? Math.floor((metadataExpiryMs - Date.now()) / 1000) - SIGNED_STREAM_CACHE_SAFETY_SECONDS
+    : null;
   const providerId = String(preparedSource?.metadata?.provider || '').trim().toLowerCase();
   const providerCapSeconds = providerId === 'showbox' ? 300 : defaultTtlSeconds;
-  const ttlSeconds = signedTtlSeconds === null
-    ? Math.min(defaultTtlSeconds, providerCapSeconds)
-    : Math.min(defaultTtlSeconds, providerCapSeconds, signedTtlSeconds);
+  const ttlCaps = [defaultTtlSeconds, providerCapSeconds];
+  if (signedTtlSeconds !== null) {
+    ttlCaps.push(signedTtlSeconds);
+  }
+  if (metadataTtlSeconds !== null) {
+    ttlCaps.push(metadataTtlSeconds);
+  }
+  const ttlSeconds = Math.min(...ttlCaps);
 
   return Math.max(MIN_SIGNED_STREAM_CACHE_TTL_SECONDS * 1000, ttlSeconds * 1000);
 };
@@ -90,6 +116,11 @@ const getSignedStreamCacheLimit = (streams, nowMs = Date.now()) => {
     const signedTtl = getSignedUrlExpiryTtlSeconds(stream?.url, nowMs);
     if (signedTtl !== null) {
       ttlSeconds = ttlSeconds === null ? signedTtl : Math.min(ttlSeconds, signedTtl);
+    }
+    const expiresAt = Number(stream?.expiresAt);
+    if (Number.isFinite(expiresAt)) {
+      const metadataTtl = Math.floor((expiresAt - nowMs) / 1000) - SIGNED_STREAM_CACHE_SAFETY_SECONDS;
+      ttlSeconds = ttlSeconds === null ? metadataTtl : Math.min(ttlSeconds, metadataTtl);
     }
   }
 
@@ -174,8 +205,8 @@ const toStremioCompatibilityScore = (stream) => {
     score += Math.min(quality, 1080);
   }
 
-  if (/\b(hevc|x265|10bit|hdr|dolby vision|dovi|remux|untouch)\b/u.test(title)) {
-    score -= 400;
+  if (/\b(hevc|x265|10bit|hdr|hdr10|dolby vision|dovi|remux|untouch)\b/u.test(title)) {
+    score -= 1800;
   }
 
   if (/\b(x264|h264|aac)\b/u.test(title)) {
@@ -271,11 +302,11 @@ const DEFAULT_PRIVATE_PROVIDER_SETTINGS = Object.freeze({
 const PRIVATE_CONFIG_VERSION = 1;
 const PRIVATE_PROVIDER_COOKIE_MAX_LENGTH = 4096;
 
-const HIGH_VALUE_CACHE_PROVIDERS = new Set(['4khdhub', '4khdhub_tv', 'hdhub4u']);
+const HIGH_VALUE_CACHE_PROVIDERS = new Set(['4khdhub', 'scrapling-4khdhub', '4khdhub_tv', 'hdhub4u']);
 const HIGH_VALUE_CACHE_PATTERN = /\b(4khdhub|hdhub|hubcloud|hub cloud)\b/iu;
-const LAST_GOOD_PRIMARY_PROVIDERS = new Set(['4khdhub', '4khdhub tv', 'hdhub4u', 'uhdmovies']);
+const LAST_GOOD_PRIMARY_PROVIDERS = new Set(['4khdhub', 'scrapling 4khdhub', '4khdhub tv', 'hdhub4u', 'uhdmovies']);
 const LAST_GOOD_SECONDARY_PROVIDERS = new Set(['vidsrc', 'vixsrc', 'vidlink', 'moviebox', 'cinestream', 'streamflix']);
-const DIRECT_PLAYBACK_PROVIDER_IDS = new Set(['4khdhub', '4khdhub_tv', 'hdhub4u', 'showbox']);
+const DIRECT_PLAYBACK_PROVIDER_IDS = new Set(['4khdhub', 'scrapling-4khdhub', '4khdhub_tv', 'hdhub4u', 'showbox']);
 
 const CONFIGURED_PROFILE_LABELS = Object.freeze({
   wf: Object.freeze({ code: 'WF', label: 'Web Fast' }),
@@ -703,7 +734,7 @@ const getProviderForwardHeaders = (stream) => {
 const isWebReadyHttpStream = (stream) =>
   stream.transport === 'http' &&
   Boolean(stream.url) &&
-  (isPlainMp4Url(stream.url) || stream.behaviorHints?.notWebReady === false) &&
+  (isPlainMp4Url(stream.url) || isPlainHlsUrl(stream.url) || stream.behaviorHints?.notWebReady === false) &&
   !hasForwardHeaders(stream.headers);
 
 const isTrustedDirectHttpStream = (stream) =>
@@ -745,6 +776,57 @@ const getStremioRequestBaseUrl = (req) => {
   return `${proto}://${host}`;
 };
 
+const getStremioRequestHost = (req) => {
+  const forwardedHost = String(req.headers?.['x-forwarded-host'] || '').split(',')[0].trim();
+  return String(forwardedHost || req.get('host') || '')
+    .split(':')[0]
+    .trim()
+    .toLowerCase();
+};
+
+const normalizeAddonIdPart = (value) =>
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gu, '.')
+    .replace(/^\.+|\.+$/gu, '')
+    .slice(0, 48);
+
+const shouldUseLegacyAddonIdForHost = (host) => {
+  const normalizedHost = String(host || '').toLowerCase();
+  if (!normalizedHost) {
+    return false;
+  }
+
+  return config.STREMIO_LEGACY_ADDON_HOSTS.some((legacyHost) => {
+    const normalizedLegacyHost = String(legacyHost || '').trim().toLowerCase();
+    return normalizedLegacyHost && (
+      normalizedHost === normalizedLegacyHost
+      || normalizedHost.endsWith(`.${normalizedLegacyHost}`)
+      || normalizedHost.includes(normalizedLegacyHost)
+    );
+  });
+};
+
+const getStandaloneAddonId = (req) => {
+  const baseAddonId = config.STREMIO_ADDON_ID;
+  if (!config.STREMIO_ADDON_ID_SCOPE_BY_HOST) {
+    return baseAddonId;
+  }
+
+  const host = getStremioRequestHost(req);
+  if (!host || shouldUseLegacyAddonIdForHost(host)) {
+    return baseAddonId;
+  }
+
+  const hostPart = normalizeAddonIdPart(host);
+  if (!hostPart || baseAddonId.endsWith(`.${hostPart}`)) {
+    return baseAddonId;
+  }
+
+  return `${baseAddonId}.${hostPart}`;
+};
+
 const getManifestInstallUrls = (req, manifestPath) => {
   const baseUrl = getStremioRequestBaseUrl(req);
   const manifestUrl = `${baseUrl}${manifestPath}`;
@@ -761,12 +843,17 @@ const needsRegisteredPlaybackProxy = (stream) => {
   }
 
   const forwardHeaders = getProviderForwardHeaders(stream);
+  const providerId = String(stream?.provider || '').trim().toLowerCase();
 
   if (isRegisteredProxyOnlyUrl(stream.url)) {
     return true;
   }
 
   if (hasForwardHeaders(forwardHeaders)) {
+    if (providerId === 'nuvio') {
+      return true;
+    }
+
     if (hasSensitiveForwardHeaders(forwardHeaders)) {
       return true;
     }
@@ -1012,7 +1099,7 @@ const filterConfiguredStreamsDetailed = (streams, streamOptions) => {
 
     if (stream.transport !== 'http') {
       reason = 'nonHttp';
-    } else if (streamOptions.webReadyOnly && !isWebReadyHttpStream(stream) && !isTrustedDirectHttpStream(stream) && !isProxyReadyHttpStream(stream)) {
+    } else if (streamOptions.webReadyOnly && !isWebReadyHttpStream(stream) && !isTrustedDirectHttpStream(stream) && !isProxyReadyHttpStream(stream) && !needsRegisteredPlaybackProxy(stream)) {
       reason = 'notWebReady';
     } else if (streamOptions.hideHeavyFormats && hasHeavyFormatTraits(stream)) {
       reason = 'heavyFormat';
@@ -1054,6 +1141,14 @@ const filterConfiguredStreamsDetailed = (streams, streamOptions) => {
 
 const filterConfiguredStreams = (streams, streamOptions) =>
   filterConfiguredStreamsDetailed(streams, streamOptions).streams;
+
+const relaxEmptyStreamFilters = (streams, streamOptions) =>
+  filterConfiguredStreamsDetailed(streams, {
+    ...streamOptions,
+    webReadyOnly: false,
+    hideHeavyFormats: false,
+    maxSizeGb: 0
+  });
 
 const summarizeStreamOptions = (streamOptions) => {
   const parts = [];
@@ -1371,6 +1466,7 @@ const getStreamDiversityOptions = (streams, { requestedProviders = [] } = {}) =>
 const fetchTextWithTimeout = async (url, options = {}, timeout = 8000) => {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeout);
+  timeoutId.unref?.();
 
   try {
     const response = await fetch(url, {
@@ -1433,6 +1529,7 @@ const withTimeoutFallback = async (promise, timeoutMs, fallbackValue) => {
   let timeoutId = null;
   const timeoutPromise = new Promise((resolve) => {
     timeoutId = setTimeout(() => resolve(fallbackValue), timeoutMs);
+    timeoutId.unref?.();
   });
 
   try {
@@ -1579,9 +1676,72 @@ const hasValidHubCloudDownloadContent = (html) => {
 const isHubCloudUrl = (streamUrl) => {
   try {
     const hostname = new URL(String(streamUrl || '').trim()).hostname.toLowerCase();
-    return hostname.includes('hubcloud') || hostname === 'gamerxyt.com';
+    if (hostname.startsWith('pixel.') || hostname.startsWith('gpdl.')) {
+      return false;
+    }
+    return hostname.includes('hubcloud') || hostname.includes('hubdrive') || hostname === 'gamerxyt.com';
   } catch {
     return false;
+  }
+};
+
+const isHubDriveUrl = (streamUrl) => {
+  try {
+    return new URL(String(streamUrl || '').trim()).hostname.toLowerCase().includes('hubdrive');
+  } catch {
+    return false;
+  }
+};
+
+const resolveHubDriveDirectDownload = async (streamUrl) => {
+  const parsedUrl = new URL(String(streamUrl || '').trim());
+  const fileId = parsedUrl.pathname.match(/\/file\/(\d+)/i)?.[1];
+
+  if (!fileId) {
+    return null;
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), HUBCLOUD_FETCH_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(new URL('/ajax.php?ajax=direct-download', parsedUrl.origin), {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        'User-Agent': HUBCLOUD_USER_AGENT,
+        'X-Requested-With': 'XMLHttpRequest',
+        Referer: parsedUrl.toString()
+      },
+      body: new URLSearchParams({ id: fileId })
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const payload = await response.json();
+    const directUrl = String(payload?.data?.gd || '').trim();
+
+    if (String(payload?.code) !== '200' || !/^https?:\/\//i.test(directUrl)) {
+      return null;
+    }
+
+    const expiresAtSeconds = Number(payload?.data?.t);
+    return {
+      url: directUrl,
+      headers: {
+        Referer: parsedUrl.origin,
+        'User-Agent': HUBCLOUD_USER_AGENT
+      },
+      sourceSite: 'HubDrive (Direct)',
+      title: String(payload?.data?.n || '').trim() || null,
+      size: formatSizeBytes(Number(payload?.data?.s)),
+      expiresAt: Number.isFinite(expiresAtSeconds) ? expiresAtSeconds * 1000 : null
+    };
+  } finally {
+    clearTimeout(timeoutId);
   }
 };
 
@@ -2237,6 +2397,7 @@ export class StreamManager {
     this.popularStreamPrewarmLastFinishedAt = null;
     this.popularStreamPrewarmLastError = null;
     this.popularStreamPrewarmLastResultCount = 0;
+    this.rogPlayAdapter = new RogPlayAdapter({ logger });
   }
 
   async initialize() {
@@ -2676,7 +2837,7 @@ export class StreamManager {
 
   buildStremioResultCacheKey({ tmdbId, mediaType, season, episode, providers, qualityPriority, streamOptions, privateProviderSettingsHash = null }) {
     return JSON.stringify({
-      version: 94,
+      version: 113,
       tmdbId,
       mediaType,
       season: season ?? null,
@@ -3091,7 +3252,7 @@ export class StreamManager {
         providers,
         qualityPriority,
         streamOptions,
-        addonId: config.STREMIO_ADDON_ID,
+        addonId: getStandaloneAddonId(req),
         addonName: config.STREMIO_ADDON_NAME,
         configurable: true,
         description: config.CONFIGURATION_DESCRIPTION
@@ -3111,7 +3272,7 @@ export class StreamManager {
       providers,
       qualityPriority,
       streamOptions,
-      addonId: `${config.STREMIO_ADDON_ID}.${providerHash}`,
+      addonId: `${getStandaloneAddonId(req)}.${providerHash}`,
       addonName: `${config.STREMIO_ADDON_NAME}(${configuredLabel.code})`,
       configurable: true,
       description: `Configured install: ${configuredLabel.label}. Providers: ${providerSummary}. Quality priority: ${qualityPriority.join(' > ')}. Playback: ${summarizeStreamOptions(streamOptions)}`
@@ -3121,22 +3282,41 @@ export class StreamManager {
   async handleStremioManifest(req, res) {
     const baseUrl = getStremioRequestBaseUrl(req);
     const addonPresentation = this.getAddonPresentation(req);
+    const liveCatalogs = this.rogPlayAdapter.getLiveCatalogDefinitions().map((catalog) => ({
+      type: 'tv',
+      id: catalog.id,
+      name: catalog.name,
+      extra: [
+        { name: 'skip', isRequired: false },
+        { name: 'search', isRequired: false }
+      ]
+    }));
 
     res.json({
       id: addonPresentation.addonId,
       version: '1.0.4',
       name: addonPresentation.addonName,
       description: addonPresentation.description,
-      resources: [{
-        name: 'stream',
-        types: ['movie', 'series'],
-        idPrefixes: ['tt', 'tmdb:']
-      }],
-      types: ['movie', 'series'],
-      idPrefixes: ['tt', 'tmdb:'],
-      catalogs: [],
+      resources: [
+        'stream',
+        {
+          name: 'catalog',
+          types: ['tv'],
+          idPrefixes: ['rogplay:']
+        },
+        {
+          name: 'meta',
+          types: ['tv'],
+          idPrefixes: ['rogplay:']
+        }
+      ],
+      types: ['movie', 'series', 'tv'],
+      idPrefixes: ['tt', 'tmdb:', 'rogplay:'],
+      catalogs: liveCatalogs,
       behaviorHints: {
-        configurable: addonPresentation.configurable
+        configurable: addonPresentation.configurable,
+        configurationRequired: false,
+        p2p: false
       },
       logo: `${baseUrl}/assets/WhatsApp%20Image%202026-04-25%20at%2012.16.53%20AM.jpeg`,
       stremioAddonsConfig: {
@@ -3147,6 +3327,22 @@ export class StreamManager {
   }
 
   async handleStremioStreams(req, res, next) {
+    if (this.isRogPlayLiveStreamRequest(req.params.type, req.params.id)) {
+      try {
+        const streams = await this.rogPlayAdapter.getLiveStreams(req.params.id, {
+          baseUrl: getStremioRequestBaseUrl(req)
+        });
+        this.sendStremioStreamsResponse(res, streams);
+      } catch (error) {
+        logger.warn('rogplay live stream lookup failed', {
+          id: req.params.id,
+          error
+        });
+        this.sendStremioStreamsResponse(res, []);
+      }
+      return;
+    }
+
     const overallTimeoutMs = Math.max(
       config.STREMIO_STREAM_OVERALL_TIMEOUT_MS,
       config.STREMIO_FAST_MAX_WAIT_MS + 5_000
@@ -3354,7 +3550,38 @@ export class StreamManager {
       let stremioStreams;
 
       try {
-        stremioStreams = await this.getOrBuildStremioStreams(buildInput);
+        const buildTimeoutSentinel = { timedOut: true };
+        const buildPromise = this.getOrBuildStremioStreams(buildInput);
+        stremioStreams = await withTimeoutFallback(
+          buildPromise,
+          Math.max(5_000, overallTimeoutMs - 5_000),
+          buildTimeoutSentinel
+        );
+
+        if (stremioStreams === buildTimeoutSentinel) {
+          const fallbackStreams = Array.isArray(lastGoodStreams) && lastGoodStreams.length > 0
+            ? lastGoodStreams
+            : (cachedResult?.streams?.length ? cachedResult.streams : []);
+
+          if (fallbackStreams.length > 0) {
+            logger.warn('serving stremio response before client timeout', {
+              tmdbId,
+              mediaType: parsed.mediaType,
+              resultCount: fallbackStreams.length
+            });
+
+            res.setHeader('X-NebulaStreams-Cache', 'deadline-fallback');
+            clearTimeout(overallTimeout);
+            this.sendStremioStreamsResponse(res, fallbackStreams);
+            return;
+          }
+
+          logger.warn('stremio build crossed soft deadline; waiting for real result', {
+            tmdbId,
+            mediaType: parsed.mediaType
+          });
+          stremioStreams = await buildPromise;
+        }
       } catch (error) {
         if (lastGoodStreams?.length) {
           logger.warn('serving last-good stremio streams after rebuild failure', {
@@ -3615,7 +3842,21 @@ export class StreamManager {
       ? result.streams.filter((stream) => !isHubCloudUrl(String(stream?.url || '').trim()))
       : result.streams;
     const normalizedStreams = await this.normalizeProviderStreams(baseUrl, rawStreamsForNormalization);
-    const { streams: configuredStreams } = filterConfiguredStreamsDetailed(normalizedStreams, streamOptions);
+    let { streams: configuredStreams } = filterConfiguredStreamsDetailed(normalizedStreams, streamOptions);
+
+    if (configuredStreams.length === 0 && normalizedStreams.length > 0) {
+      const relaxed = relaxEmptyStreamFilters(normalizedStreams, streamOptions);
+      if (relaxed.streams.length > 0) {
+        logger.warn('relaxed stream filters after empty configured result', {
+          tmdbId,
+          mediaType: parsed.mediaType,
+          originalStreamCount: normalizedStreams.length,
+          relaxedStreamCount: relaxed.streams.length,
+          streamOptions
+        });
+        configuredStreams = relaxed.streams;
+      }
+    }
 
     if (configuredStreams.length === 0) {
       logger.warn('stremio stream search produced no configured streams', {
@@ -3658,7 +3899,8 @@ export class StreamManager {
             provider: stream.provider,
             title: stream.title,
             quality: stream.quality,
-            filename: stream.filename || stream.fileName || stream.title
+            filename: stream.filename || stream.fileName || stream.title,
+            ...(stream.expiresAt ? { expiresAt: stream.expiresAt } : {})
           },
           deferValidation: true
         });
@@ -3882,6 +4124,89 @@ export class StreamManager {
     }
   }
 
+  async handleRogPlayLivePlaylist(req, res, next) {
+    try {
+      const playlist = await this.rogPlayAdapter.getLivePlaylist({
+        id: req.params.id,
+        target: req.query.target,
+        baseUrl: getStremioRequestBaseUrl(req),
+        signal: req.signal
+      });
+
+      if (!playlist) {
+        res.status(404).type('text/plain').send('Live playlist not found');
+        return;
+      }
+
+      res
+        .status(200)
+        .setHeader('Cache-Control', 'no-store')
+        .type('application/vnd.apple.mpegurl')
+        .send(playlist);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async handleStremioCatalog(req, res, next) {
+    try {
+      const type = String(req.params.type || '').trim().toLowerCase();
+      const catalogId = String(req.params.id || '').trim();
+
+      if (type !== 'tv' || !catalogId.startsWith('rogplay-live-')) {
+        res.json({ metas: [] });
+        return;
+      }
+
+      const catalog = this.rogPlayAdapter.getLiveCatalogDefinitions()
+        .find((definition) => definition.id === catalogId);
+
+      if (!catalog) {
+        res.json({ metas: [] });
+        return;
+      }
+
+      const skip = Number.parseInt(req.query.skip || '0', 10);
+      let metas = await this.rogPlayAdapter.getLiveCatalog({
+        category: catalog.category,
+        source: catalog.source || null,
+        skip: Number.isInteger(skip) && skip > 0 ? skip : 0
+      });
+
+      const search = String(req.query.search || '').trim().toLowerCase();
+      if (search) {
+        metas = metas.filter((meta) => String(meta.name || '').toLowerCase().includes(search));
+      }
+
+      res.json({ metas });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async handleStremioMeta(req, res, next) {
+    try {
+      const type = String(req.params.type || '').trim().toLowerCase();
+      const id = String(req.params.id || '').trim();
+
+      if (type !== 'tv' || !id.startsWith('rogplay:')) {
+        res.json({ meta: null });
+        return;
+      }
+
+      const meta = await this.rogPlayAdapter.getLiveMeta(id);
+      res.json({ meta });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  isRogPlayLiveStreamRequest(type, id) {
+    const normalizedType = String(type || '').trim().toLowerCase();
+    return (normalizedType === 'tv' || normalizedType === 'live' || normalizedType === 'channel')
+      && String(id || '').startsWith('rogplay:');
+  }
+
   async handleUnifiedStream(req, res, next) {
     try {
       const descriptor = await this.handleStreamRequest({
@@ -3950,7 +4275,20 @@ export class StreamManager {
         privateProviderSettings
       });
       const normalizedStreams = await this.normalizeProviderStreams(baseUrl, result.streams);
-      const { streams: configuredStreams, diagnostics } = filterConfiguredStreamsDetailed(normalizedStreams, streamOptions);
+      let { streams: configuredStreams, diagnostics } = filterConfiguredStreamsDetailed(normalizedStreams, streamOptions);
+
+      if (configuredStreams.length === 0 && normalizedStreams.length > 0) {
+        const relaxed = relaxEmptyStreamFilters(normalizedStreams, streamOptions);
+        if (relaxed.streams.length > 0) {
+          configuredStreams = relaxed.streams;
+          diagnostics = {
+            ...diagnostics,
+            relaxedAfterEmpty: true,
+            relaxedKeptTotal: relaxed.streams.length,
+            relaxedDiagnostics: relaxed.diagnostics
+          };
+        }
+      }
 
       configuredStreams.sort((left, right) =>
         (getQualityPriorityScore(right, qualityPriority) + getPreferredAudioLanguageScore(right, streamOptions) + getStreamPreferenceScore(right, streamOptions) + getProviderPriorityScore(right, result.providers) + getProviderPlaybackReliabilityScore(right) + getDeliveryPriorityScore(right) + toStremioCompatibilityScore(right)) -
@@ -4232,6 +4570,20 @@ export class StreamManager {
 
     const request = (async () => {
       try {
+        if (isHubDriveUrl(normalizedUrl)) {
+          const directEntry = await resolveHubDriveDirectDownload(normalizedUrl);
+          if (directEntry?.url) {
+            touchMapEntry(this.hubCloudCache, normalizedUrl, {
+              expiresAt: Date.now() + HUBCLOUD_CACHE_TTL_MS,
+              value: [directEntry],
+              approxBytes: getSerializedApproxBytes(JSON.stringify([directEntry]))
+            });
+            pruneMapByMaxEntries(this.hubCloudCache, config.HUBCLOUD_MEMORY_CACHE_MAX_ENTRIES);
+            pruneMapByApproxBytes(this.hubCloudCache, config.HUBCLOUD_MEMORY_CACHE_MAX_MB * 1024 * 1024);
+            return [{ ...directEntry }];
+          }
+        }
+
         const initialHeaders = {
           'User-Agent': HUBCLOUD_USER_AGENT,
           ...(inheritedHeaders && typeof inheritedHeaders === 'object' ? inheritedHeaders : {}),
@@ -4392,6 +4744,7 @@ export class StreamManager {
   }
 
   async normalizeProviderStreams(_baseUrl, streams, fallbackProvider = null) {
+    let hubCloudResolutionBudget = 8;
     const settled = await Promise.all(streams.flatMap((stream) => {
       const provider = stream.provider || fallbackProvider;
       const variants = [];
@@ -4430,7 +4783,15 @@ export class StreamManager {
           } = stream;
           const normalizedEntries = [];
 
-          if (variant.transport === 'http' && isHubCloudUrl(normalizedUrl)) {
+          const shouldResolveHubCloud = variant.transport === 'http'
+            && isHubCloudUrl(normalizedUrl)
+            && hubCloudResolutionBudget-- > 0;
+
+          if (variant.transport === 'http' && isHubCloudUrl(normalizedUrl) && !shouldResolveHubCloud) {
+            return [];
+          }
+
+          if (shouldResolveHubCloud) {
             const resolvedHubCloudEntries = await withTimeoutFallback(
               this.resolveHubCloudUrls(normalizedUrl, variant.headers),
               HUBCLOUD_FETCH_TIMEOUT_MS + 1000,
@@ -4439,12 +4800,16 @@ export class StreamManager {
 
             if (resolvedHubCloudEntries.length > 0) {
               for (const resolvedEntry of resolvedHubCloudEntries) {
+                const resolvedSourceSite = provider === 'r2-plugin'
+                  ? (rest.sourceSite || 'from adapter')
+                  : resolvedEntry.sourceSite;
                 normalizedEntries.push({
                   ...rest,
                   provider,
-                  ...(resolvedEntry.sourceSite ? { sourceSite: resolvedEntry.sourceSite } : {}),
+                  ...(resolvedSourceSite ? { sourceSite: resolvedSourceSite } : {}),
                   ...(resolvedEntry.title || rest.title ? { title: resolvedEntry.title || rest.title } : {}),
                   ...(resolvedEntry.size || rest.size ? { size: resolvedEntry.size || rest.size } : {}),
+                  ...(resolvedEntry.expiresAt ? { expiresAt: resolvedEntry.expiresAt } : {}),
                   headers: resolvedEntry.headers,
                   transport: 'http',
                   url: resolvedEntry.url,
@@ -4454,6 +4819,8 @@ export class StreamManager {
 
               return normalizedEntries;
             }
+
+            return [];
           }
 
           return [{

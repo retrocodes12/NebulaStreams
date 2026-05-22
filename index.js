@@ -3126,10 +3126,14 @@ const isAddonJsonPath = (pathName) =>
   || pathName === '/stremio/manifest.json'
   || pathName.startsWith('/stream/')
   || pathName.startsWith('/stremio/stream/')
+  || pathName.startsWith('/catalog/')
+  || pathName.startsWith('/stremio/catalog/')
+  || pathName.startsWith('/meta/')
+  || pathName.startsWith('/stremio/meta/')
   || pathName.startsWith('/preview/')
   || pathName.startsWith('/stremio/preview/')
-  || (pathName.startsWith('/configured/') && (pathName.includes('/stream/') || pathName.includes('/preview/') || pathName.endsWith('/manifest.json')))
-  || (pathName.startsWith('/private/') && (pathName.includes('/stream/') || pathName.includes('/preview/') || pathName.endsWith('/manifest.json')));
+  || (pathName.startsWith('/configured/') && (pathName.includes('/stream/') || pathName.includes('/catalog/') || pathName.includes('/meta/') || pathName.includes('/preview/') || pathName.endsWith('/manifest.json')))
+  || (pathName.startsWith('/private/') && (pathName.includes('/stream/') || pathName.includes('/catalog/') || pathName.includes('/meta/') || pathName.includes('/preview/') || pathName.endsWith('/manifest.json')));
 
 const isAddonJsonRequest = (req, pathName) => {
   if ((req.method || 'GET').toUpperCase() !== 'GET') {
@@ -3217,7 +3221,9 @@ const isLikelyAddonDataClient = (req, pathName, userAgent) => {
     || normalizedUserAgent.includes('tizen')
     || normalizedUserAgent.includes('web0s');
   const isAddonDataPath = pathName.endsWith('.json')
+    || pathName.endsWith('.m3u8')
     || pathName.includes('/stream/')
+    || pathName.includes('/rogplay/live/')
     || pathName.includes('/preview/')
     || pathName.endsWith('/manifest.json');
   const wantsStructuredResponse = accepts.includes('application/json')
@@ -3809,22 +3815,43 @@ const bootstrap = async () => {
   app.get('/private/:privateConfigId/stremio/manifest.json', streamManager.handleStremioManifest.bind(streamManager));
   app.get('/stream/:type/:id.json', streamManager.handleStremioStreams.bind(streamManager));
   app.get('/stremio/stream/:type/:id.json', streamManager.handleStremioStreams.bind(streamManager));
+  app.get('/catalog/:type/:id.json', streamManager.handleStremioCatalog.bind(streamManager));
+  app.get('/stremio/catalog/:type/:id.json', streamManager.handleStremioCatalog.bind(streamManager));
+  app.get('/meta/:type/:id.json', streamManager.handleStremioMeta.bind(streamManager));
+  app.get('/stremio/meta/:type/:id.json', streamManager.handleStremioMeta.bind(streamManager));
+  app.get('/rogplay/live/:id/playlist.m3u8', streamManager.handleRogPlayLivePlaylist.bind(streamManager));
   app.get('/preview/:type/:id.json', streamManager.handleStremioPreview.bind(streamManager));
   app.get('/stremio/preview/:type/:id.json', streamManager.handleStremioPreview.bind(streamManager));
   app.get('/private/:privateConfigId/stream/:type/:id.json', streamManager.handleStremioStreams.bind(streamManager));
   app.get('/private/:privateConfigId/stremio/stream/:type/:id.json', streamManager.handleStremioStreams.bind(streamManager));
+  app.get('/private/:privateConfigId/catalog/:type/:id.json', streamManager.handleStremioCatalog.bind(streamManager));
+  app.get('/private/:privateConfigId/stremio/catalog/:type/:id.json', streamManager.handleStremioCatalog.bind(streamManager));
+  app.get('/private/:privateConfigId/meta/:type/:id.json', streamManager.handleStremioMeta.bind(streamManager));
+  app.get('/private/:privateConfigId/stremio/meta/:type/:id.json', streamManager.handleStremioMeta.bind(streamManager));
   app.get('/private/:privateConfigId/preview/:type/:id.json', streamManager.handleStremioPreview.bind(streamManager));
   app.get('/private/:privateConfigId/stremio/preview/:type/:id.json', streamManager.handleStremioPreview.bind(streamManager));
   app.get('/configured/:providerConfig/stream/:type/:id.json', streamManager.handleStremioStreams.bind(streamManager));
   app.get('/configured/:providerConfig/stremio/stream/:type/:id.json', streamManager.handleStremioStreams.bind(streamManager));
+  app.get('/configured/:providerConfig/catalog/:type/:id.json', streamManager.handleStremioCatalog.bind(streamManager));
+  app.get('/configured/:providerConfig/stremio/catalog/:type/:id.json', streamManager.handleStremioCatalog.bind(streamManager));
+  app.get('/configured/:providerConfig/meta/:type/:id.json', streamManager.handleStremioMeta.bind(streamManager));
+  app.get('/configured/:providerConfig/stremio/meta/:type/:id.json', streamManager.handleStremioMeta.bind(streamManager));
   app.get('/configured/:providerConfig/preview/:type/:id.json', streamManager.handleStremioPreview.bind(streamManager));
   app.get('/configured/:providerConfig/stremio/preview/:type/:id.json', streamManager.handleStremioPreview.bind(streamManager));
   app.get('/configured/:providerConfig/:qualityConfig/stream/:type/:id.json', streamManager.handleStremioStreams.bind(streamManager));
   app.get('/configured/:providerConfig/:qualityConfig/stremio/stream/:type/:id.json', streamManager.handleStremioStreams.bind(streamManager));
+  app.get('/configured/:providerConfig/:qualityConfig/catalog/:type/:id.json', streamManager.handleStremioCatalog.bind(streamManager));
+  app.get('/configured/:providerConfig/:qualityConfig/stremio/catalog/:type/:id.json', streamManager.handleStremioCatalog.bind(streamManager));
+  app.get('/configured/:providerConfig/:qualityConfig/meta/:type/:id.json', streamManager.handleStremioMeta.bind(streamManager));
+  app.get('/configured/:providerConfig/:qualityConfig/stremio/meta/:type/:id.json', streamManager.handleStremioMeta.bind(streamManager));
   app.get('/configured/:providerConfig/:qualityConfig/preview/:type/:id.json', streamManager.handleStremioPreview.bind(streamManager));
   app.get('/configured/:providerConfig/:qualityConfig/stremio/preview/:type/:id.json', streamManager.handleStremioPreview.bind(streamManager));
   app.get('/configured/:providerConfig/:qualityConfig/:optionConfig/stream/:type/:id.json', streamManager.handleStremioStreams.bind(streamManager));
   app.get('/configured/:providerConfig/:qualityConfig/:optionConfig/stremio/stream/:type/:id.json', streamManager.handleStremioStreams.bind(streamManager));
+  app.get('/configured/:providerConfig/:qualityConfig/:optionConfig/catalog/:type/:id.json', streamManager.handleStremioCatalog.bind(streamManager));
+  app.get('/configured/:providerConfig/:qualityConfig/:optionConfig/stremio/catalog/:type/:id.json', streamManager.handleStremioCatalog.bind(streamManager));
+  app.get('/configured/:providerConfig/:qualityConfig/:optionConfig/meta/:type/:id.json', streamManager.handleStremioMeta.bind(streamManager));
+  app.get('/configured/:providerConfig/:qualityConfig/:optionConfig/stremio/meta/:type/:id.json', streamManager.handleStremioMeta.bind(streamManager));
   app.get('/configured/:providerConfig/:qualityConfig/:optionConfig/preview/:type/:id.json', streamManager.handleStremioPreview.bind(streamManager));
   app.get('/configured/:providerConfig/:qualityConfig/:optionConfig/stremio/preview/:type/:id.json', streamManager.handleStremioPreview.bind(streamManager));
   app.get('/providers', (_req, res) => {
