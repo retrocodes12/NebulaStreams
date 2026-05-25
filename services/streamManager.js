@@ -2,13 +2,29 @@ import { pipeline } from 'node:stream/promises';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { promises as fsPromises } from 'node:fs';
+import { setMaxListeners } from 'node:events';
 import { createClient } from 'redis';
 import { config, cacheConfig } from '../config.js';
 import { enhanceMagnet, extractInfoHash } from '../utils/magnet.js';
 import { logger } from '../utils/logger.js';
 import { RogPlayAdapter } from '../providers/rogplay/RogPlayAdapter.js';
+import { GermanIptvLiveAdapter } from '../src/adapters/GermanIptvLiveAdapter.js';
 
 const { mkdir, readFile, readdir, rm, writeFile } = fsPromises;
+
+const allowHighFanoutAbortSignal = (signal) => {
+  if (!signal?.addEventListener) {
+    return signal;
+  }
+
+  try {
+    setMaxListeners(0, signal);
+  } catch {
+    // Older runtimes may not support EventTarget listener limits.
+  }
+
+  return signal;
+};
 
 const detectSourceType = (source) => {
   const normalized = String(source || '').trim();
@@ -297,7 +313,8 @@ const DEFAULT_STREAM_OPTIONS = Object.freeze({
 });
 const DEFAULT_PRIVATE_PROVIDER_SETTINGS = Object.freeze({
   febboxUiCookie: null,
-  showboxOssGroup: null
+  showboxOssGroup: null,
+  torboxApiKey: null
 });
 const PRIVATE_CONFIG_VERSION = 1;
 const PRIVATE_PROVIDER_COOKIE_MAX_LENGTH = 4096;
@@ -307,6 +324,12 @@ const HIGH_VALUE_CACHE_PATTERN = /\b(4khdhub|hdhub|hubcloud|hub cloud)\b/iu;
 const LAST_GOOD_PRIMARY_PROVIDERS = new Set(['4khdhub', 'scrapling 4khdhub', '4khdhub tv', 'hdhub4u', 'uhdmovies']);
 const LAST_GOOD_SECONDARY_PROVIDERS = new Set(['vidsrc', 'vixsrc', 'vidlink', 'moviebox', 'cinestream', 'streamflix']);
 const DIRECT_PLAYBACK_PROVIDER_IDS = new Set(['4khdhub', 'scrapling-4khdhub', '4khdhub_tv', 'hdhub4u', 'showbox']);
+const REGISTERED_PLAYBACK_PROXY_PROVIDER_IDS = new Set([
+  'hdhub4u',
+  'scrapling-hdhub4u',
+  'streamflix',
+  'streamflix_eng'
+]);
 
 const CONFIGURED_PROFILE_LABELS = Object.freeze({
   wf: Object.freeze({ code: 'WF', label: 'Web Fast' }),
@@ -317,8 +340,14 @@ const CONFIGURED_PROFILE_LABELS = Object.freeze({
   tr: Object.freeze({ code: 'TR', label: 'Turkish Content' }),
   it: Object.freeze({ code: 'IT', label: 'Italian Content' }),
   la: Object.freeze({ code: 'LA', label: 'Latino Content' }),
+  fr: Object.freeze({ code: 'FR', label: 'French Content' }),
   ar: Object.freeze({ code: 'AR', label: 'Arabic Content' })
 });
+const STREMIO_INFLIGHT_STALE_MS = Math.max(
+  config.STREMIO_STREAM_OVERALL_TIMEOUT_MS + 15_000,
+  config.STREMIO_FAST_MAX_WAIT_MS + 30_000,
+  45_000
+);
 
 const copyObjects = (items) => items.map((item) => ({ ...item }));
 const serializeObjects = (items) => JSON.stringify(Array.isArray(items) ? items : []);
@@ -367,6 +396,112 @@ const decryptSourceTokenPayload = (value) => {
     decipher.update(Buffer.from(encrypted, 'base64url')),
     decipher.final()
   ]).toString('utf8');
+};
+
+const extractTorBoxWebDownloadId = (payload) => {
+  const candidates = [
+    payload?.data?.webdl_id,
+    payload?.data?.webdownload_id,
+    payload?.data?.web_id,
+    payload?.data?.id,
+    payload?.webdl_id,
+    payload?.web_id,
+    payload?.id
+  ];
+
+  for (const value of candidates) {
+    const id = Number(value);
+    if (Number.isInteger(id) && id > 0) return id;
+  }
+
+  return null;
+};
+
+const findTorBoxVideoFileId = (payload) => {
+  const data = payload?.data;
+  const candidates = Array.isArray(data)
+    ? data
+    : Array.isArray(data?.files)
+      ? data.files
+      : Array.isArray(data?.download?.files)
+        ? data.download.files
+        : Array.isArray(data?.webdl?.files)
+          ? data.webdl.files
+          : [];
+
+  for (const file of candidates) {
+    const name = String(file?.name || file?.short_name || file?.filename || '').toLowerCase();
+    if (!/\.(?:mkv|mp4|webm|m4v|avi)(?:$|\?)/u.test(name)) continue;
+    const id = Number(file?.id ?? file?.file_id);
+    if (Number.isInteger(id) && id >= 0) return id;
+  }
+
+  return null;
+};
+
+const TORBOX_DDL_HOST_PATTERNS = Object.freeze([
+  /(?:^|\.)1fichier\.com$/iu,
+  /(?:^|\.)buzzheavier\.com$/iu,
+  /(?:^|\.)filemoon\./iu,
+  /(?:^|\.)gofile\.io$/iu,
+  /(?:^|\.)katfile\.com$/iu,
+  /(?:^|\.)krakenfiles\.com$/iu,
+  /(?:^|\.)mediafire\.com$/iu,
+  /(?:^|\.)mega\.nz$/iu,
+  /(?:^|\.)megaup\.net$/iu,
+  /(?:^|\.)mixdrop\./iu,
+  /(?:^|\.)pixeldrain\.(?:com|dev)$/iu,
+  /(?:^|\.)qiwi\.gg$/iu,
+  /(?:^|\.)rapidgator\.net$/iu,
+  /(?:^|\.)send\.(?:cm|now)$/iu,
+  /(?:^|\.)sendgb\.com$/iu,
+  /(?:^|\.)streamtape\./iu,
+  /(?:^|\.)userscloud\.com$/iu,
+  /(?:^|\.)workupload\.com$/iu
+]);
+
+const isDirectPlayableMediaUrl = (url) => {
+  try {
+    const parsed = new URL(String(url || ''));
+    return /\.(?:m3u8|mp4|webm|m4v)(?:$|[?#])/iu.test(parsed.pathname);
+  } catch {
+    return false;
+  }
+};
+
+const isTorBoxDdlCandidateStream = (stream) => {
+  if (!stream?.url || stream.transport !== 'http' || isDirectPlayableMediaUrl(stream.url)) {
+    return false;
+  }
+
+  try {
+    const host = new URL(String(stream.url)).hostname.toLowerCase();
+    return TORBOX_DDL_HOST_PATTERNS.some((pattern) => pattern.test(host));
+  } catch {
+    return false;
+  }
+};
+
+const enableTorBoxDdlStreams = (streams, privateProviderSettings = null) => {
+  if (!String(privateProviderSettings?.torboxApiKey || '').trim()) {
+    return streams;
+  }
+
+  return streams.map((stream) => {
+    if (!isTorBoxDdlCandidateStream(stream)) {
+      return stream;
+    }
+
+    return {
+      ...stream,
+      torboxWebDownload: true,
+      sourceSite: stream.sourceSite ? `${stream.sourceSite} via TorBox` : 'TorBox DDL',
+      behaviorHints: {
+        ...(stream.behaviorHints || {}),
+        notWebReady: false
+      }
+    };
+  });
 };
 
 const normalizeProviderLabel = (value) =>
@@ -849,6 +984,10 @@ const needsRegisteredPlaybackProxy = (stream) => {
     return true;
   }
 
+  if (REGISTERED_PLAYBACK_PROXY_PROVIDER_IDS.has(providerId)) {
+    return true;
+  }
+
   if (hasForwardHeaders(forwardHeaders)) {
     if (providerId === 'nuvio') {
       return true;
@@ -1069,6 +1208,8 @@ const filterConfiguredStreamsDetailed = (streams, streamOptions) => {
     dedupedTotal: 0,
     dedupeMode: normalizeDedupeMode(streamOptions.dedupeMode),
     reasons: {
+      archiveFile: 0,
+      knownUnplayable: 0,
       nonHttp: 0,
       notWebReady: 0,
       heavyFormat: 0,
@@ -1078,6 +1219,8 @@ const filterConfiguredStreamsDetailed = (streams, streamOptions) => {
       duplicate: 0
     },
     examples: {
+      archiveFile: [],
+      knownUnplayable: [],
       nonHttp: [],
       notWebReady: [],
       heavyFormat: [],
@@ -1097,7 +1240,11 @@ const filterConfiguredStreamsDetailed = (streams, streamOptions) => {
   for (const stream of streams) {
     let reason = null;
 
-    if (stream.transport !== 'http') {
+    if (isArchiveStream(stream)) {
+      reason = 'archiveFile';
+    } else if (isKnownUnplayableStream(stream)) {
+      reason = 'knownUnplayable';
+    } else if (stream.transport !== 'http') {
       reason = 'nonHttp';
     } else if (streamOptions.webReadyOnly && !isWebReadyHttpStream(stream) && !isTrustedDirectHttpStream(stream) && !isProxyReadyHttpStream(stream) && !needsRegisteredPlaybackProxy(stream)) {
       reason = 'notWebReady';
@@ -1297,13 +1444,14 @@ const getConfiguredProxyUrlForStream = (stream, customProxyUrl = null) => {
 
 const normalizePrivateProviderSettings = (value) => ({
   febboxUiCookie: normalizePrivateCookie(value?.febboxUiCookie),
-  showboxOssGroup: normalizePrivateCookie(value?.showboxOssGroup)
+  showboxOssGroup: normalizePrivateCookie(value?.showboxOssGroup),
+  torboxApiKey: normalizePrivateCookie(value?.torboxApiKey)
 });
 
 const getPrivateProviderSettingsHash = (privateProviderSettings) => {
   const normalized = normalizePrivateProviderSettings(privateProviderSettings);
 
-  if (!normalized.febboxUiCookie && !normalized.showboxOssGroup) {
+  if (!normalized.febboxUiCookie && !normalized.showboxOssGroup && !normalized.torboxApiKey) {
     return null;
   }
 
@@ -1355,8 +1503,56 @@ const getDeliveryPriorityScore = (stream) => {
   return 0;
 };
 
+const NUVIO_PLUGIN_PRIORITY_SCORES = Object.freeze({
+  notorrent: 260,
+  vidlink: 250,
+  castle: 240,
+  hdhub4u: 230,
+  cinemm: 225,
+  moviebox: 205,
+  goatapi: 200,
+  onetouchtv: 190,
+  netmirrornew: 185,
+  netmirror: 180,
+  movieboxhindi: 180,
+  hindmoviez: 175,
+  isaidub: 165,
+  '4khdhubnew': 160,
+  '4khdhub': 155,
+  uhdmovies: 150,
+  hdmovie2: 145
+});
+
+const getNuvioPluginPriorityScore = (stream) => {
+  const providerId = String(stream?.provider || '').trim().toLowerCase();
+  const streamText = [
+    stream?.pluginProvider,
+    stream?.sourceSite,
+    stream?.title,
+    stream?.description,
+    stream?.name
+  ].map((value) => String(value || '')).join(' ');
+  const nuvioSourceMatch = streamText.match(/(?:🔗\s*)?([A-Za-z0-9_-]+)\s+from\s+Nuvio/iu);
+
+  if (!providerId.startsWith('nuvio') && !nuvioSourceMatch) {
+    return 0;
+  }
+
+  const pluginProvider = String(
+    stream?.pluginProvider
+    || stream?.sourceSite
+    || nuvioSourceMatch?.[1]
+    || ''
+  ).trim().toLowerCase();
+  return (NUVIO_PLUGIN_PRIORITY_SCORES[pluginProvider] || 0) * 500;
+};
+
 const getProviderPlaybackReliabilityScore = (stream) => {
   const providerId = String(stream?.provider || '').trim().toLowerCase();
+
+  if (providerId.startsWith('nuvio')) {
+    return getNuvioPluginPriorityScore(stream);
+  }
 
   if (providerId === 'showbox') {
     return 18000;
@@ -1465,6 +1661,7 @@ const getStreamDiversityOptions = (streams, { requestedProviders = [] } = {}) =>
 
 const fetchTextWithTimeout = async (url, options = {}, timeout = 8000) => {
   const controller = new AbortController();
+  allowHighFanoutAbortSignal(controller.signal);
   const timeoutId = setTimeout(() => controller.abort(), timeout);
   timeoutId.unref?.();
 
@@ -1702,6 +1899,7 @@ const resolveHubDriveDirectDownload = async (streamUrl) => {
   }
 
   const controller = new AbortController();
+  allowHighFanoutAbortSignal(controller.signal);
   const timeoutId = setTimeout(() => controller.abort(), HUBCLOUD_FETCH_TIMEOUT_MS);
 
   try {
@@ -2136,6 +2334,48 @@ const isPlainHlsUrl = (streamUrl) => {
   }
 };
 
+const ARCHIVE_STREAM_EXTENSION_PATTERN = /\.(?:zip|rar|7z|tar|gz|bz2|xz)(?:$|[?#\s])/iu;
+const KNOWN_UNPLAYABLE_STREAM_HOSTS = new Set([
+  'cdn.video-gen.xyz',
+  'video-gen.xyz',
+  'bb.streamflixserver.site'
+]);
+
+const isArchiveStream = (stream) => {
+  const text = [
+    stream?.filename,
+    stream?.fileName,
+    stream?.title,
+    stream?.name,
+    stream?.url
+  ].map((value) => String(value || '')).join(' ');
+
+  return ARCHIVE_STREAM_EXTENSION_PATTERN.test(text);
+};
+
+const isKnownUnplayableStream = (stream) => {
+  try {
+    const hostname = new URL(String(stream?.url || '')).hostname.toLowerCase();
+
+    if (!KNOWN_UNPLAYABLE_STREAM_HOSTS.has(hostname)) {
+      return false;
+    }
+  } catch {
+    return false;
+  }
+
+  const providerText = [
+    stream?.provider,
+    stream?.sourceProvider,
+    stream?.pluginProvider,
+    stream?.sourceSite,
+    stream?.title,
+    stream?.name
+  ].map((value) => String(value || '').toLowerCase()).join(' ');
+
+  return providerText.includes('uhdmovies') || providerText.includes('streamflix');
+};
+
 const isWebReadyPlaybackProxyStream = (stream) =>
   Boolean(stream?.url)
   && !hasForwardHeaders(getProviderForwardHeaders(stream))
@@ -2153,6 +2393,93 @@ const getTorrentSources = (magnet) => {
   } catch {
     return [];
   }
+};
+
+const getAioStreamType = (stream) => {
+  if (stream.transport === 'torrent' || stream.magnet || stream.infoHash) {
+    return 'p2p';
+  }
+
+  return 'http';
+};
+
+const getAioParsedFile = (stream, qualityLabel, visualTags, encodeTags) => {
+  const parsedFile = {};
+  const normalizedQuality = normalizeQualityKey(stream.quality);
+  const languages = getStreamLanguages(stream);
+
+  if (normalizedQuality !== 'unknown') {
+    parsedFile.resolution = normalizedQuality;
+  } else if (qualityLabel && qualityLabel !== 'UNKNOWN') {
+    parsedFile.resolution = qualityLabel;
+  }
+
+  if (visualTags.length > 0) {
+    parsedFile.quality = visualTags.find((tag) => /web|bluray|remux/iu.test(tag)) || visualTags[0];
+    parsedFile.visualTags = visualTags;
+  }
+
+  if (encodeTags.length > 0) {
+    parsedFile.encode = encodeTags[0];
+  }
+
+  parsedFile.audioChannels = [];
+  parsedFile.audioTags = getAudioTags(stream);
+  parsedFile.languages = languages;
+  parsedFile.visualTags = parsedFile.visualTags || visualTags;
+
+  return parsedFile;
+};
+
+const getAioStreamData = (stream, stremioStream, parsedRequest, context = {}) => {
+  const providerLabel = context.providerLabel || toTitleCaseLabel(stream.provider || 'Default');
+  const sourceLabel = context.sourceLabel || getSourceLabel(stream);
+  const filename = context.filename || stream.filename || stremioStream.behaviorHints?.filename || stremioStream.filename;
+  const size = context.videoSize || getStreamSizeBytes(stream);
+  const infoHash = stream.infoHash || stremioStream.infoHash || extractInfoHash(stream.magnet);
+  const data = {
+    id: createHash('sha1')
+      .update([
+        parsedRequest.mediaType,
+        parsedRequest.imdbId || parsedRequest.tmdbId || '',
+        parsedRequest.season || '',
+        parsedRequest.episode || '',
+        stream.provider || '',
+        stream.url || stream.magnet || infoHash || '',
+        filename || ''
+      ].join('|'))
+      .digest('hex'),
+    addon: sourceLabel && sourceLabel !== providerLabel
+      ? `${providerLabel} / ${sourceLabel}`
+      : providerLabel,
+    type: getAioStreamType(stream),
+    indexer: stream.sourceSite || stream.provider || undefined,
+    proxied: Boolean(String(stremioStream.url || '').includes('/stream?')),
+    parsedFile: getAioParsedFile(
+      stream,
+      context.qualityLabel || String(stream.quality || '').toUpperCase(),
+      context.visualTags || [],
+      context.encodeTags || []
+    )
+  };
+
+  if (filename) {
+    data.filename = filename;
+  }
+
+  if (size) {
+    data.size = size;
+  }
+
+  if (infoHash) {
+    data.torrent = {
+      infoHash,
+      ...(stream.fileIdx !== undefined ? { fileIdx: stream.fileIdx } : {}),
+      ...(Array.isArray(stremioStream.sources) && stremioStream.sources.length > 0 ? { sources: stremioStream.sources } : {})
+    };
+  }
+
+  return data;
 };
 
 const toStremioStreamObject = (stream, parsedRequest, streamOptions = DEFAULT_STREAM_OPTIONS) => {
@@ -2263,10 +2590,23 @@ const toStremioStreamObject = (stream, parsedRequest, streamOptions = DEFAULT_ST
 
     const sources = getTorrentSources(stream.magnet);
 
-    return {
+    const stremioStream = {
       ...base,
       infoHash,
       ...(sources.length > 0 ? { sources } : {})
+    };
+
+    return {
+      ...stremioStream,
+      streamData: getAioStreamData(stream, stremioStream, parsedRequest, {
+        providerLabel,
+        sourceLabel,
+        filename: behaviorFilename,
+        qualityLabel,
+        visualTags,
+        encodeTags,
+        videoSize
+      })
     };
   }
 
@@ -2279,7 +2619,7 @@ const toStremioStreamObject = (stream, parsedRequest, streamOptions = DEFAULT_ST
   const streamUrl = proxiedUrl || stream.url;
   const isWebReady = proxiedUrl ? true : isWebReadyHttpStream(stream);
 
-  return {
+  const stremioStream = {
     ...base,
     url: streamUrl,
     ...(behaviorFilename ? { filename: behaviorFilename } : {}),
@@ -2292,6 +2632,19 @@ const toStremioStreamObject = (stream, parsedRequest, streamOptions = DEFAULT_ST
         }
       } : {})
     }
+  };
+
+  return {
+    ...stremioStream,
+    streamData: getAioStreamData(stream, stremioStream, parsedRequest, {
+      providerLabel,
+      sourceLabel,
+      filename: behaviorFilename,
+      qualityLabel,
+      visualTags,
+      encodeTags,
+      videoSize
+    })
   };
 };
 
@@ -2398,6 +2751,7 @@ export class StreamManager {
     this.popularStreamPrewarmLastError = null;
     this.popularStreamPrewarmLastResultCount = 0;
     this.rogPlayAdapter = new RogPlayAdapter({ logger });
+    this.germanIptvLiveAdapter = new GermanIptvLiveAdapter({ logger });
   }
 
   async initialize() {
@@ -2425,6 +2779,14 @@ export class StreamManager {
 
     this.stremioBackgroundRefreshQueue = [];
     this.stremioBackgroundRefreshes.clear();
+    for (const request of this.stremioResultInFlight.values()) {
+      request?.controller?.abort?.(createHttpError(499, 'Stream manager closing'));
+    }
+    this.stremioResultInFlight.clear();
+    for (const request of this.hubCloudInFlight.values()) {
+      request?.controller?.abort?.(createHttpError(499, 'Stream manager closing'));
+    }
+    this.hubCloudInFlight.clear();
     await this.redisStreamResultCache.close();
   }
 
@@ -2474,6 +2836,8 @@ export class StreamManager {
   }
 
   async waitForStremioResultSlot({ resultCacheKey, tmdbId, mediaType }) {
+    this.sweepStaleStremioInFlight();
+
     if (this.stremioResultInFlight.size < config.STREMIO_MAX_INFLIGHT_SEARCHES) {
       return true;
     }
@@ -2519,6 +2883,29 @@ export class StreamManager {
     }
 
     return true;
+  }
+
+  sweepStaleStremioInFlight() {
+    const now = Date.now();
+    let staleCount = 0;
+
+    for (const [cacheKey, request] of this.stremioResultInFlight.entries()) {
+      const startedAt = Number(request?.startedAt || 0);
+      if (!startedAt || now - startedAt <= STREMIO_INFLIGHT_STALE_MS) {
+        continue;
+      }
+
+      staleCount += 1;
+      request?.controller?.abort?.(createHttpError(499, 'Stale Stremio search aborted'));
+      this.stremioResultInFlight.delete(cacheKey);
+    }
+
+    if (staleCount > 0) {
+      logger.warn('stale stremio searches aborted', {
+        staleCount,
+        remainingInFlight: this.stremioResultInFlight.size
+      });
+    }
   }
 
   handleMemoryPressure({ critical = false } = {}) {
@@ -2837,7 +3224,7 @@ export class StreamManager {
 
   buildStremioResultCacheKey({ tmdbId, mediaType, season, episode, providers, qualityPriority, streamOptions, privateProviderSettingsHash = null }) {
     return JSON.stringify({
-      version: 113,
+      version: 129,
       tmdbId,
       mediaType,
       season: season ?? null,
@@ -3282,7 +3669,10 @@ export class StreamManager {
   async handleStremioManifest(req, res) {
     const baseUrl = getStremioRequestBaseUrl(req);
     const addonPresentation = this.getAddonPresentation(req);
-    const liveCatalogs = this.rogPlayAdapter.getLiveCatalogDefinitions().map((catalog) => ({
+    const liveCatalogs = [
+      ...this.rogPlayAdapter.getLiveCatalogDefinitions(),
+      ...this.germanIptvLiveAdapter.getLiveCatalogDefinitions()
+    ].map((catalog) => ({
       type: 'tv',
       id: catalog.id,
       name: catalog.name,
@@ -3302,16 +3692,16 @@ export class StreamManager {
         {
           name: 'catalog',
           types: ['tv'],
-          idPrefixes: ['rogplay:']
+          idPrefixes: ['rogplay:', 'cs-german:']
         },
         {
           name: 'meta',
           types: ['tv'],
-          idPrefixes: ['rogplay:']
+          idPrefixes: ['rogplay:', 'cs-german:']
         }
       ],
       types: ['movie', 'series', 'tv'],
-      idPrefixes: ['tt', 'tmdb:', 'rogplay:'],
+      idPrefixes: ['tt', 'tmdb:', 'rogplay:', 'cs-german:'],
       catalogs: liveCatalogs,
       behaviorHints: {
         configurable: addonPresentation.configurable,
@@ -3343,16 +3733,46 @@ export class StreamManager {
       return;
     }
 
+    if (this.isGermanIptvLiveStreamRequest(req.params.type, req.params.id)) {
+      try {
+        const streams = await this.germanIptvLiveAdapter.getLiveStreams(req.params.id);
+        this.sendStremioStreamsResponse(res, streams);
+      } catch (error) {
+        logger.warn('german iptv live stream lookup failed', {
+          id: req.params.id,
+          error
+        });
+        this.sendStremioStreamsResponse(res, []);
+      }
+      return;
+    }
+
     const overallTimeoutMs = Math.max(
       config.STREMIO_STREAM_OVERALL_TIMEOUT_MS,
       config.STREMIO_FAST_MAX_WAIT_MS + 5_000
     );
+    const requestAbortController = new AbortController();
+    allowHighFanoutAbortSignal(requestAbortController.signal);
+    const abortActiveSearch = (message) => {
+      if (!requestAbortController.signal.aborted) {
+        requestAbortController.abort(createHttpError(499, message));
+      }
+    };
+    const onClientClose = () => {
+      if (!res.writableEnded) {
+        abortActiveSearch('Stremio client disconnected');
+      }
+    };
+    req.on('aborted', onClientClose);
+    res.on('close', onClientClose);
     let timeoutFallbackContext = null;
     const overallTimeout = setTimeout(() => {
       void (async () => {
         if (res.headersSent) {
           return;
         }
+
+        abortActiveSearch('Stremio route overall timeout');
 
         logger.warn('stremio stream request overall timeout', {
           imdbId: req.params.id,
@@ -3486,6 +3906,7 @@ export class StreamManager {
           streamOptions,
           tmdbId,
           privateProviderSettings,
+          signal: requestAbortController.signal,
           cacheResult: false
         });
 
@@ -3502,19 +3923,12 @@ export class StreamManager {
           loadSheddingUntil: new Date(this.loadSheddingUntil).toISOString(),
           reason: this.loadSheddingReason
         });
-        const degradedStreams = await this.buildStremioStreams({
-          resultCacheKey,
-          baseUrl,
-          parsed,
-          requestedProviders,
-          qualityPriority,
-          streamOptions,
-          tmdbId,
-          privateProviderSettings,
-          cacheResult: false
-        });
 
-        res.setHeader('X-NebulaStreams-Mode', 'configured-degraded');
+        const degradedStreams = Array.isArray(lastGoodStreams) && lastGoodStreams.length > 0
+          ? lastGoodStreams
+          : (cachedResult?.streams || []);
+
+        res.setHeader('X-NebulaStreams-Mode', degradedStreams.length > 0 ? 'configured-degraded-cache' : 'configured-degraded-empty');
         clearTimeout(overallTimeout);
         this.sendStremioStreamsResponse(res, degradedStreams);
         return;
@@ -3528,7 +3942,8 @@ export class StreamManager {
         qualityPriority,
         streamOptions,
         tmdbId,
-        privateProviderSettings
+        privateProviderSettings,
+        signal: requestAbortController.signal
       };
 
       if (lastGoodStreams?.length && getLastGoodStreamSetScore(lastGoodStreams) > 0) {
@@ -3554,7 +3969,7 @@ export class StreamManager {
         const buildPromise = this.getOrBuildStremioStreams(buildInput);
         stremioStreams = await withTimeoutFallback(
           buildPromise,
-          Math.max(5_000, overallTimeoutMs - 5_000),
+          Math.max(5_000, overallTimeoutMs - 500),
           buildTimeoutSentinel
         );
 
@@ -3571,16 +3986,21 @@ export class StreamManager {
             });
 
             res.setHeader('X-NebulaStreams-Cache', 'deadline-fallback');
+            abortActiveSearch('Stremio deadline fallback served');
             clearTimeout(overallTimeout);
             this.sendStremioStreamsResponse(res, fallbackStreams);
             return;
           }
 
-          logger.warn('stremio build crossed soft deadline; waiting for real result', {
+          logger.warn('stremio build crossed soft deadline; returning empty before client timeout', {
             tmdbId,
             mediaType: parsed.mediaType
           });
-          stremioStreams = await buildPromise;
+          abortActiveSearch('Stremio soft deadline reached');
+          res.setHeader('X-NebulaStreams-Cache', 'deadline-empty');
+          clearTimeout(overallTimeout);
+          this.sendStremioStreamsResponse(res, []);
+          return;
         }
       } catch (error) {
         if (lastGoodStreams?.length) {
@@ -3625,6 +4045,9 @@ export class StreamManager {
     } catch (error) {
       clearTimeout(overallTimeout);
       next(error);
+    } finally {
+      req.off('aborted', onClientClose);
+      res.off('close', onClientClose);
     }
   }
 
@@ -3654,8 +4077,9 @@ export class StreamManager {
       return;
     }
 
+    const { signal: _signal, ...backgroundInput } = input;
     this.stremioBackgroundRefreshes.add(input.resultCacheKey);
-    this.stremioBackgroundRefreshQueue.push(input);
+    this.stremioBackgroundRefreshQueue.push(backgroundInput);
     this.runStremioBackgroundRefreshQueue();
   }
 
@@ -3691,8 +4115,11 @@ export class StreamManager {
     qualityPriority,
     streamOptions,
     tmdbId,
-    privateProviderSettings
+    privateProviderSettings,
+    signal = null
   }) {
+    this.sweepStaleStremioInFlight();
+
     const existingRequest = this.stremioResultInFlight.get(resultCacheKey);
 
     if (existingRequest) {
@@ -3743,6 +4170,23 @@ export class StreamManager {
       return [];
     }
 
+    const requestAbortController = new AbortController();
+    allowHighFanoutAbortSignal(requestAbortController.signal);
+    let abortHandler = null;
+
+    if (signal) {
+      allowHighFanoutAbortSignal(signal);
+
+      if (signal.aborted) {
+        return [];
+      }
+
+      abortHandler = () => {
+        requestAbortController.abort(signal.reason || createHttpError(499, 'Stremio search aborted'));
+      };
+      signal.addEventListener('abort', abortHandler, { once: true });
+    }
+
     const request = this.buildStremioStreams({
       resultCacheKey,
       baseUrl,
@@ -3751,8 +4195,11 @@ export class StreamManager {
       qualityPriority,
       streamOptions,
       tmdbId,
-      privateProviderSettings
+      privateProviderSettings,
+      signal: requestAbortController.signal
     });
+    request.startedAt = Date.now();
+    request.controller = requestAbortController;
 
     this.stremioResultInFlight.set(resultCacheKey, request);
 
@@ -3760,6 +4207,9 @@ export class StreamManager {
       const streams = await request;
       return copyObjects(streams);
     } finally {
+      if (abortHandler && signal) {
+        signal.removeEventListener('abort', abortHandler);
+      }
       this.stremioResultInFlight.delete(resultCacheKey);
     }
   }
@@ -3773,6 +4223,7 @@ export class StreamManager {
     streamOptions,
     tmdbId,
     privateProviderSettings,
+    signal = null,
     cacheResult = true
   }) {
     const result = await this.providerService.getFastStreams({
@@ -3783,7 +4234,8 @@ export class StreamManager {
       season: parsed.season,
       episode: parsed.episode,
       streamOptions,
-      privateProviderSettings
+      privateProviderSettings,
+      signal
     });
 
     if (result.streams.length === 0) {
@@ -3841,7 +4293,8 @@ export class StreamManager {
     const rawStreamsForNormalization = hasShowboxRawStreams
       ? result.streams.filter((stream) => !isHubCloudUrl(String(stream?.url || '').trim()))
       : result.streams;
-    const normalizedStreams = await this.normalizeProviderStreams(baseUrl, rawStreamsForNormalization);
+    let normalizedStreams = await this.normalizeProviderStreams(baseUrl, rawStreamsForNormalization);
+    normalizedStreams = enableTorBoxDdlStreams(normalizedStreams, privateProviderSettings);
     let { streams: configuredStreams } = filterConfiguredStreamsDetailed(normalizedStreams, streamOptions);
 
     if (configuredStreams.length === 0 && normalizedStreams.length > 0) {
@@ -3886,6 +4339,34 @@ export class StreamManager {
       })
     );
     const playbackStreams = await Promise.all(dedupedStreams.map(async (stream) => {
+      if (stream?.torboxWebDownload && privateProviderSettings?.torboxApiKey) {
+        try {
+          const streamUrl = this.createTorBoxWebDownloadStreamUrl(baseUrl, {
+            source: stream.url,
+            apiKey: privateProviderSettings.torboxApiKey,
+            filename: stream.filename || stream.fileName || stream.title,
+            provider: stream.provider
+          });
+
+          return {
+            ...stream,
+            url: streamUrl.toString(),
+            headers: null,
+            behaviorHints: {
+              ...stream.behaviorHints,
+              notWebReady: false
+            }
+          };
+        } catch (error) {
+          logger.warn('failed to create torbox webdl stream url', {
+            provider: stream.provider,
+            url: stream.url,
+            error
+          });
+          return stream;
+        }
+      }
+
       if (!needsRegisteredPlaybackProxy(stream)) {
         return stream;
       }
@@ -3937,6 +4418,8 @@ export class StreamManager {
     if (cacheResult && !result.partial) {
       await this.setCachedStremioStreams(resultCacheKey, stremioStreams, { weak: useWeakCache, hasCinestream, hasShowbox });
     } else if (cacheResult && result.partial && stremioStreams.length > 0) {
+      await this.setCachedStremioStreams(resultCacheKey, stremioStreams, { weak: true, hasCinestream, hasShowbox });
+
       const refreshInput = {
         resultCacheKey,
         baseUrl,
@@ -4027,6 +4510,122 @@ export class StreamManager {
     }
   }
 
+  createTorBoxWebDownloadStreamUrl(baseUrl, {
+    source,
+    apiKey,
+    filename = null,
+    provider = null
+  } = {}) {
+    const normalizedSource = this.normalizeHttpSource(source);
+    const normalizedApiKey = normalizePrivateCookie(apiKey);
+
+    if (!normalizedApiKey) {
+      throw createHttpError(400, 'TorBox API key is required');
+    }
+
+    const token = encryptSourceTokenPayload(JSON.stringify({
+      version: SOURCE_TOKEN_VERSION,
+      expiresAt: Date.now() + (90 * 60 * 1000),
+      source: normalizedSource,
+      apiKey: normalizedApiKey,
+      filename: filename ? String(filename).slice(0, 180) : null,
+      provider: provider ? String(provider).slice(0, 80) : null
+    }));
+    const streamUrl = new URL('/torbox/webdl', baseUrl);
+    streamUrl.searchParams.set('token', token);
+    if (filename) {
+      streamUrl.searchParams.set('filename', String(filename).slice(0, 180));
+    }
+    return streamUrl;
+  }
+
+  decodeTorBoxWebDownloadToken(token) {
+    let parsed;
+
+    try {
+      parsed = JSON.parse(decryptSourceTokenPayload(token));
+    } catch {
+      throw createHttpError(400, 'Invalid TorBox token');
+    }
+
+    if (!parsed || parsed.version !== SOURCE_TOKEN_VERSION) {
+      throw createHttpError(400, 'Unsupported TorBox token');
+    }
+
+    if (!Number.isFinite(Number(parsed.expiresAt)) || Number(parsed.expiresAt) <= Date.now()) {
+      throw createHttpError(404, 'TorBox token has expired');
+    }
+
+    return {
+      source: this.normalizeHttpSource(parsed.source),
+      apiKey: normalizePrivateCookie(parsed.apiKey),
+      filename: parsed.filename ? String(parsed.filename).slice(0, 180) : null
+    };
+  }
+
+  async handleTorBoxWebDownload(req, res, next) {
+    try {
+      const payload = this.decodeTorBoxWebDownloadToken(req.query.token);
+      const form = new FormData();
+      form.set('link', payload.source);
+      form.set('as_queued', 'true');
+      if (payload.filename) {
+        form.set('name', payload.filename);
+      }
+
+      const createResponse = await fetch('https://api.torbox.app/v1/api/webdl/createwebdownload', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${payload.apiKey}`,
+          accept: 'application/json'
+        },
+        body: form
+      });
+      const createPayload = await createResponse.json().catch(() => ({}));
+
+      if (!createResponse.ok && createResponse.status !== 409) {
+        throw createHttpError(createResponse.status || 502, createPayload?.detail || 'TorBox web download failed');
+      }
+
+      const webId = extractTorBoxWebDownloadId(createPayload);
+      if (!webId) {
+        throw createHttpError(502, createPayload?.detail || 'TorBox did not return a web download id');
+      }
+
+      let fileId = null;
+      try {
+        const listUrl = new URL('https://api.torbox.app/v1/api/webdl/mylist');
+        listUrl.searchParams.set('id', String(webId));
+        listUrl.searchParams.set('bypass_cache', 'true');
+        const listResponse = await fetch(listUrl, {
+          headers: {
+            authorization: `Bearer ${payload.apiKey}`,
+            accept: 'application/json'
+          }
+        });
+        const listPayload = await listResponse.json().catch(() => ({}));
+        fileId = findTorBoxVideoFileId(listPayload);
+      } catch (error) {
+        logger.info('torbox webdl file lookup failed', {
+          webId,
+          error: error?.message || String(error)
+        });
+      }
+
+      const requestUrl = new URL('https://api.torbox.app/v1/api/webdl/requestdl');
+      requestUrl.searchParams.set('token', payload.apiKey);
+      requestUrl.searchParams.set('web_id', String(webId));
+      if (fileId !== null) requestUrl.searchParams.set('file_id', String(fileId));
+      else requestUrl.searchParams.set('zip_link', 'true');
+      requestUrl.searchParams.set('redirect', 'true');
+      requestUrl.searchParams.set('append_name', 'true');
+
+      res.redirect(302, requestUrl.toString());
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async handleCreatePrivateConfig(req, res, next) {
     try {
       const { configId, manifestPath } = await this.createPrivateConfig({
@@ -4055,6 +4654,7 @@ export class StreamManager {
       const streams = await this.providerService.getStreams({
         provider,
         tmdbId: req.query.tmdbId,
+        imdbId: req.query.imdbId,
         mediaType: req.query.mediaType,
         season: req.query.season,
         episode: req.query.episode,
@@ -4153,12 +4753,14 @@ export class StreamManager {
       const type = String(req.params.type || '').trim().toLowerCase();
       const catalogId = String(req.params.id || '').trim();
 
-      if (type !== 'tv' || !catalogId.startsWith('rogplay-live-')) {
+      if (type !== 'tv' || (!catalogId.startsWith('rogplay-live-') && !catalogId.startsWith('cs-german-live-'))) {
         res.json({ metas: [] });
         return;
       }
 
-      const catalog = this.rogPlayAdapter.getLiveCatalogDefinitions()
+      const isGermanCatalog = catalogId.startsWith('cs-german-live-');
+      const liveAdapter = isGermanCatalog ? this.germanIptvLiveAdapter : this.rogPlayAdapter;
+      const catalog = liveAdapter.getLiveCatalogDefinitions()
         .find((definition) => definition.id === catalogId);
 
       if (!catalog) {
@@ -4167,7 +4769,7 @@ export class StreamManager {
       }
 
       const skip = Number.parseInt(req.query.skip || '0', 10);
-      let metas = await this.rogPlayAdapter.getLiveCatalog({
+      let metas = await liveAdapter.getLiveCatalog({
         category: catalog.category,
         source: catalog.source || null,
         skip: Number.isInteger(skip) && skip > 0 ? skip : 0
@@ -4189,12 +4791,14 @@ export class StreamManager {
       const type = String(req.params.type || '').trim().toLowerCase();
       const id = String(req.params.id || '').trim();
 
-      if (type !== 'tv' || !id.startsWith('rogplay:')) {
+      if (type !== 'tv' || (!id.startsWith('rogplay:') && !id.startsWith('cs-german:'))) {
         res.json({ meta: null });
         return;
       }
 
-      const meta = await this.rogPlayAdapter.getLiveMeta(id);
+      const meta = id.startsWith('cs-german:')
+        ? await this.germanIptvLiveAdapter.getLiveMeta(id)
+        : await this.rogPlayAdapter.getLiveMeta(id);
       res.json({ meta });
     } catch (error) {
       next(error);
@@ -4205,6 +4809,12 @@ export class StreamManager {
     const normalizedType = String(type || '').trim().toLowerCase();
     return (normalizedType === 'tv' || normalizedType === 'live' || normalizedType === 'channel')
       && String(id || '').startsWith('rogplay:');
+  }
+
+  isGermanIptvLiveStreamRequest(type, id) {
+    const normalizedType = String(type || '').trim().toLowerCase();
+    return (normalizedType === 'tv' || normalizedType === 'live' || normalizedType === 'channel')
+      && String(id || '').startsWith('cs-german:');
   }
 
   async handleUnifiedStream(req, res, next) {
@@ -4820,6 +5430,29 @@ export class StreamManager {
               return normalizedEntries;
             }
 
+            const providerId = String(provider || '').trim().toLowerCase();
+            const sourceProviderText = String(rest.sourceProvider || rest.pluginProvider || '').trim().toLowerCase();
+            const shouldKeepUnresolvedHubCloud =
+              providerId === '4khdhub'
+              || providerId === '4khdhub_tv'
+              || providerId === 'scrapling-4khdhub'
+              || (providerId === 'r2-plugin' && sourceProviderText.includes('4khdhub'));
+
+            if (shouldKeepUnresolvedHubCloud) {
+              return [{
+                ...rest,
+                provider,
+                headers: variant.headers,
+                transport: 'http',
+                url: normalizedUrl,
+                filename: rest.filename || extractFilenameFromUrl(normalizedUrl),
+                behaviorHints: {
+                  ...(rest.behaviorHints || {}),
+                  notWebReady: true
+                }
+              }];
+            }
+
             return [];
           }
 
@@ -5007,6 +5640,22 @@ export class StreamManager {
       await pipeline(stream, res);
       completed = true;
     } catch (error) {
+      const errorCode = String(error?.code || '');
+      const errorMessage = String(error?.message || '');
+      const clientClosed = errorCode === 'ERR_STREAM_PREMATURE_CLOSE'
+        || errorCode === 'ECONNRESET'
+        || errorMessage === 'aborted'
+        || errorMessage === 'Premature close';
+
+      if (clientClosed) {
+        logger.info('stream client disconnected before pipeline completed', {
+          activeStreams: this.activeStreams,
+          errorCode,
+          errorMessage
+        });
+        return;
+      }
+
       logger.error('stream pipeline failed', {
         activeStreams: this.activeStreams,
         error

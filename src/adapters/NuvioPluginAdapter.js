@@ -4,24 +4,28 @@ import { createRequire } from 'node:module';
 import { PluginProviderAdapter } from './PluginProviderAdapter.js';
 import { normalizePluginStreams } from '../normalizers/pluginStreamNormalizer.js';
 import { withTimeout } from '../utils/timeout.js';
+import { config } from '../../config.js';
 
 const require = createRequire(import.meta.url);
 
 const DEFAULT_MANIFEST_URL = 'https://raw.githubusercontent.com/D3adlyRocket/All-in-One-Nuvio/refs/heads/main/manifest.json';
 const DEFAULT_RAW_BASE_URL = 'https://raw.githubusercontent.com/D3adlyRocket/All-in-One-Nuvio/refs/heads/main/';
 const DEFAULT_PROVIDER_ORDER = Object.freeze([
+  'notorrent',
+  'vidlink',
+  'castle',
+  'hdhub4u',
   'cinemm',
   'moviebox',
-  'zinkmovies',
-  'hdhub4u',
-  'notorrent',
-  'isaidub',
-  'castle',
-  'vidlink',
-  'netmirror',
+  'goatapi',
   'netmirrornew',
-  'lordflix',
+  'netmirror',
   'onetouchtv',
+  'movieboxhindi',
+  'hindmoviez',
+  'zinkmovies',
+  'isaidub',
+  'lordflix',
   'lamovie',
   'hdmovie2',
   'dooflix',
@@ -61,6 +65,25 @@ const DEFAULT_PROVIDER_ORDER = Object.freeze([
   'streamflix',
   'rgshows'
 ]);
+const RELIABLE_PLUGIN_SCORES = Object.freeze({
+  notorrent: 260,
+  vidlink: 250,
+  castle: 240,
+  hdhub4u: 230,
+  cinemm: 225,
+  moviebox: 205,
+  goatapi: 200,
+  netmirrornew: 185,
+  netmirror: 180,
+  onetouchtv: 190,
+  movieboxhindi: 180,
+  hindmoviez: 175,
+  isaidub: 165,
+  '4khdhubnew': 160,
+  '4khdhub': 155,
+  uhdmovies: 150,
+  hdmovie2: 145
+});
 const NEWER_PRIORITY_PLUGIN_IDS = new Set([
   'showbox',
   'zinkmovies',
@@ -70,6 +93,7 @@ const NEWER_PRIORITY_PLUGIN_IDS = new Set([
   'lamovie',
   'isaidub',
   'notorrent',
+  'goatapi',
   'purstream',
   'toflix',
   'embed69',
@@ -82,8 +106,12 @@ const NEWER_PRIORITY_PLUGIN_IDS = new Set([
   'kisskh'
 ]);
 const STABLE_PRIORITY_PLUGIN_IDS = new Set([
+  'notorrent',
   'moviebox',
   'vidlink',
+  'netmirrornew',
+  'netmirror',
+  'cinemm',
   '4khdhubnew',
   '4khdhub',
   'hdhub4u',
@@ -137,11 +165,15 @@ const isExpectedAdapterAbort = (error) => {
   return message === 'Nuvio adapter finished'
     || message === 'The operation was aborted'
     || message === 'Provider request cancelled'
-    || message.includes('Nuvio adapter finished');
+    || message.includes('Nuvio adapter finished')
+    || message.includes('adapter finished');
 };
 
 export class NuvioPluginAdapter extends PluginProviderAdapter {
   constructor({
+    id = 'nuvio',
+    name = 'Nuvio',
+    cacheNamespace = id,
     cache,
     logger = console,
     manifestUrl = DEFAULT_MANIFEST_URL,
@@ -151,9 +183,12 @@ export class NuvioPluginAdapter extends PluginProviderAdapter {
     pluginConcurrency = Number(process.env.NUVIO_PLUGIN_CONCURRENCY || 6),
     earlyReturnStreams = Number(process.env.NUVIO_EARLY_RETURN_STREAMS || 40),
     providerTimeoutMs = 7_000,
-    overallTimeoutMs = 18_000
+    overallTimeoutMs = 18_000,
+    pluginFetchHeaders = null
   }) {
-    super({ id: 'nuvio', logger });
+    super({ id, logger });
+    this.name = name;
+    this.cacheNamespace = cacheNamespace;
     this.cache = cache;
     this.manifestUrl = manifestUrl;
     this.rawBaseUrl = rawBaseUrl;
@@ -163,11 +198,15 @@ export class NuvioPluginAdapter extends PluginProviderAdapter {
     this.earlyReturnStreams = Math.max(1, Number(earlyReturnStreams) || 40);
     this.providerTimeoutMs = providerTimeoutMs;
     this.overallTimeoutMs = overallTimeoutMs;
+    this.pluginFetchHeaders = pluginFetchHeaders && typeof pluginFetchHeaders === 'object'
+      ? pluginFetchHeaders
+      : null;
     this.moduleCache = new Map();
+    this.metadataCache = new Map();
   }
 
   async getManifest(signal = null) {
-    return this.cache.getJson('nuvio/manifest', this.manifestUrl, {
+    return this.cache.getJson(`${this.cacheNamespace}/manifest`, this.manifestUrl, {
       signal,
       ttlMs: 60 * 60 * 1000
     });
@@ -175,7 +214,7 @@ export class NuvioPluginAdapter extends PluginProviderAdapter {
 
   async getStreams(request) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(new Error('Nuvio adapter timed out')), this.overallTimeoutMs);
+    const timeout = setTimeout(() => controller.abort(new Error(`${this.name} adapter timed out`)), this.overallTimeoutMs);
     timeout.unref?.();
 
     try {
@@ -184,7 +223,7 @@ export class NuvioPluginAdapter extends PluginProviderAdapter {
       return await this.runPluginsWithConcurrency(plugins, request, controller.signal, this.overallTimeoutMs);
     } finally {
       clearTimeout(timeout);
-      controller.abort(new Error('Nuvio adapter finished'));
+      controller.abort(new Error(`${this.name} adapter finished`));
     }
   }
 
@@ -216,7 +255,7 @@ export class NuvioPluginAdapter extends PluginProviderAdapter {
 
   getPluginPriority(plugin) {
     const pluginId = String(plugin?.id || '').toLowerCase();
-    let score = 0;
+    let score = RELIABLE_PLUGIN_SCORES[pluginId] || 0;
     if (STABLE_PRIORITY_PLUGIN_IDS.has(pluginId)) score += 120;
     if (NEWER_PRIORITY_PLUGIN_IDS.has(pluginId)) score += 100;
     if (SLOW_OR_NOISY_PLUGIN_IDS.has(pluginId)) score -= 70;
@@ -272,18 +311,21 @@ export class NuvioPluginAdapter extends PluginProviderAdapter {
     try {
       const module = await this.loadPluginModule(plugin, signal);
       if (!module || typeof module.getStreams !== 'function') {
-        throw new Error(`Nuvio plugin ${pluginId} missing getStreams()`);
+        throw new Error(`${this.name} plugin ${pluginId} missing getStreams()`);
       }
 
+      const metadata = await this.getTmdbMetadata(request, signal);
       const rawStreams = await withTimeout(
         () => Promise.resolve(module.getStreams(
           String(request.tmdbId || ''),
           toNuvioMediaType(request.mediaType),
           request.season,
-          request.episode
+          request.episode,
+          metadata?.title,
+          metadata?.year
         )),
         this.getPluginTimeoutMs(pluginId),
-        `Nuvio plugin ${pluginId} timed out`
+        `${this.name} plugin ${pluginId} timed out`
       );
 
       return normalizePluginStreams(rawStreams, {
@@ -297,10 +339,44 @@ export class NuvioPluginAdapter extends PluginProviderAdapter {
       }
 
       this.logger.info?.('nuvio plugin failed', {
+        adapter: this.id,
         plugin: pluginId,
         error: error?.message || String(error)
       });
       return [];
+    }
+  }
+
+  async getTmdbMetadata(request, signal = null) {
+    const tmdbId = String(request?.tmdbId || '').trim();
+    if (!tmdbId) return null;
+
+    const mediaType = toNuvioMediaType(request.mediaType);
+    const cacheKey = `${mediaType}:${tmdbId}`;
+    const cached = this.metadataCache.get(cacheKey);
+    if (cached && Date.now() - cached.cachedAt < 6 * 60 * 60 * 1000) {
+      return cached.value;
+    }
+
+    try {
+      const endpoint = mediaType === 'tv' ? 'tv' : 'movie';
+      const url = new URL(`https://api.themoviedb.org/3/${endpoint}/${encodeURIComponent(tmdbId)}`);
+      url.searchParams.set('api_key', config.TMDB_API_KEY);
+      url.searchParams.set('language', 'en-US');
+      const response = await fetch(url, {
+        signal,
+        headers: { accept: 'application/json' }
+      });
+      if (!response.ok) return null;
+
+      const payload = await response.json();
+      const title = String(payload.title || payload.name || payload.original_title || payload.original_name || '').trim();
+      const year = String(payload.release_date || payload.first_air_date || '').slice(0, 4);
+      const value = title ? { title, year } : null;
+      this.metadataCache.set(cacheKey, { value, cachedAt: Date.now() });
+      return value;
+    } catch {
+      return null;
     }
   }
 
@@ -316,7 +392,7 @@ export class NuvioPluginAdapter extends PluginProviderAdapter {
 
   isUsableStream(stream, request = {}) {
     const pluginId = String(stream?.pluginProvider || '').trim().toLowerCase();
-    if (BLOCKED_PLUGIN_IDS.has(pluginId)) {
+    if (this.id === 'nuvio' && BLOCKED_PLUGIN_IDS.has(pluginId)) {
       return false;
     }
 
@@ -348,7 +424,7 @@ export class NuvioPluginAdapter extends PluginProviderAdapter {
     }
 
     const scriptUrl = new URL(filename, this.rawBaseUrl).toString();
-    const script = await this.cache.getText(`nuvio/scripts/${encodeURIComponent(filename)}.js`, scriptUrl, {
+    const script = await this.cache.getText(`${this.cacheNamespace}/scripts/${encodeURIComponent(filename)}.js`, scriptUrl, {
       signal,
       ttlMs: 6 * 60 * 60 * 1000
     });
@@ -364,7 +440,7 @@ export class NuvioPluginAdapter extends PluginProviderAdapter {
       module,
       exports: module.exports,
       require,
-      fetch: globalThis.fetch,
+      fetch: this.fetchPlugin.bind(this),
       console: this.createPluginConsole(filename),
       AbortController,
       AbortSignal,
@@ -394,6 +470,24 @@ export class NuvioPluginAdapter extends PluginProviderAdapter {
     });
 
     return module.exports;
+  }
+
+  fetchPlugin(input, init = {}) {
+    if (!this.pluginFetchHeaders) {
+      return globalThis.fetch(input, init);
+    }
+
+    const headers = new Headers(init?.headers || input?.headers || {});
+    for (const [name, value] of Object.entries(this.pluginFetchHeaders)) {
+      if (!headers.has(name)) {
+        headers.set(name, value);
+      }
+    }
+
+    return globalThis.fetch(input, {
+      ...init,
+      headers
+    });
   }
 
   createPluginConsole(filename) {

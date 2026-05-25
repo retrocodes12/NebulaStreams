@@ -10,8 +10,17 @@ import { withTimeout } from '../utils/timeout.js';
 
 const DEFAULT_SERVICE_URL = 'http://127.0.0.1:8787';
 const execFileAsync = promisify(execFile);
+const VIDEO_GEN_HOSTS = new Set(['cdn.video-gen.xyz', 'video-gen.xyz']);
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const isVideoGenUrl = (value) => {
+  try {
+    return VIDEO_GEN_HOSTS.has(new URL(String(value || '')).hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+};
 
 const sharedState = {
   child: null,
@@ -47,7 +56,7 @@ export class ScraplingServiceAdapter extends PluginProviderAdapter {
     const providerId = request.providerId || 'scrapling-hdhub4u';
 
     return withTimeout(async (signal) => {
-      await this.ensureService(signal);
+      await this.ensureService();
       const response = await fetch(`${this.serviceUrl}/scrape`, {
         method: 'POST',
         signal,
@@ -76,12 +85,97 @@ export class ScraplingServiceAdapter extends PluginProviderAdapter {
         });
       }
 
-      return normalizePluginStreams(payload?.streams || [], {
+      const rawStreams = providerId === 'uhdmovies'
+        ? await this.resolveUhdMoviesVideoGenStreams(payload?.streams || [], signal)
+        : payload?.streams || [];
+
+      return normalizePluginStreams(rawStreams, {
         adapterId: providerId,
         pluginId: providerId,
         pluginName: this.getProviderLabel(providerId)
       });
     }, this.timeoutMs, 'Scrapling adapter timed out');
+  }
+
+  async resolveUhdMoviesVideoGenStreams(streams, signal = null) {
+    const normalizedStreams = Array.isArray(streams) ? streams : [];
+
+    return Promise.all(normalizedStreams.map(async (stream) => {
+      if (!isVideoGenUrl(stream?.url)) {
+        return stream;
+      }
+
+      try {
+        const resolvedUrl = await this.resolveVideoGenUrl(stream.url, stream.headers, signal);
+
+        if (!resolvedUrl) {
+          return stream;
+        }
+
+        return {
+          ...stream,
+          url: resolvedUrl,
+          headers: null,
+          source: stream.source || 'UHDMovies',
+          behaviorHints: {
+            ...(stream.behaviorHints || {}),
+            originalVideoGenUrl: stream.url
+          }
+        };
+      } catch (error) {
+        this.logger.info?.('uhdmovies video-gen resolution failed', {
+          error: error?.message || String(error)
+        });
+        return stream;
+      }
+    }));
+  }
+
+  async resolveVideoGenUrl(url, headers = null, signal = null) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(new Error('video-gen resolution timed out')), 6_000);
+    timeout.unref?.();
+
+    const onAbort = () => controller.abort(signal.reason);
+    if (signal) {
+      if (signal.aborted) {
+        clearTimeout(timeout);
+        return null;
+      }
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
+
+    try {
+      const response = await fetch(url, {
+        redirect: 'manual',
+        signal: controller.signal,
+        headers: {
+          'User-Agent': headers?.['User-Agent'] || headers?.['user-agent'] || 'Mozilla/5.0',
+          ...(headers?.Referer || headers?.referer ? { Referer: headers.Referer || headers.referer } : {})
+        }
+      });
+      const location = response.headers.get('location');
+
+      if (!location) {
+        return null;
+      }
+
+      const resolvedLocation = new URL(location, url);
+      const directUrl = resolvedLocation.searchParams.get('url');
+
+      if (directUrl && /^https?:\/\//iu.test(directUrl)) {
+        return directUrl;
+      }
+
+      if (resolvedLocation.hostname.toLowerCase().includes('googleusercontent.com')) {
+        return resolvedLocation.toString();
+      }
+
+      return null;
+    } finally {
+      clearTimeout(timeout);
+      signal?.removeEventListener?.('abort', onAbort);
+    }
   }
 
   getProviderLabel(providerId) {
@@ -185,7 +279,7 @@ export class ScraplingServiceAdapter extends PluginProviderAdapter {
       sharedState.child.unref?.();
     }
 
-    const deadline = Date.now() + 16_000;
+    const deadline = Date.now() + 30_000;
     while (Date.now() < deadline) {
       if (signal?.aborted) {
         throw signal.reason || new Error('Scrapling service start aborted');

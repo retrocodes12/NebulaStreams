@@ -46,9 +46,14 @@ function getStreams(tmdbId, mediaType = "movie", season = null, episode = null) 
       const config = yield getConfig();
       if (!config)
         return [];
-      const items = yield fetchMetadata(mediaInfo.id || tmdbId, mediaInfo.title);
+      let items = yield fetchMetadata(mediaInfo.id || tmdbId, mediaInfo.title);
       if (!items || items.length === 0) {
         console.log("[StreamFlix] No matches found in StreamFlix database.");
+        return [];
+      }
+      items = filterExactItems(items, mediaInfo);
+      if (!items || items.length === 0) {
+        console.log("[StreamFlix] No exact title/year matches found.");
         return [];
       }
       const allStreams = [];
@@ -133,11 +138,6 @@ function processMovie(item, config, tmdbTitle) {
     if (!path)
       return [];
     const langs = detectLanguages(item);
-    if (config.premium) {
-      config.premium.forEach((base) => {
-        streams.push(createStreamObject(base + path, "1080p", langs, item, tmdbTitle));
-      });
-    }
     if (config.movies) {
       config.movies.forEach((base) => {
         streams.push(createStreamObject(base + path, "720p", langs, item, tmdbTitle));
@@ -158,20 +158,30 @@ function processTV(item, config, s, e, tmdbTitle) {
       const epData = yield epRes.json();
       if (epData && epData.link) {
         const path = epData.link;
-        if (config.premium)
-          config.premium.forEach((base) => streams.push(createStreamObject(base + path, "1080p", langs, item, tmdbTitle, s, e, epData.name)));
         if (config.tv)
           config.tv.forEach((base) => streams.push(createStreamObject(base + path, "720p", langs, item, tmdbTitle, s, e, epData.name)));
       }
     } catch (err) {
     }
-    if (streams.length === 0 && config.premium) {
+    if (streams.length === 0 && config.tv) {
       const fallbackPath = `tv/${movieKey}/s${s}/episode${e}.mkv`;
-      config.premium.forEach((base) => {
+      config.tv.forEach((base) => {
         streams.push(createStreamObject(base + fallbackPath, "720p", langs, item, tmdbTitle, s, e, "Episode " + e));
       });
     }
     return streams;
+  });
+}
+function normalizeMatchTitle(value) {
+  return String(value || "").toLowerCase().replace(/\b(the|a|an)\b/g, "").replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+}
+function filterExactItems(items, mediaInfo) {
+  const wantedTitle = normalizeMatchTitle(mediaInfo == null ? void 0 : mediaInfo.title);
+  const wantedYear = String((mediaInfo == null ? void 0 : mediaInfo.year) || "").trim();
+  return (Array.isArray(items) ? items : []).filter((item) => {
+    const itemTitle = normalizeMatchTitle(item.moviename || item.title || item.name);
+    const itemYear = String(item.movieyear || item.year || "").trim();
+    return itemTitle === wantedTitle && (!wantedYear || !itemYear || itemYear === wantedYear);
   });
 }
 function createStreamObject(url, quality, langs, item, tmdbTitle, s, e, epName) {

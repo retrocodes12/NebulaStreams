@@ -424,6 +424,69 @@ function parseCardInfo(cheerioInstance, el) {
   return { codec, audio, languages: langs, source };
 }
 
+function buildEpisodePreviewStreams(cheerioInstance, items, title, season, episode) {
+  var $ = cheerioInstance;
+  var seen = new Set();
+  var results = [];
+
+  items.forEach(function (item) {
+    var fileTitle = $(item).find(".episode-file-title, .file-title").first().text().trim();
+    var itemText = $(item).text() || "";
+    var sizeText = $(item).find(".badge-size").first().text().trim();
+    if (!sizeText) {
+      var sizeMatch = itemText.match(/([\d.]+ ?[GM]B)/i);
+      sizeText = sizeMatch ? sizeMatch[1].replace(/\s+/, " ") : "";
+    }
+
+    var qualityMatch = (fileTitle + " " + itemText).match(/(\d{3,4}p|4K|2K)/i);
+    var quality = qualityMatch ? qualityMatch[1] : extractQuality(fileTitle + " " + itemText);
+    var cardInfo = parseCardInfo($, item);
+
+    $(item).find("div.episode-links a, div.download-item a, a").each(function (_, anchor) {
+      var href = $(anchor).attr("href");
+      var linkText = $(anchor).text().trim();
+      if (!href || href.includes("#") || seen.has(href)) {
+        return;
+      }
+      if (!/hubcloud|hubdrive/i.test(href + " " + linkText)) {
+        return;
+      }
+
+      seen.add(href);
+      var titleLine = title;
+      titleLine += ` \u00B7 S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}`;
+      if (quality && quality !== "HD") titleLine += ` ${quality}`;
+
+      var lines = [titleLine];
+      var techParts = [];
+      if (cardInfo.source) techParts.push(cardInfo.source);
+      if (cardInfo.codec) techParts.push(cardInfo.codec);
+      if (techParts.length) lines.push("\uD83D\uDCFA " + techParts.join(" \u00B7 "));
+      if (cardInfo.languages && cardInfo.languages.length) lines.push("\uD83D\uDD0A " + cardInfo.languages.join(" + "));
+      if (cardInfo.audio) lines.push("\uD83C\uDFB5" + cardInfo.audio);
+      if (sizeText) lines.push("\uD83D\uDCBE " + sizeText);
+      lines.push("\uD83D\uDD17 " + (linkText || "HubCloud") + " from 4KHDHub");
+
+      results.push({
+        name: `4KHDHub - ${linkText || "HubCloud"}${quality && quality !== "HD" ? ` ${quality}` : ""}`,
+        title: lines.join("\n"),
+        url: href,
+        quality: quality && quality !== "HD" ? quality : void 0,
+        size: sizeText || void 0,
+        filename: fileTitle || void 0,
+        provider: "4khdhub",
+        behaviorHints: {
+          bingeGroup: `4khdhub-${linkText || "hubcloud"}`,
+          notWebReady: true,
+          ...(sizeText ? { videoSize: parseBytes(sizeText) } : {})
+        }
+      });
+    });
+  });
+
+  return results;
+}
+
 // src/4khdhub/search.js
 var cheerio = require("cheerio-without-node-native");
 function fetchPageUrl(name, year, isSeries) {
@@ -784,6 +847,29 @@ function getStreams(tmdbId, type, season, episode) {
           });
         }
       });
+      if (itemsToProcess.length === 0) {
+        $("div.episodes-list > div.season-item").each((_, seasonEl) => {
+          const seasonText = $(seasonEl).find("div.episode-header > div.episode-number").first().text() || "";
+          const seasonMatch = seasonText.match(/S?0*([1-9][0-9]*)/i);
+          const pageSeason = seasonMatch ? parseInt(seasonMatch[1], 10) : null;
+
+          if (pageSeason !== Number(season)) {
+            return;
+          }
+
+          const seasonContent = $(seasonEl).children("div.episode-content");
+          const downloadItems = seasonContent.find(".episode-download-item").filter((_2, item) => {
+            const episodeText = $(item).find("span.badge-psa").text() || $(item).text() || "";
+            const episodeMatch = episodeText.match(/Episode-0*([1-9][0-9]*)/i);
+            const pageEpisode = episodeMatch ? parseInt(episodeMatch[1], 10) : null;
+            return pageEpisode === Number(episode);
+          });
+
+          downloadItems.each((_2, item) => {
+            itemsToProcess.push(item);
+          });
+        });
+      }
     } else {
       $(".download-item").each((_, el) => {
         itemsToProcess.push(el);
@@ -852,6 +938,13 @@ function getStreams(tmdbId, type, season, episode) {
     const playableStreams = yield filterPlayableStreams(streams);
     if (playableStreams.length > 0) {
       return playableStreams;
+    }
+    if (isSeries && itemsToProcess.length > 0) {
+      const previewStreams = buildEpisodePreviewStreams($, itemsToProcess, title, season, episode);
+      if (previewStreams.length > 0) {
+        console.log(`[4KHDHub] Returning ${previewStreams.length} episode preview streams`);
+        return previewStreams;
+      }
     }
     console.log("[4KHDHub] No direct streams found");
     return yield getMirrorStreams(tmdbId, type, season, episode);

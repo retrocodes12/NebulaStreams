@@ -1478,6 +1478,10 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
                   <p class="preset-name">🌶 Latino Content</p>
                   <p class="preset-copy">Spanish and Latino-focused providers.</p>
                 </button>
+                <button type="button" class="preset-card" data-preset-id="french-content">
+                  <p class="preset-name">🇫🇷 French Content</p>
+                  <p class="preset-copy">French movies, series, and anime providers.</p>
+                </button>
                 <button type="button" class="preset-card" data-preset-id="arabic-content">
                   <p class="preset-name">🌙 Arabic Content</p>
                   <p class="preset-copy">Arabic-focused providers for movies, series, anime.</p>
@@ -1621,6 +1625,12 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
                   <label class="field-label" for="febbox-ui-cookie">Febbox UI cookie (ShowBox)</label>
                   <input id="febbox-ui-cookie" class="field-input" type="password" placeholder="Optional personal token" spellcheck="false" autocomplete="off">
                   <div class="field-help">Optional. Enables ShowBox with your own Febbox UI cookie. Stored behind a private config id.</div>
+                </div>
+
+                <div class="field">
+                  <label class="field-label" for="torbox-api-key">TorBox API key (DDL streams)</label>
+                  <input id="torbox-api-key" class="field-input" type="password" placeholder="Optional TorBox API key" spellcheck="false" autocomplete="off">
+                  <div class="field-help">Optional. Converts supported DDL host links from any provider into TorBox playback links. Stored behind a private config id.</div>
                 </div>
 
                 <div class="field">
@@ -1809,6 +1819,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
       const blockedHosts = $('blocked-hosts');
       const customProxyUrl = $('custom-proxy-url');
       const febboxUiCookie = $('febbox-ui-cookie');
+      const torboxApiKey = $('torbox-api-key');
       const dedupeMode = $('dedupe-mode');
       const formatterStyle = $('formatter-style');
       const overviewProviderCount = $('overview-provider-count');
@@ -1870,6 +1881,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         'turkish-content': { label: 'Turkish Content', code: 'TR', providers: ['vidmody-tr','turkish-m3u','rectv-tr','diziyou','sinemacx','cinemacity','vidlink','videasy'], qualityPriority: ['1080p','720p','2160p','480p','360p','1440p','auto','unknown'], webReadyOnly: false, hideHeavyFormats: false, preferHdr: false, preferH264: false, preferSmallerFiles: false, preferDirectHosts: true, customProxyUrl: '', preferredAudioLanguage: 'Turkish', maxSizeGb: '0', blockedHosts: '', dedupeMode: 'host-quality' },
         'italian-content': { label: 'Italian Content', code: 'IT', providers: ['it-streamingcommunity','it-guardahd','it-guardaserie','it-guardoserie','it-cc','it-animeunity','it-animeworld','it-animesaturn','vidlink','videasy'], qualityPriority: ['1080p','720p','2160p','480p','360p','1440p','auto','unknown'], webReadyOnly: false, hideHeavyFormats: false, preferHdr: false, preferH264: false, preferSmallerFiles: false, preferDirectHosts: true, customProxyUrl: '', preferredAudioLanguage: 'Italian', maxSizeGb: '0', blockedHosts: '', dedupeMode: 'host-quality' },
         'latino-content': { label: 'Latino Content', code: 'LA', providers: ['latino-lamovie','latino-embed69','latino-cinecalidad','latino-xupalace','latino-seriesmetro','lamovie','purstream','vidlink','videasy'], qualityPriority: ['1080p','720p','2160p','480p','360p','1440p','auto','unknown'], webReadyOnly: false, hideHeavyFormats: false, preferHdr: false, preferH264: false, preferSmallerFiles: false, preferDirectHosts: true, customProxyUrl: '', preferredAudioLanguage: 'Latino', maxSizeGb: '0', blockedHosts: '', dedupeMode: 'host-quality' },
+        'french-content': { label: 'French Content', code: 'FR', providers: ['fr-frenchstream','fr-movix','fr-dulourd','fr-anime-sama','fr-voiranime','fr-vostfree','fr-animoflix','fr-french-anime','fr-animevostfr','fr-animesultra','fr-jetanimes','fr-sekai','fr-mugiwarastream','fr-animesite','nuvio-french','nakios','toflix','frembed','vidlink','videasy'], qualityPriority: ['1080p','720p','2160p','480p','360p','1440p','auto','unknown'], webReadyOnly: false, hideHeavyFormats: false, preferHdr: false, preferH264: false, preferSmallerFiles: false, preferDirectHosts: true, customProxyUrl: '', preferredAudioLanguage: 'French', maxSizeGb: '0', blockedHosts: '', dedupeMode: 'host-quality' },
         'arabic-content': { label: 'Arabic Content', code: 'AR', providers: ['arabic-faselhd','arabic-cineby','arabic-witanime','arabic-animecloud','arabic-kirmzi','vidlink','videasy'], qualityPriority: ['1080p','720p','2160p','480p','360p','1440p','auto','unknown'], webReadyOnly: false, hideHeavyFormats: false, preferHdr: false, preferH264: false, preferSmallerFiles: false, preferDirectHosts: true, customProxyUrl: '', preferredAudioLanguage: 'Arabic', maxSizeGb: '0', blockedHosts: '', dedupeMode: 'host-quality' }
       };
 
@@ -1974,15 +1986,19 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
             preferDirectHosts: preferDirectHosts.checked,
             customProxyUrl: customProxyUrl.value.trim() || null
           },
-          privateProviderSettings: { febboxUiCookie: febboxUiCookie.value.trim() },
+          privateProviderSettings: {
+            febboxUiCookie: febboxUiCookie.value.trim(),
+            torboxApiKey: torboxApiKey.value.trim()
+          },
           profileCode: activePresetId && presetDefinitions[activePresetId]?.code ? presetDefinitions[activePresetId].code.toLowerCase() : null
         };
       };
 
       const resolveManifestPath = async () => {
         const cookie = febboxUiCookie.value.trim();
+        const torbox = torboxApiKey.value.trim();
         const proxy = customProxyUrl.value.trim();
-        if (!cookie && !proxy) return buildManifestPath();
+        if (!cookie && !torbox && !proxy) return buildManifestPath();
         const r = await fetch(origin + '/configure/private-config', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -2042,7 +2058,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         updateProviderSummary();
         const nonce = ++manifestResolveNonce;
         const fb = buildManifestPath();
-        manifestUrl.textContent = febboxUiCookie.value.trim() ? 'Preparing private manifest...' : origin + fb;
+        manifestUrl.textContent = (febboxUiCookie.value.trim() || torboxApiKey.value.trim()) ? 'Preparing private manifest...' : origin + fb;
         try {
           const resolved = await resolveManifestPath();
           if (nonce !== manifestResolveNonce) return;
@@ -2163,7 +2179,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
       [webReadyOnly, hideHeavyFormats, preferHdr, preferH264, preferSmallerFiles, preferDirectHosts, preferredAudioLanguage, maxSizeGb, dedupeMode, formatterStyle].forEach((el) => {
         el.addEventListener('change', () => { markPresetAsCustom(); updateManifest(); });
       });
-      [blockedHosts, customProxyUrl, febboxUiCookie].forEach((el) => {
+      [blockedHosts, customProxyUrl, febboxUiCookie, torboxApiKey].forEach((el) => {
         el.addEventListener('input', () => { markPresetAsCustom(); updateManifest(); });
       });
 
@@ -3222,6 +3238,10 @@ const isLikelyAddonDataClient = (req, pathName, userAgent) => {
     || normalizedUserAgent.includes('web0s');
   const isAddonDataPath = pathName.endsWith('.json')
     || pathName.endsWith('.m3u8')
+    || pathName === '/stream'
+    || pathName === '/http-stream'
+    || pathName === '/stream/http'
+    || pathName === '/stream/torrent'
     || pathName.includes('/stream/')
     || pathName.includes('/rogplay/live/')
     || pathName.includes('/preview/')
@@ -3714,14 +3734,34 @@ const bootstrap = async () => {
     }
   });
 
+  const configurePageCache = new Map();
   const renderConfigureResponse = (req, res) => {
+    const baseUrl = getPublicBaseUrl(req);
+    const cacheKey = baseUrl;
+    const cached = configurePageCache.get(cacheKey);
+    const now = Date.now();
+    const html = cached && cached.expiresAt > now
+      ? cached.html
+      : renderConfigurePage({
+        baseUrl,
+        providers: providerService.listProviders()
+      });
+
+    if (!cached || cached.expiresAt <= now) {
+      configurePageCache.set(cacheKey, {
+        html,
+        expiresAt: now + 30_000
+      });
+      if (configurePageCache.size > 6) {
+        configurePageCache.delete(configurePageCache.keys().next().value);
+      }
+    }
+
     res
       .status(200)
+      .set('Cache-Control', 'public, max-age=30, stale-while-revalidate=300')
       .type('html')
-      .send(renderConfigurePage({
-        baseUrl: getPublicBaseUrl(req),
-        providers: providerService.listProviders()
-      }));
+      .send(html);
   };
 
   app.get('/', renderConfigureResponse);
@@ -3859,10 +3899,47 @@ const bootstrap = async () => {
       providers: providerService.listProviders()
     });
   });
+  app.get('/aiostreams.json', (req, res) => {
+    const baseUrl = getPublicBaseUrl(req).replace(/\/+$/u, '');
+    const manifestUrl = `${baseUrl}/manifest.json`;
+    const configuredManifestUrl = `${baseUrl}/configured/all/default/manifest.json`;
+
+    res.json({
+      name: 'NebulaStreams',
+      integration: 'aiostreams',
+      manifestUrl,
+      configuredManifestUrl,
+      recommendedPreset: {
+        type: 'aiostreams',
+        enabled: true,
+        options: {
+          name: 'NebulaStreams',
+          manifestUrl,
+          timeout: 30000,
+          resources: ['stream'],
+          mediaTypes: ['movie', 'series'],
+          formatPassthrough: false,
+          resultPassthrough: false
+        }
+      },
+      customPresetFallback: {
+        type: 'custom',
+        enabled: true,
+        options: {
+          name: 'NebulaStreams',
+          manifestUrl,
+          timeout: 30000,
+          resources: ['stream'],
+          mediaTypes: ['movie', 'series']
+        }
+      }
+    });
+  });
   app.get('/providers/aggregate/streams', streamManager.handleAggregateProviderStreams.bind(streamManager));
   app.get('/providers/:provider/streams', streamManager.handleProviderStreams.bind(streamManager));
   app.get('/cache/stats', streamManager.handleCacheStats.bind(streamManager));
   app.post('/add-source', streamManager.handleAddSource.bind(streamManager));
+  app.get('/torbox/webdl', streamManager.handleTorBoxWebDownload.bind(streamManager));
   app.get('/stream', streamManager.handleUnifiedStream.bind(streamManager));
   app.get('/http-stream', streamManager.handleHttpStream.bind(streamManager));
   app.get('/stream/http', streamManager.handleHttpStream.bind(streamManager));
