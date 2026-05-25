@@ -1909,21 +1909,6 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         text-underline-offset: 3px;
       }
 
-      .simple-online {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        color: #e5e7eb;
-      }
-
-      .simple-online::before {
-        content: '';
-        width: 10px;
-        height: 10px;
-        border-radius: 999px;
-        background: #2ebf62;
-      }
-
       .simple-footer-credit {
         margin: 12px 0 0;
         color: #e5e7eb;
@@ -2452,7 +2437,6 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
                 </svg>
               </a>
               <a class="simple-status-link" href="${escapeHtml(baseUrl)}/health" target="_blank" rel="noopener">Status</a>
-              <span class="simple-online">230 Online</span>
             </div>
             <p class="simple-footer-credit">2026. By <a href="https://discord.gg/Y3gEjpcjm" target="_blank" rel="noopener">retrocodex</a></p>
           </footer>
