@@ -300,14 +300,20 @@ const normalizeFormatterStyle = (value) => {
 const DEFAULT_STREAM_OPTIONS = Object.freeze({
   webReadyOnly: false,
   hideHeavyFormats: false,
+  allowedQualities: Object.freeze([]),
   maxSizeGb: 0,
+  maxPerQuality: 0,
+  maxPerProvider: 0,
   blockHosts: Object.freeze([]),
+  contentSelection: 'default',
   preferredAudioLanguage: null,
   dedupeMode: 'off',
   preferHdr: false,
   preferH264: false,
   preferSmallerFiles: false,
   preferDirectHosts: false,
+  torboxOnlyStreams: false,
+  torboxUsenet: false,
   formatterStyle: 'clean',
   customProxyUrl: null
 });
@@ -318,6 +324,17 @@ const DEFAULT_PRIVATE_PROVIDER_SETTINGS = Object.freeze({
 });
 const PRIVATE_CONFIG_VERSION = 1;
 const PRIVATE_PROVIDER_COOKIE_MAX_LENGTH = 4096;
+const CONTENT_SELECTIONS = new Set(['default', 'movie', 'series']);
+
+const normalizeContentSelection = (value) => {
+  const normalized = String(value || '').trim().toLowerCase();
+  return CONTENT_SELECTIONS.has(normalized) ? normalized : 'default';
+};
+
+const normalizePositiveIntegerOption = (value) => {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+};
 
 const HIGH_VALUE_CACHE_PROVIDERS = new Set(['4khdhub', 'scrapling-4khdhub', '4khdhub_tv', 'hdhub4u']);
 const HIGH_VALUE_CACHE_PATTERN = /\b(4khdhub|hdhub|hubcloud|hub cloud)\b/iu;
@@ -1236,9 +1253,15 @@ const filterConfiguredStreamsDetailed = (streams, streamOptions) => {
   const blockedHosts = Array.isArray(streamOptions.blockHosts)
     ? streamOptions.blockHosts.filter(Boolean)
     : [];
+  const allowedQualities = Array.isArray(streamOptions.allowedQualities)
+    ? streamOptions.allowedQualities
+      .map((quality) => normalizeQualityKey(quality))
+      .filter((quality, index, values) => quality && values.indexOf(quality) === index)
+    : [];
 
   for (const stream of streams) {
     let reason = null;
+    const qualityKey = normalizeQualityKey(stream?.quality);
 
     if (isArchiveStream(stream)) {
       reason = 'archiveFile';
@@ -1246,10 +1269,14 @@ const filterConfiguredStreamsDetailed = (streams, streamOptions) => {
       reason = 'knownUnplayable';
     } else if (stream.transport !== 'http') {
       reason = 'nonHttp';
+    } else if (allowedQualities.length > 0 && !allowedQualities.includes(qualityKey)) {
+      reason = 'notWebReady';
     } else if (streamOptions.webReadyOnly && !isWebReadyHttpStream(stream) && !isTrustedDirectHttpStream(stream) && !isProxyReadyHttpStream(stream) && !needsRegisteredPlaybackProxy(stream)) {
       reason = 'notWebReady';
     } else if (streamOptions.hideHeavyFormats && hasHeavyFormatTraits(stream)) {
       reason = 'heavyFormat';
+    } else if (streamOptions.torboxOnlyStreams && !stream.torboxWebDownload) {
+      reason = 'notWebReady';
     } else if (maxBytes > 0) {
       const sizeBytes = getStreamSizeBytes(stream);
 
@@ -1289,6 +1316,38 @@ const filterConfiguredStreamsDetailed = (streams, streamOptions) => {
 const filterConfiguredStreams = (streams, streamOptions) =>
   filterConfiguredStreamsDetailed(streams, streamOptions).streams;
 
+const applyStreamResultLimits = (streams, streamOptions) => {
+  const maxPerQuality = normalizePositiveIntegerOption(streamOptions.maxPerQuality);
+  const maxPerProvider = normalizePositiveIntegerOption(streamOptions.maxPerProvider);
+
+  if (!maxPerQuality && !maxPerProvider) {
+    return streams;
+  }
+
+  const qualityCounts = new Map();
+  const providerCounts = new Map();
+  const limited = [];
+
+  for (const stream of streams) {
+    const qualityKey = normalizeQualityKey(stream?.quality);
+    const providerKey = getStreamDiversityProviderId(stream) || String(stream?.provider || 'unknown').toLowerCase();
+
+    if (maxPerQuality && (qualityCounts.get(qualityKey) || 0) >= maxPerQuality) {
+      continue;
+    }
+
+    if (maxPerProvider && (providerCounts.get(providerKey) || 0) >= maxPerProvider) {
+      continue;
+    }
+
+    qualityCounts.set(qualityKey, (qualityCounts.get(qualityKey) || 0) + 1);
+    providerCounts.set(providerKey, (providerCounts.get(providerKey) || 0) + 1);
+    limited.push(stream);
+  }
+
+  return limited;
+};
+
 const relaxEmptyStreamFilters = (streams, streamOptions) =>
   filterConfiguredStreamsDetailed(streams, {
     ...streamOptions,
@@ -1308,12 +1367,28 @@ const summarizeStreamOptions = (streamOptions) => {
     parts.push('Hide HEVC / HDR / 10-bit');
   }
 
+  if (Array.isArray(streamOptions.allowedQualities) && streamOptions.allowedQualities.length > 0) {
+    parts.push(`Qualities: ${streamOptions.allowedQualities.join(', ')}`);
+  }
+
   if (Number(streamOptions.maxSizeGb) > 0) {
     parts.push(`Max ${Number(streamOptions.maxSizeGb)} GB`);
   }
 
+  if (Number(streamOptions.maxPerQuality) > 0) {
+    parts.push(`Max ${Number(streamOptions.maxPerQuality)} per quality`);
+  }
+
+  if (Number(streamOptions.maxPerProvider) > 0) {
+    parts.push(`Max ${Number(streamOptions.maxPerProvider)} per provider`);
+  }
+
   if (Array.isArray(streamOptions.blockHosts) && streamOptions.blockHosts.length > 0) {
     parts.push(`Block hosts: ${streamOptions.blockHosts.join(', ')}`);
+  }
+
+  if (normalizeContentSelection(streamOptions.contentSelection) !== 'default') {
+    parts.push(`Content: ${toTitleCaseLabel(streamOptions.contentSelection)}`);
   }
 
   if (streamOptions.preferredAudioLanguage) {
@@ -1343,6 +1418,14 @@ const summarizeStreamOptions = (streamOptions) => {
 
   if (streamOptions.preferDirectHosts) {
     parts.push('Prefer direct hosts');
+  }
+
+  if (streamOptions.torboxOnlyStreams) {
+    parts.push('TorBox only streams');
+  }
+
+  if (streamOptions.torboxUsenet) {
+    parts.push('TorBox Usenet');
   }
 
   if (streamOptions.customProxyUrl) {
@@ -3093,21 +3176,32 @@ export class StreamManager {
     const streamOptions = {
       webReadyOnly: Boolean(baseStreamOptions.webReadyOnly),
       hideHeavyFormats: Boolean(baseStreamOptions.hideHeavyFormats),
+      allowedQualities: Array.isArray(baseStreamOptions.allowedQualities)
+        ? baseStreamOptions.allowedQualities
+          .map((value) => normalizeQualityKey(value))
+          .filter(Boolean)
+          .filter((value, index, values) => values.indexOf(value) === index)
+        : [],
       maxSizeGb: Number.isFinite(Number(baseStreamOptions.maxSizeGb)) && Number(baseStreamOptions.maxSizeGb) > 0
         ? Number(baseStreamOptions.maxSizeGb)
         : 0,
+      maxPerQuality: normalizePositiveIntegerOption(baseStreamOptions.maxPerQuality),
+      maxPerProvider: normalizePositiveIntegerOption(baseStreamOptions.maxPerProvider),
       blockHosts: Array.isArray(baseStreamOptions.blockHosts)
         ? baseStreamOptions.blockHosts
           .map((value) => String(value || '').trim().toLowerCase())
           .filter(Boolean)
           .filter((value, index, values) => values.indexOf(value) === index)
         : [],
+      contentSelection: normalizeContentSelection(baseStreamOptions.contentSelection),
       preferredAudioLanguage: normalizeAudioLanguageKey(baseStreamOptions.preferredAudioLanguage),
       dedupeMode: normalizeDedupeMode(baseStreamOptions.dedupeMode),
       preferHdr: Boolean(baseStreamOptions.preferHdr),
       preferH264: Boolean(baseStreamOptions.preferH264),
       preferSmallerFiles: Boolean(baseStreamOptions.preferSmallerFiles),
       preferDirectHosts: Boolean(baseStreamOptions.preferDirectHosts),
+      torboxOnlyStreams: Boolean(baseStreamOptions.torboxOnlyStreams),
+      torboxUsenet: Boolean(baseStreamOptions.torboxUsenet),
       formatterStyle: normalizeFormatterStyle(baseStreamOptions.formatterStyle),
       customProxyUrl: normalizeCustomProxyUrl(baseStreamOptions.customProxyUrl)
     };
@@ -3521,9 +3615,15 @@ export class StreamManager {
       return {
         ...DEFAULT_STREAM_OPTIONS,
         ...privateConfig.streamOptions,
+        allowedQualities: Array.isArray(privateConfig.streamOptions?.allowedQualities)
+          ? [...privateConfig.streamOptions.allowedQualities]
+          : [],
+        maxPerQuality: normalizePositiveIntegerOption(privateConfig.streamOptions?.maxPerQuality),
+        maxPerProvider: normalizePositiveIntegerOption(privateConfig.streamOptions?.maxPerProvider),
         blockHosts: Array.isArray(privateConfig.streamOptions?.blockHosts)
           ? [...privateConfig.streamOptions.blockHosts]
           : [],
+        contentSelection: normalizeContentSelection(privateConfig.streamOptions?.contentSelection),
         formatterStyle: normalizeFormatterStyle(privateConfig.streamOptions?.formatterStyle),
         customProxyUrl: normalizeCustomProxyUrl(privateConfig.streamOptions?.customProxyUrl)
       };
@@ -3550,14 +3650,39 @@ export class StreamManager {
     let preferredAudioLanguage = null;
     let dedupeMode = 'off';
     let formatterStyle = 'clean';
+    let allowedQualities = [];
+    let maxPerQuality = 0;
+    let maxPerProvider = 0;
+    let contentSelection = 'default';
 
     for (const token of tokens) {
+      if (token.startsWith('qualities=')) {
+        allowedQualities = token
+          .slice('qualities='.length)
+          .split('|')
+          .map((value) => normalizeQualityKey(value))
+          .filter(Boolean)
+          .filter((value, index, values) => values.indexOf(value) === index);
+      }
+
       if (token.startsWith('max-size-gb=')) {
         const parsed = Number.parseFloat(token.slice('max-size-gb='.length));
 
         if (Number.isFinite(parsed) && parsed > 0) {
           maxSizeGb = parsed;
         }
+      }
+
+      if (token.startsWith('max-per-quality=')) {
+        maxPerQuality = normalizePositiveIntegerOption(token.slice('max-per-quality='.length));
+      }
+
+      if (token.startsWith('max-per-provider=')) {
+        maxPerProvider = normalizePositiveIntegerOption(token.slice('max-per-provider='.length));
+      }
+
+      if (token.startsWith('content=')) {
+        contentSelection = normalizeContentSelection(token.slice('content='.length));
       }
 
       if (token.startsWith('block-hosts=')) {
@@ -3585,14 +3710,20 @@ export class StreamManager {
     return {
       webReadyOnly: tokens.includes('web-ready-only'),
       hideHeavyFormats: tokens.includes('hide-heavy-formats'),
+      allowedQualities,
       maxSizeGb,
+      maxPerQuality,
+      maxPerProvider,
       blockHosts,
+      contentSelection,
       preferredAudioLanguage,
       dedupeMode,
       preferHdr: tokens.includes('prefer-hdr'),
       preferH264: tokens.includes('prefer-h264'),
       preferSmallerFiles: tokens.includes('prefer-smaller-files'),
       preferDirectHosts: tokens.includes('prefer-direct-hosts'),
+      torboxOnlyStreams: tokens.includes('torbox-only-streams'),
+      torboxUsenet: tokens.includes('torbox-usenet'),
       formatterStyle,
       customProxyUrl: null
     };
@@ -3669,7 +3800,13 @@ export class StreamManager {
   async handleStremioManifest(req, res) {
     const baseUrl = getStremioRequestBaseUrl(req);
     const addonPresentation = this.getAddonPresentation(req);
-    const liveCatalogs = [
+    const contentSelection = normalizeContentSelection(addonPresentation.streamOptions?.contentSelection);
+    const manifestTypes = contentSelection === 'movie'
+      ? ['movie']
+      : contentSelection === 'series'
+        ? ['series']
+        : ['movie', 'series', 'tv'];
+    const liveCatalogs = contentSelection === 'default' ? [
       ...this.rogPlayAdapter.getLiveCatalogDefinitions(),
       ...this.germanIptvLiveAdapter.getLiveCatalogDefinitions()
     ].map((catalog) => ({
@@ -3680,7 +3817,7 @@ export class StreamManager {
         { name: 'skip', isRequired: false },
         { name: 'search', isRequired: false }
       ]
-    }));
+    })) : [];
 
     res.json({
       id: addonPresentation.addonId,
@@ -3700,7 +3837,7 @@ export class StreamManager {
           idPrefixes: ['rogplay:', 'cs-german:']
         }
       ],
-      types: ['movie', 'series', 'tv'],
+      types: manifestTypes,
       idPrefixes: ['tt', 'tmdb:', 'rogplay:', 'cs-german:'],
       catalogs: liveCatalogs,
       behaviorHints: {
@@ -4333,7 +4470,7 @@ export class StreamManager {
     );
     const postDedupeStreams = applyConfiguredDedupe(configuredStreams, streamOptions).streams;
     const dedupedStreams = diversifyStreamsByProvider(
-      postDedupeStreams,
+      applyStreamResultLimits(postDedupeStreams, streamOptions),
       getStreamDiversityOptions(postDedupeStreams, {
         requestedProviders
       })
@@ -4908,6 +5045,7 @@ export class StreamManager {
       diagnostics.dedupedTotal = dedupeResult.removedCount;
       diagnostics.reasons.duplicate = dedupeResult.removedCount;
       diagnostics.examples.duplicate = dedupeResult.examples;
+      const limitedStreams = applyStreamResultLimits(dedupeResult.streams, streamOptions);
 
       res.json({
         resolved: true,
@@ -4915,7 +5053,7 @@ export class StreamManager {
         providersTried: result.tried,
         providerOrder: result.providers,
         diagnostics,
-        sample: dedupeResult.streams.slice(0, 6).map((stream) => ({
+        sample: limitedStreams.slice(0, 6).map((stream) => ({
           name: stream.name,
           quality: stream.quality,
           host: getStreamHostname(stream),

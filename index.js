@@ -170,6 +170,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
     .map((provider) => escapeHtml(provider.id))
     .join(', ');
   const donationPrimaryUrl = escapeHtml(String(config.DONATION_PRIMARY_URL || '').trim());
+  const simpleKoFiUrl = donationPrimaryUrl || `${escapeHtml(baseUrl)}/donate`;
   const nowPaymentsWidgetUrl = escapeHtml(String(config.DONATION_NOWPAYMENTS_WIDGET_URL || '').trim());
   const hasDonationSupport = Boolean(
     config.DONATION_CRYPTO_ADDRESS ||
@@ -187,6 +188,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <script defer src="https://cloud.umami.is/script.js" data-website-id="d2608775-1bee-4fbe-899f-aaa451b37ed8"></script>
     <style>
       :root {
         color-scheme: dark;
@@ -1322,6 +1324,637 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         from { opacity: 0; transform: translateY(8px); }
         to { opacity: 1; transform: translateY(0); }
       }
+
+      /* compact configure skin */
+      :root {
+        --bg-0: #11151d;
+        --bg-1: #151a23;
+        --bg-2: #1a202b;
+        --surface: #171c25;
+        --surface-2: #1d2430;
+        --surface-3: #242c3a;
+        --border: #303847;
+        --border-strong: #465165;
+        --text: #f2f5fb;
+        --text-dim: #b7c0d0;
+        --muted: #818b9d;
+        --accent: #2f6df6;
+        --accent-2: #24c6a5;
+        --accent-3: #c56cf0;
+        --success: #29d391;
+        --warning: #f0b84c;
+        --danger: #f26d6d;
+        --radius-lg: 8px;
+        --radius-md: 6px;
+        --radius-sm: 4px;
+        --shadow-lg: none;
+        --shadow-md: none;
+        --shadow-glow: none;
+      }
+
+      body {
+        font-size: 14px;
+        line-height: 1.45;
+        background: #11151d;
+        background-image: none;
+      }
+
+      .bg-grid,
+      .hero,
+      .sidebar {
+        display: none;
+      }
+
+      main {
+        width: min(100% - 20px, 520px);
+        padding: 14px 0 28px;
+      }
+
+      .topbar,
+      .card {
+        border: 1px solid var(--border);
+        background: var(--surface);
+        border-radius: var(--radius-lg);
+        backdrop-filter: none;
+        box-shadow: none;
+      }
+
+      .topbar {
+        padding: 12px;
+      }
+
+      .brand-mark {
+        width: 38px;
+        height: 38px;
+        border-radius: 7px;
+        background: #202733;
+      }
+
+      .brand-text h1 {
+        font-size: 16px;
+        letter-spacing: 0;
+      }
+
+      .brand-text p,
+      .pill,
+      .card-desc,
+      .field-help,
+      .choice-copy,
+      .preset-copy,
+      .note-item,
+      .disclaimer-text,
+      .support-card p {
+        font-size: 12px;
+      }
+
+      .pill {
+        padding: 5px 8px;
+        border-radius: 999px;
+        background: var(--surface-2);
+      }
+
+      .layout {
+        display: block;
+        margin-top: 12px;
+      }
+
+      .workspace {
+        gap: 10px;
+      }
+
+      .card {
+        overflow: hidden;
+        animation: none;
+      }
+
+      .install-card {
+        background: var(--surface);
+        border-color: var(--border);
+      }
+
+      .card-inner {
+        padding: 14px;
+      }
+
+      .card-header {
+        margin-bottom: 12px;
+        gap: 10px;
+      }
+
+      .card-title {
+        font-size: 15px;
+        letter-spacing: 0;
+      }
+
+      .card-badge {
+        display: none;
+      }
+
+      .install-grid,
+      .two-column,
+      .three-column,
+      .preview-grid {
+        grid-template-columns: 1fr;
+        gap: 10px;
+      }
+
+      .manifest-box,
+      .meta-card,
+      .summary-strip,
+      .provider-option,
+      .quality-row,
+      .choice-card,
+      .preset-card,
+      .preset-status,
+      .preview-result,
+      .stat-card,
+      .reason-row,
+      .sample-row,
+      .support-card,
+      .widget-panel,
+      .note-item,
+      .disclaimer {
+        border-radius: var(--radius-md);
+        border-color: var(--border);
+        background: var(--surface-2);
+        box-shadow: none;
+      }
+
+      .manifest-box {
+        padding: 10px 12px;
+      }
+
+      .manifest-label,
+      .meta-label,
+      .stat-label,
+      .field-label {
+        font-size: 10px;
+        letter-spacing: 0.04em;
+      }
+
+      .manifest-url {
+        font-size: 11px;
+        color: #c9d7f5;
+      }
+
+      .meta-grid,
+      .stat-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .meta-card,
+      .stat-card {
+        padding: 10px;
+      }
+
+      .meta-value,
+      .stat-value {
+        margin-top: 5px;
+        font-size: 18px;
+        color: var(--text);
+        background: none;
+        -webkit-text-fill-color: currentColor;
+      }
+
+      button,
+      .btn,
+      .support-link {
+        border-radius: var(--radius-md);
+        padding: 10px 12px;
+        font-size: 13px;
+      }
+
+      .btn-primary {
+        width: 100%;
+        background: #2f6df6;
+        box-shadow: none;
+      }
+
+      .btn-primary:hover,
+      .donate-toggle:hover,
+      .preset-card:hover,
+      .provider-option:hover {
+        transform: none;
+        box-shadow: none;
+      }
+
+      .btn-secondary,
+      .btn-ghost,
+      .support-link {
+        background: var(--surface-2);
+        border: 1px solid var(--border);
+      }
+
+      .actions,
+      .toolbar,
+      .support-actions {
+        gap: 8px;
+        margin-top: 10px;
+      }
+
+      .field {
+        margin-top: 12px;
+      }
+
+      .field-input {
+        padding: 10px 11px;
+        border-radius: var(--radius-md);
+        border-color: var(--border);
+        background: #11151d;
+        font-size: 13px;
+      }
+
+      .field-input:focus {
+        border-color: #5f84f8;
+        background: #11151d;
+        box-shadow: 0 0 0 2px rgba(47, 109, 246, 0.25);
+      }
+
+      select.field-input option {
+        background: #171c25;
+      }
+
+      .provider-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        max-height: 260px;
+        gap: 7px;
+      }
+
+      .provider-option,
+      .choice-card {
+        padding: 10px;
+      }
+
+      .provider-option:has(input:checked),
+      .choice-card:has(input:checked),
+      .preset-card.is-active {
+        background: #1c2a43;
+        border-color: #3d6ce8;
+        box-shadow: none;
+      }
+
+      .provider-option input,
+      .choice-card input {
+        accent-color: #2f6df6;
+      }
+
+      .provider-name,
+      .choice-title {
+        font-size: 13px;
+      }
+
+      .quality-row {
+        grid-template-columns: 28px 1fr auto;
+        gap: 10px;
+        padding: 9px 10px;
+      }
+
+      .quality-rank {
+        width: 24px;
+        height: 24px;
+        border-radius: var(--radius-sm);
+        background: #202838;
+        color: var(--text-dim);
+      }
+
+      .arrow-button {
+        width: 28px;
+        height: 28px;
+        border-radius: var(--radius-sm);
+        background: #202838;
+      }
+
+      .choice-grid,
+      .preset-grid,
+      .quality-list,
+      .notes-list,
+      .reason-list,
+      .sample-list {
+        gap: 7px;
+        margin-top: 10px;
+      }
+
+      .preset-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .preset-card {
+        padding: 12px;
+      }
+
+      .preset-card::before {
+        display: none;
+      }
+
+      .preset-name {
+        font-size: 14px;
+      }
+
+      .support-card {
+        padding: 14px;
+      }
+
+      .donate-toggle {
+        background: #24c6a5;
+        color: #071510;
+      }
+
+      .widget-frame {
+        min-height: 520px;
+        border-radius: var(--radius-md);
+      }
+
+      .torbox-card {
+        border-color: #3b4658;
+        background: #1a202a;
+      }
+
+      .torbox-head,
+      .torbox-toggle-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+      }
+
+      .torbox-head {
+        padding-bottom: 12px;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .torbox-help {
+        margin-top: 10px;
+        padding: 10px 12px;
+        border-radius: var(--radius-md);
+        background: #111820;
+      }
+
+      .torbox-help a {
+        color: #7fb0ff;
+        font-size: 13px;
+        font-weight: 700;
+        text-decoration: underline;
+        text-underline-offset: 3px;
+      }
+
+      .torbox-options {
+        display: grid;
+        gap: 16px;
+        margin-top: 18px;
+      }
+
+      .torbox-toggle-row strong {
+        display: block;
+        color: var(--text);
+        font-size: 13px;
+      }
+
+      .torbox-toggle-row small {
+        color: #b69cff;
+        font-size: 11px;
+      }
+
+      .torbox-toggle-row em {
+        display: block;
+        margin-top: 3px;
+        color: var(--muted);
+        font-size: 12px;
+        font-style: normal;
+      }
+
+      .torbox-toggle-row .warning-copy {
+        color: #f0c34c;
+        font-style: italic;
+      }
+
+      .switch {
+        position: relative;
+        display: inline-flex;
+        width: 48px;
+        height: 26px;
+        flex: 0 0 auto;
+        cursor: pointer;
+      }
+
+      .switch input {
+        position: absolute;
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      .switch > span {
+        width: 100%;
+        border-radius: 999px;
+        background: #566173;
+        transition: background 0.16s ease;
+      }
+
+      .switch > span::after {
+        content: '';
+        position: absolute;
+        top: 3px;
+        left: 3px;
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        background: #f5f7fb;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+        transition: transform 0.16s ease;
+      }
+
+      .switch input:checked + span {
+        background: #2f6df6;
+      }
+
+      .switch input:checked + span::after {
+        transform: translateX(22px);
+      }
+
+      .switch-small {
+        width: 42px;
+        height: 24px;
+      }
+
+      .switch-small > span::after {
+        width: 18px;
+        height: 18px;
+      }
+
+      .switch-small input:checked + span::after {
+        transform: translateX(18px);
+      }
+
+      .mode-switch {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px;
+        margin-top: 10px;
+        padding: 5px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        background: var(--surface);
+      }
+
+      .mode-button {
+        padding: 9px 10px;
+        border-radius: var(--radius-md);
+        background: transparent;
+        color: var(--text-dim);
+      }
+
+      .mode-button.is-active {
+        background: #2f6df6;
+        color: #fff;
+      }
+
+      .simple-settings {
+        display: none;
+      }
+
+      body[data-config-mode="simple"] .simple-settings {
+        display: block;
+      }
+
+      body[data-config-mode="simple"] .advanced-only {
+        display: none;
+      }
+
+      .simple-quality-grid,
+      .simple-limit-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+        margin-top: 10px;
+      }
+
+      .simple-quality {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+        background: var(--surface-2);
+        font-weight: 700;
+        font-size: 13px;
+      }
+
+      .simple-quality input {
+        accent-color: #2f6df6;
+      }
+
+      .simple-footer {
+        display: none;
+        margin: 14px 0 4px;
+        padding: 4px 0 2px;
+        text-align: center;
+      }
+
+      body[data-config-mode="simple"] .simple-footer {
+        display: block;
+      }
+
+      .simple-support-button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 11px 16px;
+        border-radius: 8px;
+        background: #7ea8ef;
+        color: #fff;
+        font-weight: 800;
+        text-decoration: none;
+      }
+
+      .simple-footer-links {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 22px;
+        margin-top: 16px;
+      }
+
+      .simple-social-link {
+        display: inline-grid;
+        place-items: center;
+        width: 28px;
+        height: 28px;
+        border-radius: 999px;
+        color: #fff;
+        font-size: 13px;
+        font-weight: 900;
+        text-decoration: none;
+      }
+
+      .simple-social-link img,
+      .simple-social-link svg {
+        width: 18px;
+        height: 18px;
+        display: block;
+      }
+
+      .simple-social-link.stremio {
+        background: #725cff;
+      }
+
+      .simple-social-link.discord {
+        background: #5865f2;
+      }
+
+      .simple-status-link {
+        color: #e5e7eb;
+        text-decoration: underline;
+        text-underline-offset: 3px;
+      }
+
+      .simple-online {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        color: #e5e7eb;
+      }
+
+      .simple-online::before {
+        content: '';
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        background: #2ebf62;
+      }
+
+      .simple-footer-credit {
+        margin: 12px 0 0;
+        color: #e5e7eb;
+        font-size: 14px;
+      }
+
+      .simple-footer-credit a {
+        color: #fff;
+        text-decoration: underline;
+        text-underline-offset: 3px;
+      }
+
+      @media (max-width: 640px) {
+        main {
+          width: calc(100vw - 18px);
+          padding: 10px 0 24px;
+        }
+        .topbar-actions {
+          display: none;
+        }
+        .card-inner {
+          padding: 12px;
+        }
+        .meta-grid,
+        .stat-grid,
+        .provider-grid,
+        .simple-quality-grid,
+        .simple-limit-grid {
+          grid-template-columns: 1fr;
+        }
+      }
     </style>
   </head>
   <body>
@@ -1344,6 +1977,11 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         </div>
       </div>
 
+      <div class="mode-switch" role="tablist" aria-label="Configuration mode">
+        <button type="button" class="mode-button is-active" data-config-mode="simple">Simple</button>
+        <button type="button" class="mode-button" data-config-mode="advanced">Advanced</button>
+      </div>
+
       <!-- HERO -->
       <section class="hero">
         <span class="hero-tag">Configure addon</span>
@@ -1352,7 +1990,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         <div class="hero-meta">
           <div class="hero-chip">⚡ Live manifest</div>
           <div class="hero-chip">🎯 Smart presets</div>
-          <div class="hero-chip">🔍 Built-in preview</div>
+          <div class="hero-chip">TorBox support</div>
           <div class="hero-chip">🔒 Private configs</div>
         </div>
       </section>
@@ -1364,23 +2002,23 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
           <button type="button" class="nav-item is-active" data-section-target="overview-section">
             <span class="nav-index">01</span><span class="nav-label">Install</span>
           </button>
-          <button type="button" class="nav-item" data-section-target="presets-section">
+          <button type="button" class="nav-item advanced-only" data-section-target="presets-section">
             <span class="nav-index">02</span><span class="nav-label">Presets</span>
           </button>
-          <button type="button" class="nav-item" data-section-target="providers-section">
+          <button type="button" class="nav-item advanced-only" data-section-target="providers-section">
             <span class="nav-index">03</span><span class="nav-label">Providers</span>
           </button>
-          <button type="button" class="nav-item" data-section-target="sorting-section">
+          <button type="button" class="nav-item advanced-only" data-section-target="sorting-section">
             <span class="nav-index">04</span><span class="nav-label">Quality</span>
           </button>
-          <button type="button" class="nav-item" data-section-target="filters-section">
+          <button type="button" class="nav-item advanced-only" data-section-target="filters-section">
             <span class="nav-index">05</span><span class="nav-label">Filters</span>
           </button>
-          <button type="button" class="nav-item" data-section-target="ranking-section">
+          <button type="button" class="nav-item advanced-only" data-section-target="ranking-section">
             <span class="nav-index">06</span><span class="nav-label">Ranking</span>
           </button>
-          <button type="button" class="nav-item" data-section-target="preview-section">
-            <span class="nav-index">07</span><span class="nav-label">Preview</span>
+          <button type="button" class="nav-item" data-section-target="torbox-section">
+            <span class="nav-index">07</span><span class="nav-label">TorBox</span>
           </button>
           <button type="button" class="nav-item" data-section-target="support-section">
             <span class="nav-index">08</span><span class="nav-label">Support</span>
@@ -1426,8 +2064,8 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
                     <p class="meta-value">Custom</p>
                   </div>
                   <div class="meta-card">
-                    <p class="meta-label">Preview</p>
-                    <p class="meta-value">Live</p>
+                    <p class="meta-label">TorBox</p>
+                    <p class="meta-value">Ready</p>
                   </div>
                 </div>
               </div>
@@ -1435,7 +2073,72 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
           </section>
 
           <!-- PRESETS -->
-          <section class="card" id="presets-section">
+          <section class="card simple-settings" id="simple-section">
+            <div class="card-inner">
+              <div class="card-header">
+                <div>
+                  <h3 class="card-title">Simple Settings</h3>
+                  <p class="card-desc">Quick setup with common stream controls.</p>
+                </div>
+              </div>
+
+              <div class="field">
+                <label class="field-label">Video Qualities</label>
+                <div class="simple-quality-grid">
+                  <label class="simple-quality"><input type="checkbox" class="simple-quality-input" value="2160p" checked>2160p (4K)</label>
+                  <label class="simple-quality"><input type="checkbox" class="simple-quality-input" value="1080p" checked>1080p</label>
+                  <label class="simple-quality"><input type="checkbox" class="simple-quality-input" value="720p" checked>720p</label>
+                  <label class="simple-quality"><input type="checkbox" class="simple-quality-input" value="480p" checked>480p</label>
+                </div>
+              </div>
+
+              <div class="field">
+                <label class="field-label" for="simple-content-selection">Content Selection</label>
+                <select id="simple-content-selection" class="field-input">
+                  <option value="default">Default Content Only</option>
+                  <option value="movie">Movies Only</option>
+                  <option value="series">Series Only</option>
+                </select>
+              </div>
+
+              <div class="field">
+                <label class="field-label" for="simple-default-sorting">Default Sorting</label>
+                <select id="simple-default-sorting" class="field-input">
+                  <option value="highest-non-4k">Highest Non-4K Quality</option>
+                  <option value="highest">Highest Quality</option>
+                  <option value="balanced">Balanced</option>
+                </select>
+              </div>
+
+              <div class="field">
+                <label class="field-label">Result Limits</label>
+                <div class="simple-limit-grid">
+                  <label>
+                    <span class="field-label" for="simple-max-per-quality">Max Per Quality</span>
+                    <select id="simple-max-per-quality" class="field-input">
+                      <option value="0">Unlimited</option>
+                      <option value="1">1</option>
+                      <option value="2">2</option>
+                      <option value="3">3</option>
+                      <option value="5">5</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span class="field-label" for="simple-max-per-provider">Max Per Provider</span>
+                    <select id="simple-max-per-provider" class="field-input">
+                      <option value="0">Unlimited</option>
+                      <option value="1">1</option>
+                      <option value="2">2</option>
+                      <option value="3">3</option>
+                      <option value="5">5</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="card advanced-only" id="presets-section">
             <div class="card-inner">
               <div class="card-header">
                 <div>
@@ -1493,7 +2196,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
           </section>
 
           <!-- PROVIDERS -->
-          <section class="card" id="providers-section">
+          <section class="card advanced-only" id="providers-section">
             <div class="card-inner">
               <div class="card-header">
                 <div>
@@ -1520,8 +2223,8 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
           </section>
 
           <!-- TWO COLUMN: SORTING + FILTERS -->
-          <div class="two-column">
-            <section class="card" id="sorting-section">
+          <div class="two-column advanced-only">
+            <section class="card advanced-only" id="sorting-section">
               <div class="card-inner">
                 <div class="card-header">
                   <div>
@@ -1537,7 +2240,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
               </div>
             </section>
 
-            <section class="card" id="filters-section">
+            <section class="card advanced-only" id="filters-section">
               <div class="card-inner">
                 <div class="card-header">
                   <div>
@@ -1628,12 +2331,6 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
                 </div>
 
                 <div class="field">
-                  <label class="field-label" for="torbox-api-key">TorBox API key (DDL streams)</label>
-                  <input id="torbox-api-key" class="field-input" type="password" placeholder="Optional TorBox API key" spellcheck="false" autocomplete="off">
-                  <div class="field-help">Optional. Converts supported DDL host links from any provider into TorBox playback links. Stored behind a private config id.</div>
-                </div>
-
-                <div class="field">
                   <label class="field-label" for="dedupe-mode">Deduplication mode</label>
                   <select id="dedupe-mode" class="field-input">
                     <option value="off">Off</option>
@@ -1648,7 +2345,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
           </div>
 
           <!-- RANKING -->
-          <section class="card" id="ranking-section">
+          <section class="card advanced-only" id="ranking-section">
             <div class="card-inner">
               <div class="card-header">
                 <div>
@@ -1691,34 +2388,77 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
             </div>
           </section>
 
-          <!-- PREVIEW -->
-          <section class="card" id="preview-section">
+          <!-- TORBOX -->
+          <section class="card torbox-card" id="torbox-section">
             <div class="card-inner">
-              <div class="card-header">
+              <div class="torbox-head">
                 <div>
-                  <h3 class="card-title">Filter Preview</h3>
-                  <p class="card-desc">Test current configuration against a title and see what each rule does.</p>
+                  <h3 class="card-title">TorBox Integration</h3>
+                  <p class="card-desc">Stream without buffering. Highly recommended.</p>
                 </div>
-                <span class="card-badge">Preview</span>
+                <label class="switch" aria-label="Enable TorBox integration">
+                  <input type="checkbox" id="torbox-enabled" checked>
+                  <span></span>
+                </label>
               </div>
 
-              <div class="preview-grid">
-                <select id="preview-type" class="field-input">
-                  <option value="movie">Movie</option>
-                  <option value="series">Series</option>
-                </select>
-                <input id="preview-id" class="field-input" type="text" value="tt0133093" placeholder="tt0133093 or tt0944947:1:1" spellcheck="false" autocomplete="off">
-                <button type="button" class="btn-secondary" id="run-preview">▶ Run</button>
+              <div class="field">
+                <label class="field-label" for="torbox-api-key">API Key</label>
+                <input id="torbox-api-key" class="field-input" type="password" placeholder="e.g. abcd1234-e123-567f-gh8i-jkl1m123456z" spellcheck="false" autocomplete="off">
               </div>
 
-              <div class="preview-result" id="preview-result">
-                <div class="preview-empty">Use an IMDb id to preview the current provider and filter settings.</div>
+              <div class="torbox-help">
+                <a href="https://torbox.app/settings" target="_blank" rel="noopener">Find your API key here</a>
+              </div>
+
+              <div class="torbox-options">
+                <label class="torbox-toggle-row">
+                  <span>
+                    <strong>TorBox Only Streams</strong>
+                    <em>Excludes normal search results</em>
+                  </span>
+                  <span class="switch switch-small">
+                    <input type="checkbox" id="torbox-only-streams">
+                    <span></span>
+                  </span>
+                </label>
+
+                <label class="torbox-toggle-row">
+                  <span>
+                    <strong>TorBox Usenet <small>(Recommended)</small></strong>
+                    <em class="warning-copy">Pro plan only - do not enable on Essential/Standard</em>
+                  </span>
+                  <span class="switch switch-small">
+                    <input type="checkbox" id="torbox-usenet">
+                    <span></span>
+                  </span>
+                </label>
               </div>
             </div>
           </section>
 
+          <footer class="simple-footer">
+            <a class="simple-support-button" href="${simpleKoFiUrl}" target="_blank" rel="noopener">
+              <span>☕</span>
+              <span>Support me on Ko-fi -&gt;</span>
+            </a>
+            <div class="simple-footer-links">
+              <a class="simple-social-link stremio" href="https://stremio-addons.net/addons/nebulastreams-stable" target="_blank" rel="noopener" aria-label="Stremio Addons">
+                <img src="https://stremio-addons.net/favicon.ico" alt="">
+              </a>
+              <a class="simple-social-link discord" href="https://discord.gg/Y3gEjpcjm" target="_blank" rel="noopener" aria-label="Discord">
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path fill="currentColor" d="M20.32 4.37A19.8 19.8 0 0 0 15.36 2.8a.07.07 0 0 0-.08.04c-.21.38-.45.88-.62 1.27a18.29 18.29 0 0 0-5.5 0 12.7 12.7 0 0 0-.63-1.27.08.08 0 0 0-.08-.04A19.74 19.74 0 0 0 3.5 4.37a.07.07 0 0 0-.03.03C.35 9.05-.46 13.58.02 18.06c0 .02.02.05.04.06a19.9 19.9 0 0 0 6.08 3.07.08.08 0 0 0 .09-.03c.47-.64.89-1.31 1.25-2.02a.08.08 0 0 0-.04-.11 13.16 13.16 0 0 1-1.9-.91.08.08 0 0 1 0-.13l.38-.3a.08.08 0 0 1 .08-.01c3.96 1.8 8.24 1.8 12.15 0a.08.08 0 0 1 .09.01l.38.3a.08.08 0 0 1-.01.13c-.6.35-1.23.66-1.9.91a.08.08 0 0 0-.04.11c.37.7.79 1.38 1.25 2.02a.08.08 0 0 0 .09.03 19.84 19.84 0 0 0 6.09-3.07.08.08 0 0 0 .03-.06c.58-5.18-.98-9.67-3.87-13.66a.06.06 0 0 0-.03-.03ZM8.02 15.33c-1.19 0-2.17-1.1-2.17-2.44 0-1.35.96-2.44 2.17-2.44 1.22 0 2.18 1.1 2.17 2.44 0 1.35-.96 2.44-2.17 2.44Zm7.97 0c-1.19 0-2.17-1.1-2.17-2.44 0-1.35.96-2.44 2.17-2.44 1.22 0 2.18 1.1 2.17 2.44 0 1.35-.95 2.44-2.17 2.44Z"/>
+                </svg>
+              </a>
+              <a class="simple-status-link" href="${escapeHtml(baseUrl)}/health" target="_blank" rel="noopener">Status</a>
+              <span class="simple-online">230 Online</span>
+            </div>
+            <p class="simple-footer-credit">2026. By <a href="https://discord.gg/Y3gEjpcjm" target="_blank" rel="noopener">retrocodex</a></p>
+          </footer>
+
           <!-- SUPPORT -->
-          <section class="card" id="support-section">
+          <section class="card advanced-only" id="support-section">
             <div class="card-inner">
               <div class="card-header">
                 <div>
@@ -1760,7 +2500,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
           </section>
 
           <!-- NOTES -->
-          <section class="card" id="notes-section">
+          <section class="card advanced-only" id="notes-section">
             <div class="card-inner">
               <div class="card-header">
                 <div>
@@ -1790,13 +2530,25 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
       const origin = ${JSON.stringify(baseUrl)};
       const providerData = ${JSON.stringify(providerIds)};
       const defaultQualityPriority = ['2160p', '1440p', '1080p', '720p', '480p', '360p', 'auto', 'unknown'];
+      const simpleSortingOrders = {
+        'highest-non-4k': ['1080p', '720p', '480p', '360p', '2160p', '1440p', 'auto', 'unknown'],
+        highest: [...defaultQualityPriority],
+        balanced: ['1080p', '720p', '2160p', '480p', '360p', '1440p', 'auto', 'unknown']
+      };
       const selectedProviders = new Set();
       let qualityPriority = [...defaultQualityPriority];
       let activePresetId = null;
+      let configMode = 'simple';
 
       providerData.forEach((p) => selectedProviders.add(p));
 
       const $ = (id) => document.getElementById(id);
+      const modeButtons = Array.from(document.querySelectorAll('[data-config-mode]'));
+      const simpleQualityInputs = Array.from(document.querySelectorAll('.simple-quality-input'));
+      const simpleContentSelection = $('simple-content-selection');
+      const simpleDefaultSorting = $('simple-default-sorting');
+      const simpleMaxPerQuality = $('simple-max-per-quality');
+      const simpleMaxPerProvider = $('simple-max-per-provider');
       const providerSearch = $('provider-search');
       const providerGrid = $('provider-grid');
       const providerSummary = $('provider-summary');
@@ -1819,7 +2571,10 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
       const blockedHosts = $('blocked-hosts');
       const customProxyUrl = $('custom-proxy-url');
       const febboxUiCookie = $('febbox-ui-cookie');
+      const torboxEnabled = $('torbox-enabled');
       const torboxApiKey = $('torbox-api-key');
+      const torboxOnlyStreams = $('torbox-only-streams');
+      const torboxUsenet = $('torbox-usenet');
       const dedupeMode = $('dedupe-mode');
       const formatterStyle = $('formatter-style');
       const overviewProviderCount = $('overview-provider-count');
@@ -1827,10 +2582,6 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
       const presetButtons = Array.from(document.querySelectorAll('[data-preset-id]'));
       const donateToggle = $('donate-toggle');
       const donationWidgetPanel = $('donation-widget-panel');
-      const previewType = $('preview-type');
-      const previewId = $('preview-id');
-      const runPreviewButton = $('run-preview');
-      const previewResult = $('preview-result');
       const navItems = Array.from(document.querySelectorAll('[data-section-target]'));
       let manifestResolveNonce = 0;
 
@@ -1871,6 +2622,34 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
       const isDefaultQualityOrder = () =>
         qualityPriority.length === defaultQualityPriority.length &&
         qualityPriority.every((q, i) => q === defaultQualityPriority[i]);
+
+      const getSimpleAllowedQualities = () =>
+        simpleQualityInputs
+          .filter((input) => input.checked)
+          .map((input) => input.value)
+          .filter(Boolean);
+
+      const getSimpleQualityPriority = () => {
+        const order = simpleSortingOrders[simpleDefaultSorting.value] || simpleSortingOrders['highest-non-4k'];
+        return [
+          ...order.filter((quality) => getSimpleAllowedQualities().includes(quality)),
+          ...order.filter((quality) => !getSimpleAllowedQualities().includes(quality))
+        ];
+      };
+
+      const syncSimpleQualityPriority = () => {
+        if (configMode !== 'simple') return;
+        qualityPriority = getSimpleQualityPriority();
+        renderQualityList();
+      };
+
+      const setConfigMode = (mode) => {
+        configMode = mode === 'advanced' ? 'advanced' : 'simple';
+        document.body.dataset.configMode = configMode;
+        modeButtons.forEach((button) => button.classList.toggle('is-active', button.dataset.configMode === configMode));
+        syncSimpleQualityPriority();
+        updateManifest();
+      };
 
       const presetDefinitions = {
         'web-fast': { label: 'Web Fast', code: 'WF', providers: 'all', qualityPriority: ['1080p','720p','480p','360p','2160p','1440p','auto','unknown'], webReadyOnly: true, hideHeavyFormats: true, preferHdr: false, preferH264: true, preferSmallerFiles: true, preferDirectHosts: true, customProxyUrl: '', preferredAudioLanguage: '', maxSizeGb: '5', blockedHosts: '', dedupeMode: 'host-quality', formatterStyle: 'clean' },
@@ -1941,12 +2720,24 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         const tokens = [];
         const ap = activePresetId ? presetDefinitions[activePresetId] : null;
         if (ap?.code) tokens.push('profile=' + ap.code.toLowerCase());
+        if (configMode === 'simple') {
+          const allowedQualities = getSimpleAllowedQualities();
+          if (allowedQualities.length > 0) {
+            tokens.push('qualities=' + allowedQualities.join('|'));
+          }
+          if (simpleContentSelection.value !== 'default') tokens.push('content=' + simpleContentSelection.value);
+          if (Number.parseInt(simpleMaxPerQuality.value, 10) > 0) tokens.push('max-per-quality=' + Number.parseInt(simpleMaxPerQuality.value, 10));
+          if (Number.parseInt(simpleMaxPerProvider.value, 10) > 0) tokens.push('max-per-provider=' + Number.parseInt(simpleMaxPerProvider.value, 10));
+        }
         if (webReadyOnly.checked) tokens.push('web-ready-only');
         if (hideHeavyFormats.checked) tokens.push('hide-heavy-formats');
         if (preferHdr.checked) tokens.push('prefer-hdr');
         if (preferH264.checked) tokens.push('prefer-h264');
         if (preferSmallerFiles.checked) tokens.push('prefer-smaller-files');
         if (preferDirectHosts.checked) tokens.push('prefer-direct-hosts');
+        const hasTorboxKey = torboxEnabled.checked && torboxApiKey.value.trim();
+        if (hasTorboxKey && torboxOnlyStreams.checked) tokens.push('torbox-only-streams');
+        if (hasTorboxKey && torboxUsenet.checked) tokens.push('torbox-usenet');
         if (preferredAudioLanguage.value) tokens.push('preferred-audio=' + preferredAudioLanguage.value.toLowerCase());
         if (dedupeMode.value && dedupeMode.value !== 'off') tokens.push('dedupe=' + dedupeMode.value);
         if (formatterStyle.value && formatterStyle.value !== 'clean') tokens.push('formatter=' + formatterStyle.value);
@@ -1969,14 +2760,21 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
 
       const buildPrivateConfigPayload = () => {
         const ordered = getOrderedProviders();
+        const simpleAllowedQualities = getSimpleAllowedQualities();
         return {
           providers: ordered.length === 0 || ordered.length === providerData.length ? [] : ordered,
           qualityPriority: [...qualityPriority],
           streamOptions: {
             webReadyOnly: webReadyOnly.checked,
             hideHeavyFormats: hideHeavyFormats.checked,
+            allowedQualities: configMode === 'simple' && simpleAllowedQualities.length > 0
+              ? simpleAllowedQualities
+              : [],
             maxSizeGb: Number.parseFloat(maxSizeGb.value) > 0 ? Number.parseFloat(maxSizeGb.value) : 0,
+            maxPerQuality: configMode === 'simple' ? Number.parseInt(simpleMaxPerQuality.value, 10) || 0 : 0,
+            maxPerProvider: configMode === 'simple' ? Number.parseInt(simpleMaxPerProvider.value, 10) || 0 : 0,
             blockHosts: blockedHosts.value.split(/[,\\n]/).map((v) => v.trim().toLowerCase()).filter(Boolean).filter((v, i, a) => a.indexOf(v) === i),
+            contentSelection: configMode === 'simple' ? simpleContentSelection.value : 'default',
             preferredAudioLanguage: preferredAudioLanguage.value || null,
             dedupeMode: dedupeMode.value || 'off',
             formatterStyle: formatterStyle.value || 'clean',
@@ -1984,11 +2782,13 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
             preferH264: preferH264.checked,
             preferSmallerFiles: preferSmallerFiles.checked,
             preferDirectHosts: preferDirectHosts.checked,
+            torboxOnlyStreams: Boolean(torboxEnabled.checked && torboxApiKey.value.trim() && torboxOnlyStreams.checked),
+            torboxUsenet: Boolean(torboxEnabled.checked && torboxApiKey.value.trim() && torboxUsenet.checked),
             customProxyUrl: customProxyUrl.value.trim() || null
           },
           privateProviderSettings: {
             febboxUiCookie: febboxUiCookie.value.trim(),
-            torboxApiKey: torboxApiKey.value.trim()
+            torboxApiKey: torboxEnabled.checked ? torboxApiKey.value.trim() : ''
           },
           profileCode: activePresetId && presetDefinitions[activePresetId]?.code ? presetDefinitions[activePresetId].code.toLowerCase() : null
         };
@@ -1996,7 +2796,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
 
       const resolveManifestPath = async () => {
         const cookie = febboxUiCookie.value.trim();
-        const torbox = torboxApiKey.value.trim();
+        const torbox = torboxEnabled.checked ? torboxApiKey.value.trim() : '';
         const proxy = customProxyUrl.value.trim();
         if (!cookie && !torbox && !proxy) return buildManifestPath();
         const r = await fetch(origin + '/configure/private-config', {
@@ -2058,7 +2858,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         updateProviderSummary();
         const nonce = ++manifestResolveNonce;
         const fb = buildManifestPath();
-        manifestUrl.textContent = (febboxUiCookie.value.trim() || torboxApiKey.value.trim()) ? 'Preparing private manifest...' : origin + fb;
+        manifestUrl.textContent = (febboxUiCookie.value.trim() || (torboxEnabled.checked && torboxApiKey.value.trim())) ? 'Preparing private manifest...' : origin + fb;
         try {
           const resolved = await resolveManifestPath();
           if (nonce !== manifestResolveNonce) return;
@@ -2070,69 +2870,23 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         }
       };
 
-      const buildPreviewPath = async () => {
-        const id = previewId.value.trim();
-        if (!id) return null;
-        const mp = await resolveManifestPath();
-        const prefix = mp.replace(/\\/manifest\\.json$/u, '');
-        return (prefix || '') + '/preview/' + encodeURIComponent(previewType.value) + '/' + encodeURIComponent(id) + '.json';
-      };
-
-      const renderPreviewResult = (payload) => {
-        if (!payload || payload.resolved === false) {
-          previewResult.innerHTML = '<div class="preview-empty">Preview failed. Check the IMDb id and try again.</div>';
-          return;
-        }
-        const d = payload.diagnostics || {};
-        const reasons = d.reasons || {};
-        const examples = d.examples || {};
-        const finalTotal = Math.max(0, Number(d.inputTotal || 0) - Number(d.filteredTotal || 0) - Number(d.dedupedTotal || 0));
-        const labels = {
-          nonHttp: 'Non-HTTP streams', notWebReady: 'Not web-ready', heavyFormat: 'Heavy formats',
-          tooLarge: 'Too large', blockedHost: 'Blocked hosts', languageMismatch: 'Different audio',
-          duplicate: 'Collapsed duplicates'
-        };
-        const reasonRows = Object.entries(labels)
-          .filter(([k]) => Number(reasons[k] || 0) > 0)
-          .sort((a, b) => Number(reasons[b[0]] || 0) - Number(reasons[a[0]] || 0))
-          .map(([k, l]) => {
-            const ex = Array.isArray(examples[k]) && examples[k].length > 0 ?
-              '<div class="diagnostic-examples">' + examples[k].map((s) =>
-                '<div class="diagnostic-example"><strong>' + escapeHtmlClient(s.name || 'Untitled') + '</strong>' +
-                '<div class="diagnostic-meta">' + escapeHtmlClient([s.quality||'?', s.host||'?', s.size||'?'].join(' • ')) + '</div></div>'
-              ).join('') + '</div>' : '';
-            return '<div class="diagnostic-group"><div class="reason-row"><span>' + l + '</span><strong>' + Number(reasons[k] || 0) + '</strong></div>' + ex + '</div>';
-          }).join('');
-        const sampleRows = Array.isArray(payload.sample) && payload.sample.length > 0
-          ? payload.sample.map((s) =>
-              '<div class="sample-row"><strong>' + escapeHtmlClient(s.name || 'Untitled') + '</strong>' +
-              '<div class="sample-meta">' + escapeHtmlClient([s.quality||'?', s.host||'?', s.size||'?'].join(' • ')) + '</div></div>'
-            ).join('')
-          : '<div class="preview-empty">No streams survived current filters for this title.</div>';
-        previewResult.innerHTML =
-          '<div class="stat-grid">' +
-            '<div class="stat-card"><p class="stat-label">Before</p><p class="stat-value">' + Number(d.inputTotal || 0) + '</p></div>' +
-            '<div class="stat-card"><p class="stat-label">Filtered</p><p class="stat-value">' + Number(d.filteredTotal || 0) + '</p></div>' +
-            '<div class="stat-card"><p class="stat-label">Deduped</p><p class="stat-value">' + Number(d.dedupedTotal || 0) + '</p></div>' +
-            '<div class="stat-card"><p class="stat-label">Final</p><p class="stat-value">' + finalTotal + '</p></div>' +
-          '</div>' +
-          (reasonRows ? '<div class="reason-list">' + reasonRows + '</div>' : '<div class="preview-empty" style="margin-top:14px;">No filter or dedupe rules changed this title.</div>') +
-          '<div class="sample-list">' + sampleRows + '</div>';
-      };
-
-      const runPreview = async () => {
-        const path = await buildPreviewPath();
-        if (!path) { showFlash('Enter an IMDb id first.', true); return; }
-        previewResult.innerHTML = '<div class="preview-empty">⏳ Running preview...</div>';
-        try {
-          const r = await fetch(origin + path);
-          if (!r.ok) throw new Error('Preview failed');
-          const p = await r.json();
-          renderPreviewResult(p);
-        } catch (e) {
-          previewResult.innerHTML = '<div class="preview-empty">Preview request failed. Try again.</div>';
-        }
-      };
+      modeButtons.forEach((button) => {
+        button.addEventListener('click', () => setConfigMode(button.dataset.configMode));
+      });
+      simpleQualityInputs.forEach((input) => {
+        input.addEventListener('change', () => {
+          markPresetAsCustom();
+          syncSimpleQualityPriority();
+          updateManifest();
+        });
+      });
+      [simpleContentSelection, simpleDefaultSorting, simpleMaxPerQuality, simpleMaxPerProvider].forEach((el) => {
+        el.addEventListener('change', () => {
+          markPresetAsCustom();
+          syncSimpleQualityPriority();
+          updateManifest();
+        });
+      });
 
       providerSearch.addEventListener('input', renderProviderOptions);
       providerGrid.addEventListener('change', (e) => {
@@ -2176,7 +2930,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         updateManifest();
       });
 
-      [webReadyOnly, hideHeavyFormats, preferHdr, preferH264, preferSmallerFiles, preferDirectHosts, preferredAudioLanguage, maxSizeGb, dedupeMode, formatterStyle].forEach((el) => {
+      [webReadyOnly, hideHeavyFormats, preferHdr, preferH264, preferSmallerFiles, preferDirectHosts, torboxEnabled, torboxOnlyStreams, torboxUsenet, preferredAudioLanguage, maxSizeGb, dedupeMode, formatterStyle].forEach((el) => {
         el.addEventListener('change', () => { markPresetAsCustom(); updateManifest(); });
       });
       [blockedHosts, customProxyUrl, febboxUiCookie, torboxApiKey].forEach((el) => {
@@ -2184,8 +2938,6 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
       });
 
       presetButtons.forEach((b) => b.addEventListener('click', () => applyPreset(b.dataset.presetId)));
-      runPreviewButton.addEventListener('click', runPreview);
-      previewId.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); runPreview(); } });
 
       installButton.addEventListener('click', async () => {
         try {
@@ -2219,15 +2971,15 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         navItems.forEach((it) => it.classList.toggle('is-active', it.dataset.sectionTarget === id));
       }, { rootMargin: '-18% 0px -55% 0px', threshold: [0.1, 0.35, 0.6] });
 
-      ['overview-section','presets-section','providers-section','sorting-section','filters-section','ranking-section','preview-section','support-section','notes-section']
+      ['overview-section','simple-section','presets-section','providers-section','sorting-section','filters-section','ranking-section','torbox-section','support-section','notes-section']
         .map((id) => document.getElementById(id))
         .filter(Boolean)
         .forEach((s) => observer.observe(s));
 
       renderProviderOptions();
       renderQualityList();
-      updateManifest();
       updatePresetUi();
+      setConfigMode('simple');
     </script>
   </body>
 </html>`;

@@ -74,7 +74,7 @@ services:
       - key: MEMORY_GUARD_CRITICAL_PERCENT
         value: "88"
       - key: MEMORY_GUARD_RESTART_PERCENT
-        value: "94"
+        value: "95"
       - key: MEMORY_GUARD_RESTART_AFTER_CRITICAL
         value: "3"
       - key: MEMORY_GUARD_MIN_AVAILABLE_MB
