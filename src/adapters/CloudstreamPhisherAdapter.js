@@ -167,7 +167,7 @@ export class CloudstreamPhisherAdapter extends PluginProviderAdapter {
     };
 
     await Promise.race([
-      Promise.all(Array.from({ length: workerCount }, () => worker())),
+      Promise.allSettled(Array.from({ length: workerCount }, () => worker())),
       new Promise((resolve) => {
         const remainingMs = Math.max(1, this.overallTimeoutMs - (Date.now() - startedAt));
         const timeout = setTimeout(resolve, remainingMs);

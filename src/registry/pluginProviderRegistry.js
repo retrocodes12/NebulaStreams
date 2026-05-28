@@ -3,10 +3,13 @@ import path from 'node:path';
 import { PluginManifestCache } from '../cache/pluginManifestCache.js';
 import { CloudstreamPhisherAdapter } from '../adapters/CloudstreamPhisherAdapter.js';
 import { NuvioPluginAdapter } from '../adapters/NuvioPluginAdapter.js';
+import { PStreamPluginAdapter } from '../adapters/PStreamPluginAdapter.js';
 import { R2PluginAdapter } from '../adapters/R2PluginAdapter.js';
 import { R3PluginAdapter } from '../adapters/R3PluginAdapter.js';
 import { R4AsianDramaMoviesAdapter } from '../adapters/R4AsianDramaMoviesAdapter.js';
+import { R5PluginAdapter } from '../adapters/R5PluginAdapter.js';
 import { ScraplingServiceAdapter } from '../adapters/ScraplingServiceAdapter.js';
+import { StreamripPluginAdapter } from '../adapters/StreamripPluginAdapter.js';
 import { RogPlayAdapter } from '../../providers/rogplay/RogPlayAdapter.js';
 
 const NUVIO_LATINO_PROVIDER_ORDER = Object.freeze([
@@ -59,19 +62,27 @@ const NUVIO_ITALIAN_PROVIDER_ORDER = Object.freeze([
 
 const NUVIO_2_PROVIDER_ORDER = Object.freeze([
   '4khdhub',
+  'nuvio-4khdhub',
   'hdhub4u',
+  'nuvio-hdhub4u',
   'uhdmovies',
+  'nuvio-uhdmovies',
   'vidlink',
+  'nuvio-vidlink',
   'moviebox',
   'showbox',
+  'nuvio-showbox',
   'netmirror',
   'streamflix',
   'animekai',
   'animepahe',
+  'nuvio-animepahe',
   'moviesmod',
   'dahmermovies',
+  'nuvio-dahmermovies',
   'vixsrc',
   'videasy',
+  'nuvio-videasy',
   'castle',
   'cinemacity',
   'allmovieland',
@@ -83,7 +94,17 @@ const NUVIO_2_PROVIDER_ORDER = Object.freeze([
   'mallumv',
   'dvdplay',
   'yflix',
-  'mycima'
+  'mycima',
+  'nuvio-bollyflix',
+  'nuvio-hindmoviez',
+  'nuvio-moviesdrive',
+  'nuvio-embed69',
+  'nuvio-faselhd',
+  'nuvio-kisskh',
+  'nuvio-vidfast',
+  'nuvio-vegamovies',
+  'nuvio-filmmodu',
+  'nuvio-tokyoinsider'
 ]);
 
 export class PluginProviderRegistry {
@@ -147,6 +168,16 @@ export class PluginProviderRegistry {
         logger,
         manifestUrl: 'https://raw.githubusercontent.com/yoruix/nuvio-providers/refs/heads/main/manifest.json',
         rawBaseUrl: 'https://raw.githubusercontent.com/yoruix/nuvio-providers/refs/heads/main/',
+        manifestSources: [
+          {
+            manifestUrl: 'https://raw.githubusercontent.com/yoruix/nuvio-providers/refs/heads/main/manifest.json',
+            rawBaseUrl: 'https://raw.githubusercontent.com/yoruix/nuvio-providers/refs/heads/main/'
+          },
+          {
+            manifestUrl: 'https://raw.githubusercontent.com/hihihihihiiray/nuvio-plugins/refs/heads/main/manifest.json',
+            rawBaseUrl: 'https://raw.githubusercontent.com/hihihihihiiray/nuvio-plugins/refs/heads/main/'
+          }
+        ],
         providerOrder: NUVIO_2_PROVIDER_ORDER,
         pluginConcurrency: Number(process.env.NUVIO_2_PLUGIN_CONCURRENCY || 5),
         earlyReturnStreams: Number(process.env.NUVIO_2_EARLY_RETURN_STREAMS || 36),
@@ -157,6 +188,9 @@ export class PluginProviderRegistry {
       ['r2-plugin', new R2PluginAdapter({ logger })],
       ['r3-plugin', new R3PluginAdapter({ logger })],
       ['r4-asian-drama-movies', new R4AsianDramaMoviesAdapter({ logger })],
+      ['r5-plugin', new R5PluginAdapter({ logger })],
+      ['streamrip-plugin', new StreamripPluginAdapter({ logger })],
+      ['pstream-plugin', new PStreamPluginAdapter({ logger })],
       ['scrapling', new ScraplingServiceAdapter({ logger })],
       ['rogplay', rogPlayAdapter]
     ]);
@@ -228,6 +262,27 @@ export class PluginProviderRegistry {
         hostKey: 'plugin:r4-asian-drama-movies'
       },
       {
+        id: 'r5-plugin',
+        label: 'r5-plugin',
+        kind: 'plugin-adapter',
+        adapterId: 'r5-plugin',
+        hostKey: 'plugin:r5-plugin'
+      },
+      {
+        id: 'streamrip-plugin',
+        label: 'Streamrip plugin',
+        kind: 'plugin-adapter',
+        adapterId: 'streamrip-plugin',
+        hostKey: 'plugin:streamrip-plugin'
+      },
+      {
+        id: 'pstream-plugin',
+        label: 'P-Stream plugin',
+        kind: 'plugin-adapter',
+        adapterId: 'pstream-plugin',
+        hostKey: 'plugin:pstream-plugin'
+      },
+      {
         id: 'scrapling-hdhub4u',
         label: 'Scrapling HDHub4u',
         kind: 'plugin-adapter',
@@ -270,7 +325,7 @@ export class PluginProviderRegistry {
   }
 
   async initialize() {
-    await Promise.all([...this.adapters.values()].map(async (adapter) => {
+    await Promise.allSettled([...this.adapters.values()].map(async (adapter) => {
       if (typeof adapter.initialize !== 'function') return;
 
       try {

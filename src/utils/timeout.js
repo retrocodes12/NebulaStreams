@@ -4,12 +4,22 @@ export const delay = (ms, signal = null) => new Promise((resolve, reject) => {
     return;
   }
 
-  const timeout = setTimeout(resolve, ms);
+  let onAbort = null;
+  const cleanup = () => {
+    if (signal && onAbort) {
+      signal.removeEventListener('abort', onAbort);
+    }
+  };
+  const timeout = setTimeout(() => {
+    cleanup();
+    resolve();
+  }, ms);
   timeout.unref?.();
 
   if (signal) {
-    const onAbort = () => {
+    onAbort = () => {
       clearTimeout(timeout);
+      cleanup();
       reject(signal.reason || new Error('Operation aborted'));
     };
     signal.addEventListener('abort', onAbort, { once: true });
@@ -37,4 +47,3 @@ export const withTimeout = async (operation, timeoutMs, message = 'Operation tim
     clearTimeout(timeoutId);
   }
 };
-

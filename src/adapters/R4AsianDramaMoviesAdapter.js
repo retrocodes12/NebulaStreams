@@ -70,7 +70,9 @@ export class R4AsianDramaMoviesAdapter extends PluginProviderAdapter {
 
     try {
       const tasks = [];
+      const selected = this.getRequestedSourceSet(request);
       for (const source of this.sources) {
+        if (selected && !selected.has(source.id)) continue;
         for (const id of this.buildStreamIds(request, source, mediaType)) {
           tasks.push(this.fetchSource(source, mediaType, id, controller.signal, request.privateProviderSettings));
         }
@@ -86,6 +88,13 @@ export class R4AsianDramaMoviesAdapter extends PluginProviderAdapter {
       clearTimeout(timeout);
       request.signal?.removeEventListener?.('abort', abortFromParent);
     }
+  }
+
+  getRequestedSourceSet(request) {
+    const selections = request?.pluginProviderSelections || request?.streamOptions?.pluginProviderSelections || {};
+    const selected = selections[this.id] || selections[request?.providerId] || null;
+    if (!Array.isArray(selected) || selected.length === 0) return null;
+    return new Set(selected.map((providerId) => String(providerId || '').trim().toLowerCase()).filter(Boolean));
   }
 
   buildStreamIds(request, source, mediaType) {

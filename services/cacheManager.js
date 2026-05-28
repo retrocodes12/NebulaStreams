@@ -595,12 +595,20 @@ export class CacheManager {
 
     const sortedEntries = output.sort((left, right) => left.lastAccessed - right.lastAccessed);
     const entriesToRemove = sortedEntries.slice(0, output.length - maxEntries);
+    let removedCount = 0;
+    let removedBytes = 0;
 
     for (const entry of entriesToRemove) {
       await rm(entry.path, { force: true });
+      removedCount += 1;
+      removedBytes += Number(entry.size || 0);
+    }
+
+    if (removedCount > 0) {
       logger.info('flat json cache evicted by entry cap', {
-        cacheKey: entry.key,
-        size: entry.size,
+        removedCount,
+        removedBytes,
+        retainedCount: maxEntries,
         type
       });
     }

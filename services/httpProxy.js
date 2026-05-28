@@ -505,9 +505,17 @@ export class HttpProxyService {
     let mappedError;
 
     if (error.response) {
-      mappedError = createHttpError(502, `Upstream server returned ${error.response.status}`);
-      logger.error('http stream failed', {
-        statusCode: error.response.status,
+      const upstreamStatus = Number(error.response.status);
+      const passthroughStatuses = new Set([400, 401, 403, 404, 410, 416, 429, 451, 503, 504]);
+      const statusCode = passthroughStatuses.has(upstreamStatus) ? upstreamStatus : 502;
+      const message = statusCode === upstreamStatus
+        ? `Upstream server returned ${upstreamStatus}`
+        : `Upstream server returned ${error.response.status}`;
+      mappedError = createHttpError(statusCode, message);
+      const logMethod = statusCode >= 500 ? 'error' : 'warn';
+      logger[logMethod]('http stream failed', {
+        upstreamStatusCode: error.response.status,
+        statusCode,
         error: mappedError
       });
       return mappedError;

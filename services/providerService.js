@@ -15,13 +15,14 @@ import { PluginProviderRegistry } from '../src/registry/pluginProviderRegistry.j
 import { Agent } from 'undici';
 
 const require = createRequire(import.meta.url);
-const { mkdir, readFile, readdir, rm, writeFile } = fsPromises;
+const { mkdir, readFile, readdir, rename, rm, writeFile } = fsPromises;
 const execFileAsync = promisify(execFile);
 const providerAbortSignalStorage = new AsyncLocalStorage();
 const providerFetchContextStorage = new AsyncLocalStorage();
 const nativeFetch = typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : null;
 const providerFetchHostInflight = new Map();
 const PROVIDER_FETCH_MAX_RETRIES = 2;
+const PROVIDER_FETCH_SLOW_LOG_MS = 4_000;
 const SIGNED_STREAM_CACHE_SAFETY_SECONDS = 60;
 const MIN_SIGNED_STREAM_CACHE_TTL_SECONDS = 15;
 const SIGNED_URL_EXPIRY_PARAM_NAMES = Object.freeze([
@@ -34,6 +35,17 @@ const SIGNED_URL_EXPIRY_PARAM_NAMES = Object.freeze([
 const PROVIDER_FETCH_DISPATCHER = new Agent({
   connect: { family: 4 }
 });
+const writeJsonFileAtomic = async (filePath, payload) => {
+  const tempPath = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
+
+  try {
+    await writeFile(tempPath, JSON.stringify(payload));
+    await rename(tempPath, filePath);
+  } catch (error) {
+    await rm(tempPath, { force: true }).catch(() => {});
+    throw error;
+  }
+};
 const PROVIDER_FETCH_REQUEST_TIMEOUT_OVERRIDES_MS = Object.freeze({
   '4khdhub': 18_000,
   '4khdhub_tv': 18_000,
@@ -145,7 +157,7 @@ const getProviderResultCacheTtlSeconds = (streams, providerId = null) => {
 
 const getProviderCacheVersion = (providerId) => {
   if (providerId === '4khdhub' || providerId === '4khdhub_tv') {
-    return '50';
+    return '51';
   }
 
   if (providerId === 'rgshows') {
@@ -217,7 +229,7 @@ const getProviderCacheVersion = (providerId) => {
   }
 
   if (providerId === 'scrapling-hdhub4u') {
-    return '2';
+    return '3';
   }
 
   if (providerId === 'streamflix' || providerId === 'streamflix_eng') {
@@ -272,7 +284,11 @@ const getProviderCacheVersion = (providerId) => {
     return '23';
   }
 
-  if (providerId === 'nuvio-latino' || providerId === 'nuvio-french' || providerId === 'nuvio-italian' || providerId === 'nuvio-2') {
+  if (providerId === 'nuvio-2') {
+    return '3';
+  }
+
+  if (providerId === 'nuvio-latino' || providerId === 'nuvio-french' || providerId === 'nuvio-italian') {
     return '2';
   }
 
@@ -296,12 +312,28 @@ const getProviderCacheVersion = (providerId) => {
     return '2';
   }
 
+  if (providerId === 'r5-plugin') {
+    return '4';
+  }
+
+  if (providerId === 'streamrip-plugin') {
+    return '1';
+  }
+
+  if (providerId === 'pstream-plugin') {
+    return '1';
+  }
+
   if (providerId === 'r4-asian-drama-movies') {
     return '2';
   }
 
   if (providerId === 'scrapling-4khdhub') {
-    return '4';
+    return '5';
+  }
+
+  if (providerId === 'scrapling-hdhub4u') {
+    return '3';
   }
 
   return '23';
@@ -374,6 +406,15 @@ const getFetchHostKey = (url) => {
   }
 
   return hostname;
+};
+
+const summarizeProviderFetchUrl = (url) => {
+  if (!url) return null;
+  try {
+    return `${url.protocol}//${url.hostname}${url.pathname}`.slice(0, 240);
+  } catch {
+    return null;
+  }
 };
 
 const getProviderFetchHostMaxInflight = (hostKey) =>
@@ -504,23 +545,71 @@ if (nativeFetch && !globalThis.fetch.__nebulaProviderAbortWrapped) {
     let attempt = 0;
 
     const run = async () => withProviderFetchHostSlot(hostKey, async () => {
+      const attemptStartedAt = Date.now();
       try {
         const response = await nativeFetch(input, nextInit);
+        const durationMs = Date.now() - attemptStartedAt;
 
         if (canRetry && attempt < PROVIDER_FETCH_MAX_RETRIES && shouldRetryProviderFetch(null, response.status)) {
+          const retryDelayMs = parseRetryAfterMs(response.headers, attempt + 1);
+          logger.info('provider fetch retrying after status', {
+            provider: providerFetchContext.providerId,
+            host: hostKey,
+            url: summarizeProviderFetchUrl(requestUrl),
+            status: response.status,
+            attempt: attempt + 1,
+            retryDelayMs,
+            durationMs
+          });
           attempt += 1;
-          await waitForProviderSlot(parseRetryAfterMs(response.headers, attempt), nextInit.signal);
+          await waitForProviderSlot(retryDelayMs, nextInit.signal);
           return run();
+        }
+
+        if (durationMs >= PROVIDER_FETCH_SLOW_LOG_MS) {
+          logger.info('provider fetch slow', {
+            provider: providerFetchContext.providerId,
+            host: hostKey,
+            url: summarizeProviderFetchUrl(requestUrl),
+            status: response.status,
+            durationMs
+          });
         }
 
         return response;
       } catch (error) {
+        const durationMs = Date.now() - attemptStartedAt;
         if (canRetry && attempt < PROVIDER_FETCH_MAX_RETRIES && shouldRetryProviderFetch(error, 0)) {
+          const retryDelayMs = 200 * (attempt + 1);
+          logger.info('provider fetch retrying after failure', {
+            provider: providerFetchContext.providerId,
+            host: hostKey,
+            url: summarizeProviderFetchUrl(requestUrl),
+            attempt: attempt + 1,
+            retryDelayMs,
+            durationMs,
+            error: error?.message || String(error)
+          });
           attempt += 1;
-          await waitForProviderSlot(200 * attempt, nextInit.signal);
+          await waitForProviderSlot(retryDelayMs, nextInit.signal);
           return run();
         }
 
+        const aborted = Boolean(nextInit.signal?.aborted) || isProviderCancellationError(error);
+        const logPayload = {
+          provider: providerFetchContext.providerId,
+          host: hostKey,
+          url: summarizeProviderFetchUrl(requestUrl),
+          attempt: attempt + 1,
+          durationMs,
+          aborted,
+          error: error?.message || String(error)
+        };
+        if (aborted) {
+          logger.info('provider fetch aborted', logPayload);
+        } else {
+          logger.warn('provider fetch failed', logPayload);
+        }
         throw error;
       }
     }, nextInit.signal);
@@ -575,6 +664,9 @@ const NO_EMPTY_CACHE_PROVIDERS = new Set([
   'r2-plugin',
   'r3-plugin',
   'r4-asian-drama-movies',
+  'r5-plugin',
+  'streamrip-plugin',
+  'pstream-plugin',
   'scrapling-4khdhub',
   'anime-sama',
   'animekai',
@@ -615,6 +707,9 @@ const PRIORITY_EMPTY_CACHE_PROVIDERS = new Set([
   'r2-plugin',
   'r3-plugin',
   'r4-asian-drama-movies',
+  'r5-plugin',
+  'streamrip-plugin',
+  'pstream-plugin',
   'allyoucanwatch',
   'scrapling-4khdhub',
   'hdhub4u',
@@ -660,6 +755,9 @@ const PROVIDER_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
   'r2-plugin': 30,
   'r3-plugin': 40,
   'r4-asian-drama-movies': 24,
+  'r5-plugin': 32,
+  'streamrip-plugin': 24,
+  'pstream-plugin': 20,
   uhdmovies: 55,
   moviebox: 20,
   'rogplay-vod': 18,
@@ -717,6 +815,9 @@ const PROVIDER_FAST_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
   'r2-plugin': 28,
   'r3-plugin': 30,
   'r4-asian-drama-movies': 18,
+  'r5-plugin': 28,
+  'streamrip-plugin': 22,
+  'pstream-plugin': 16,
   playimdb: 10,
   playimdb_v2: 10,
   uhdmovies: 45,
@@ -752,6 +853,9 @@ const PROVIDER_PARALLEL_TIMEOUT_OVERRIDES_MS = Object.freeze({
   'r2-plugin': 28_000,
   'r3-plugin': 45_000,
   'r4-asian-drama-movies': 24_000,
+  'r5-plugin': 32_000,
+  'streamrip-plugin': 24_000,
+  'pstream-plugin': 20_000,
   uhdmovies: 55_000,
   moviesmod: 18_000,
   streamflix: 18_000,
@@ -804,6 +908,9 @@ const PROVIDER_PRIORITY = [
   'r2-plugin',
   'r3-plugin',
   'r4-asian-drama-movies',
+  'r5-plugin',
+  'streamrip-plugin',
+  'pstream-plugin',
   '4khdhub',
   '4khdhub_tv',
   'scrapling-4khdhub',
@@ -870,18 +977,59 @@ const PROVIDER_PRIORITY = [
   'torrent-scraper'
 ];
 const STREMIO_ALWAYS_EXCLUDED_PROVIDERS = new Set(['torrent-scraper', 'rogplay-live']);
-const STREMIO_DEFAULT_ONLY_EXCLUDED_PROVIDERS = new Set(['allyoucanwatch', 'nuvio-latino', 'nuvio-french', 'nuvio-italian', 'nuvio-2', 'cs-arabic', 'cs-anime-kd', 'cs-german', 'cs-brazilian', 'cs-indian', ...FRENCH_NATIVE_PROVIDER_IDS]);
+const STREMIO_DEFAULT_ONLY_EXCLUDED_PROVIDERS = new Set(['allyoucanwatch', 'streamrip-plugin', 'pstream-plugin', 'nuvio-latino', 'nuvio-french', 'nuvio-italian', 'cs-arabic', 'cs-anime-kd', 'cs-german', 'cs-brazilian', 'cs-indian', ...FRENCH_NATIVE_PROVIDER_IDS]);
+const TORBOX_DDL_PROVIDER_IDS = new Set([
+  'nuvio',
+  'nuvio-2',
+  'cloudstream-phisher',
+  'r2-plugin',
+  'r3-plugin',
+  'r4-asian-drama-movies',
+  'r5-plugin',
+  'streamrip-plugin',
+  'pstream-plugin',
+  '4khdhub',
+  '4khdhub_tv',
+  'scrapling-4khdhub',
+  'hdhub4u',
+  'scrapling-hdhub4u',
+  'uhdmovies',
+  'moviesmod',
+  'hdmovie2',
+  'dahmermovies-4k',
+  'flixindia',
+  'tamilian',
+  'gramcinema',
+  'torrent-scraper'
+]);
+const TORBOX_PROVIDER_PRIORITY = Object.freeze([
+  'torrent-scraper',
+  'streamrip-plugin',
+  'pstream-plugin',
+  'r5-plugin',
+  'nuvio',
+  'nuvio-2',
+  'cloudstream-phisher',
+  'r2-plugin',
+  'r3-plugin',
+  '4khdhub',
+  '4khdhub_tv',
+  'scrapling-4khdhub',
+  'hdhub4u',
+  'scrapling-hdhub4u',
+  'uhdmovies'
+]);
 const WEB_READY_FALLBACK_PROVIDERS = Object.freeze(['moviebox', 'streamflix', 'videasy', 'fmovies', 'vidlink', 'cinestream', 'onetouchtv', 'multivid', 'playimdb', 'vidsrc', 'vixsrc']);
 const DEFAULT_DIVERSITY_FALLBACK_PROVIDERS = Object.freeze(['moviebox', 'streamflix', 'videasy', 'fmovies', 'rgshows', 'multivid', 'playimdb', 'vidzee', 'onetouchtv', 'vidsrc', 'vixsrc']);
 const CATALOG_MOVIE_FALLBACK_PROVIDERS = Object.freeze(['playimdb', 'vidsrc', 'vixsrc', 'moviebox', 'vidlink', 'cinestream', 'streamflix', 'videasy', 'fmovies', 'onetouchtv']);
 const OLD_TITLE_FALLBACK_PROVIDERS = Object.freeze(['vidsrc', 'vixsrc', 'castle', 'moviebox', 'vidlink', 'cinestream']);
-const OLD_TITLE_PRIORITY_PROVIDERS = Object.freeze(['nuvio', 'nuvio-latino', 'nuvio-french', 'nuvio-italian', 'cloudstream-phisher', 'r2-plugin', 'r3-plugin', '4khdhub', 'scrapling-4khdhub', '4khdhub_tv', 'uhdmovies', 'hdhub4u', 'moviebox', 'rogplay-vod', 'vidlink', 'cinestream', 'vidsrc', 'vixsrc', 'castle']);
+const OLD_TITLE_PRIORITY_PROVIDERS = Object.freeze(['nuvio', 'nuvio-latino', 'nuvio-french', 'nuvio-italian', 'cloudstream-phisher', 'r2-plugin', 'r3-plugin', 'r5-plugin', 'streamrip-plugin', 'pstream-plugin', '4khdhub', 'scrapling-4khdhub', '4khdhub_tv', 'uhdmovies', 'hdhub4u', 'moviebox', 'rogplay-vod', 'vidlink', 'cinestream', 'vidsrc', 'vixsrc', 'castle']);
 const OLD_TITLE_PRIMARY_PROVIDERS = Object.freeze(['4khdhub', 'scrapling-4khdhub', '4khdhub_tv', 'hdhub4u', 'uhdmovies']);
 const UNKNOWN_TV_PROFILE_FALLBACK_PROVIDERS = Object.freeze(['playimdb', 'animekai', 'animeworld', 'animesalt', 'animepahe', 'moviebox']);
 const ANIME_PHASE_ONE_PRIORITY_PROVIDERS = Object.freeze(['animekai', 'animeworld', 'animesalt', 'moviebox', 'kisskh', '4khdhub_tv', '4khdhub']);
 const ASIAN_DRAMA_FAST_PRIORITY_PROVIDERS = Object.freeze(['kisskh', 'onlykdrama', 'hdhub4u', '4khdhub_tv', '4khdhub', 'moviebox', 'vidlink', 'vixsrc', 'vidsrc', 'cinestream', 'showbox']);
 const PRIMARY_FAST_PROVIDER_IDS = new Set(['4khdhub', 'scrapling-4khdhub', '4khdhub_tv', 'uhdmovies', 'hdhub4u', 'flixindia', 'tamilian', 'playimdb']);
-const DEFAULT_EARLY_RETURN_BLOCKING_PROVIDERS = new Set(['nuvio']);
+const DEFAULT_EARLY_RETURN_BLOCKING_PROVIDERS = new Set(['nuvio', 'nuvio-2']);
 const QUALITY_GRACE_PROVIDER_IDS = new Set([
   'nuvio',
   'nuvio-2',
@@ -891,6 +1039,9 @@ const QUALITY_GRACE_PROVIDER_IDS = new Set([
   'cloudstream-phisher',
   'r2-plugin',
   'r3-plugin',
+  'r5-plugin',
+  'streamrip-plugin',
+  'pstream-plugin',
   '4khdhub',
   '4khdhub_tv',
   'scrapling-4khdhub',
@@ -984,6 +1135,9 @@ const CONTENT_PROVIDER_BOOSTS = Object.freeze({
     'cloudstream-phisher': 219,
     'r2-plugin': 219,
     'r3-plugin': 218,
+    'r5-plugin': 218,
+    'streamrip-plugin': 217,
+    'pstream-plugin': 216,
     'scrapling-hdhub4u': 219,
     nuvio: 218,
     'nuvio-latino': 217,
@@ -1063,6 +1217,9 @@ const PROVIDER_RELIABILITY_SCORES = Object.freeze({
   'r2-plugin': 155,
   'r3-plugin': 154,
   'r4-asian-drama-movies': 156,
+  'r5-plugin': 157,
+  'streamrip-plugin': 153,
+  'pstream-plugin': 152,
   hdhub4u: 150,
   'scrapling-hdhub4u': 149,
   nuvio: 148,
@@ -1154,6 +1311,9 @@ const PROVIDER_LABEL_OVERRIDES = Object.freeze({
   'r2-plugin': 'R2 plugin',
   'r3-plugin': 'R3-plugin',
   'r4-asian-drama-movies': 'r4-Asian drama and movies',
+  'r5-plugin': 'r5-plugin',
+  'streamrip-plugin': 'Streamrip plugin',
+  'pstream-plugin': 'P-Stream plugin',
   'nuvio-latino': 'Nuvio-Latino',
   'nuvio-french': 'Nuvio-French',
   'nuvio-italian': 'Nuvio-Italian',
@@ -1260,7 +1420,14 @@ const mapConcurrent = async (items, concurrency, iteratee) => {
     length: Math.min(concurrency, items.length)
   }, () => worker());
 
-  await Promise.all(workers);
+  const settledWorkers = await Promise.allSettled(workers);
+  for (const result of settledWorkers) {
+    if (result.status === 'rejected') {
+      logger.warn('concurrent provider worker failed', {
+        error: result.reason?.message || String(result.reason)
+      });
+    }
+  }
   return results;
 };
 
@@ -1719,13 +1886,47 @@ const getProviderStreamEpisodeMatch = (stream, season, episode) => {
   };
 };
 
+const normalizeTitleForGuard = (value) =>
+  String(value || '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/gu, '')
+    .toLowerCase()
+    .replace(/\b(?:the|a|an)\b/gu, ' ')
+    .replace(/[^a-z0-9]+/gu, ' ')
+    .trim();
+
+const hasExpectedTvTitleOrEpisodeMarker = (stream, expectedTitle, season, episode) => {
+  const match = getProviderStreamEpisodeMatch(stream, season, episode);
+  if (match.hasExactMarker) {
+    return true;
+  }
+
+  const normalizedExpectedTitle = normalizeTitleForGuard(expectedTitle);
+  if (!normalizedExpectedTitle) {
+    return true;
+  }
+
+  const normalizedText = normalizeTitleForGuard(getProviderStreamEpisodeText(stream));
+  if (!normalizedText) {
+    return false;
+  }
+
+  const titleTokens = normalizedExpectedTitle
+    .split(/\s+/u)
+    .filter((token) => token.length >= 4);
+
+  return titleTokens.length > 0
+    && titleTokens.every((token) => normalizedText.includes(token));
+};
+
 const filterEpisodeMismatchedProviderStreams = ({
   streams,
   providerId,
   mediaType,
   season,
   episode,
-  tmdbId
+  tmdbId,
+  expectedTitle = null
 }) => {
   if (mediaType !== 'tv' || !toOptionalInteger(season) || !toOptionalInteger(episode) || !Array.isArray(streams) || streams.length === 0) {
     return streams;
@@ -1736,8 +1937,18 @@ const filterEpisodeMismatchedProviderStreams = ({
 
   for (const stream of streams) {
     const match = getProviderStreamEpisodeMatch(stream, season, episode);
+    const strictTitleGuard = providerId === 'scrapling-hdhub4u'
+      || providerId === 'scrapling-4khdhub'
+      || providerId === '4khdhub'
+      || providerId === '4khdhub_tv'
+      || providerId === 'hdhub4u';
 
     if (match.hasWrongSameSeasonMarker && !match.hasExactMarker) {
+      droppedCount += 1;
+      continue;
+    }
+
+    if (strictTitleGuard && !hasExpectedTvTitleOrEpisodeMarker(stream, expectedTitle, season, episode)) {
       droppedCount += 1;
       continue;
     }
@@ -2147,6 +2358,31 @@ const compactProviderListForLog = (providerIds, limit = 24) => {
     : safeProviderIds;
 };
 
+const normalizePluginProviderSelections = (value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+
+  return Object.fromEntries(Object.entries(value)
+    .map(([adapterId, providers]) => {
+      const normalizedAdapterId = String(adapterId || '').trim().toLowerCase();
+      const normalizedProviders = Array.isArray(providers)
+        ? providers
+          .map((providerId) => String(providerId || '').trim().toLowerCase())
+          .filter(Boolean)
+          .filter((providerId, index, values) => values.indexOf(providerId) === index)
+        : [];
+
+      return normalizedAdapterId && normalizedProviders.length > 0
+        ? [normalizedAdapterId, normalizedProviders]
+        : null;
+    })
+    .filter(Boolean));
+};
+
+const getPluginSelectionKey = (streamOptions = null) =>
+  JSON.stringify(normalizePluginProviderSelections(streamOptions?.pluginProviderSelections));
+
 export class ProviderService {
   constructor() {
     this.providers = discoverProviders();
@@ -2185,8 +2421,13 @@ export class ProviderService {
     }, 0).unref?.();
   }
 
-  listProviders() {
-    return this.getProviderOrder().map((providerId) => {
+  listProviders({ includePluginAdapters = true } = {}) {
+    return this.getProviderOrder()
+      .filter((providerId) => {
+        const provider = this.providers.get(providerId);
+        return includePluginAdapters || provider?.kind !== 'plugin-adapter';
+      })
+      .map((providerId) => {
       const provider = this.providers.get(providerId);
 
       return {
@@ -2194,6 +2435,60 @@ export class ProviderService {
         label: provider.label
       };
     });
+  }
+
+  async listAdapterProviderGroups() {
+    const configs = this.pluginProviderRegistry.getProviderConfigs()
+      .filter((providerConfig) => this.providers.has(providerConfig.id))
+      .filter((providerConfig) => !['r3-plugin', 'r4-asian-drama-movies', 'r5-plugin'].includes(providerConfig.id));
+
+    return Promise.all(configs.map(async (providerConfig) => {
+      const adapter = this.pluginProviderRegistry.getAdapter(providerConfig.adapterId);
+      let providers = [];
+
+      try {
+        const manifest = providerConfig.id === 'r2-plugin'
+          ? {
+            providers: ['4khdhub', 'scrapling-4khdhub', 'uhdmovies', 'hdhub4u', 'vidlink', 'moviebox']
+          }
+          : adapter && typeof adapter.getManifest === 'function'
+          ? await adapter.getManifest(AbortSignal.timeout(5_000))
+          : null;
+        const rawProviders = Array.isArray(manifest?.providers)
+          ? manifest.providers
+          : Array.isArray(manifest?.scrapers)
+            ? manifest.scrapers
+              .filter((scraper) => scraper?.enabled !== false)
+              .map((scraper) => ({
+                id: scraper.id || scraper.filename,
+                label: scraper.name || scraper.id || scraper.filename
+              }))
+            : [];
+
+        providers = rawProviders
+          .map((entry) => typeof entry === 'string'
+            ? { id: entry, label: entry }
+            : { id: entry?.id, label: entry?.label || entry?.name || entry?.id })
+          .map((entry) => ({
+            id: String(entry.id || '').trim().toLowerCase(),
+            label: String(entry.label || entry.id || '').trim()
+          }))
+          .filter((entry) => entry.id && entry.label);
+      } catch (error) {
+        logger.warn('adapter provider manifest load failed', {
+          provider: providerConfig.id,
+          adapter: providerConfig.adapterId,
+          error: error?.message || String(error)
+        });
+      }
+
+      return {
+        id: providerConfig.id,
+        label: providerConfig.label || providerConfig.id,
+        adapterId: providerConfig.adapterId,
+        providers
+      };
+    }));
   }
 
   getStats() {
@@ -2309,6 +2604,8 @@ export class ProviderService {
   handleMemoryPressure({ critical = false } = {}) {
     if (critical) {
       this.resultCache.clear();
+      this.inFlight.clear();
+      this.fastSearchInFlight.clear();
       this.tmdbMetadataCache.clear();
       return;
     }
@@ -2318,21 +2615,40 @@ export class ProviderService {
     pruneMapByMaxEntries(this.tmdbMetadataCache, Math.max(50, Math.floor(config.TMDB_METADATA_MEMORY_CACHE_MAX_ENTRIES / 4)));
   }
 
-  getStremioProviderOrder(requestedProviders = null, contentProfile = null) {
+  getStremioProviderOrder(requestedProviders = null, contentProfile = null, streamOptions = null, privateProviderSettings = null) {
     const candidates = this.getProviderOrder(contentProfile, requestedProviders && requestedProviders.length > 0 ? requestedProviders : null);
     const hasExplicitProviders = Array.isArray(requestedProviders) && requestedProviders.length > 0;
+    const isTorBoxOnlyRequest = Boolean(
+      streamOptions?.torboxOnlyStreams && String(privateProviderSettings?.torboxApiKey || '').trim()
+    );
 
-    return candidates.filter((providerId) => {
+    const filteredProviders = candidates.filter((providerId) => {
       if (STREMIO_ALWAYS_EXCLUDED_PROVIDERS.has(providerId)) {
+        if (providerId === 'torrent-scraper' && isTorBoxOnlyRequest) {
+          return true;
+        }
+
+        return false;
+      }
+
+      if (isTorBoxOnlyRequest && !hasExplicitProviders && !TORBOX_DDL_PROVIDER_IDS.has(providerId)) {
         return false;
       }
 
       if (!hasExplicitProviders && STREMIO_DEFAULT_ONLY_EXCLUDED_PROVIDERS.has(providerId)) {
+        if (isTorBoxOnlyRequest && TORBOX_DDL_PROVIDER_IDS.has(providerId)) {
+          return true;
+        }
+
         return false;
       }
 
       return true;
     });
+
+    return isTorBoxOnlyRequest
+      ? reprioritizeProviders(filteredProviders, TORBOX_PROVIDER_PRIORITY)
+      : filteredProviders;
   }
 
   async getContentProfile({ tmdbId, mediaType }) {
@@ -2358,19 +2674,34 @@ export class ProviderService {
     }
 
     const settledResults = await mapConcurrent(normalizedProviders, config.PROVIDER_MAX_CONCURRENCY, async (provider) => {
-      const streams = await this.getStreams({
-        provider,
-        ...rest,
-        priorityRequest: Array.isArray(providers) && providers.length > 0
-      });
+      try {
+        const streams = await this.getStreams({
+          provider,
+          ...rest,
+          priorityRequest: Array.isArray(providers) && providers.length > 0
+        });
 
-      return {
-        provider,
-        streams
-      };
+        return {
+          provider,
+          streams
+        };
+      } catch (error) {
+        logger.warn('aggregate provider isolated failure', {
+          provider,
+          tmdbId: rest.tmdbId,
+          mediaType: rest.mediaType,
+          error: error?.message || String(error)
+        });
+        return {
+          provider,
+          streams: [],
+          error
+        };
+      }
     });
+    const usableResults = settledResults.filter(Boolean);
 
-    const tried = settledResults.map((result) => ({
+    const tried = usableResults.map((result) => ({
       provider: result.provider,
       count: result.streams.length
     }));
@@ -2378,7 +2709,7 @@ export class ProviderService {
       providers: normalizedProviders,
       tried,
       streams: mergeAndRankProviderStreams(
-        settledResults,
+        usableResults,
         normalizedProviders,
         contentProfile,
         Infinity,
@@ -2420,7 +2751,7 @@ export class ProviderService {
     privateProviderSettings = null
   }) {
     return JSON.stringify({
-      version: 'two-phase-v40',
+      version: 'two-phase-v46',
       providers: Array.isArray(providers) ? providers.map((providerId) => String(providerId || '').trim().toLowerCase()) : null,
       tmdbId: toOptionalInteger(tmdbId),
       imdbId: typeof imdbId === 'string' ? imdbId.trim() : null,
@@ -2428,6 +2759,9 @@ export class ProviderService {
       season: toOptionalInteger(season),
       episode: toOptionalInteger(episode),
       webReadyOnly: Boolean(streamOptions?.webReadyOnly),
+      torboxOnlyStreams: Boolean(streamOptions?.torboxOnlyStreams),
+      torboxDdlEnabled: Boolean(streamOptions?.torboxOnlyStreams && String(privateProviderSettings?.torboxApiKey || '').trim()),
+      pluginProviderSelections: getPluginSelectionKey(streamOptions),
       privateProviderSettingsKey: getPrivateProviderSettingsKey('showbox', privateProviderSettings)
     });
   }
@@ -2461,6 +2795,7 @@ export class ProviderService {
       };
     } catch (error) {
       if (error?.code !== 'ENOENT') {
+        await rm(cachePath, { force: true }).catch(() => {});
         logger.warn('fast result last-good cache read failed', { cacheKey: this.hashCacheKey(requestKey), error });
       }
       return null;
@@ -2474,12 +2809,12 @@ export class ProviderService {
       String(stream?.provider || '').trim().toLowerCase() === 'showbox'
     );
     try {
-      await writeFile(this.getFastResultCacheFilePath(requestKey), JSON.stringify({
+      await writeJsonFileAtomic(this.getFastResultCacheFilePath(requestKey), {
         expiresAt: Date.now() + (hasShowbox ? 120_000 : FAST_RESULT_LAST_GOOD_TTL_MS),
         providers: Array.isArray(result?.providers) ? result.providers : [],
         tried: Array.isArray(result?.tried) ? result.tried : [],
         streams
-      }));
+      });
     } catch (error) {
       logger.warn('fast result last-good cache write failed', { cacheKey: this.hashCacheKey(requestKey), error });
     }
@@ -2716,7 +3051,15 @@ export class ProviderService {
       workerPromises.push(launchNext());
     }
 
-    await Promise.all(workerPromises);
+    const workerSettled = await Promise.allSettled(workerPromises);
+    for (const result of workerSettled) {
+      if (result.status === 'rejected' && !isProviderCancellationError(result.reason)) {
+        logger.warn('fast provider phase worker failed', {
+          phase,
+          error: result.reason?.message || String(result.reason)
+        });
+      }
+    }
 
     return {
       reason: done ? 'min-streams' : 'all-complete',
@@ -2732,7 +3075,9 @@ export class ProviderService {
 
     const orderedProviders = this.getStremioProviderOrder(
       providers && providers.length > 0 ? providers : null,
-      contentProfile
+      contentProfile,
+      rest.streamOptions,
+      rest.privateProviderSettings
     );
 
     const prioritizedProviders = prioritizePrivateTokenProviders(orderedProviders, rest.privateProviderSettings)
@@ -2804,6 +3149,7 @@ export class ProviderService {
           const providerAbortController = new AbortController();
           allowHighFanoutAbortSignal(providerAbortController.signal);
           let providerParallelTimeoutId;
+          const providerStartedAt = Date.now();
           const enforceProviderFastTimeout = !hasExplicitProviders || FORCE_FAST_TIMEOUT_PROVIDER_IDS.has(providerId);
           providerAbortControllers.set(providerId, providerAbortController);
 
@@ -2834,6 +3180,7 @@ export class ProviderService {
                 season: rest.season,
                 episode: rest.episode,
                 privateProviderSettings: rest.privateProviderSettings,
+                streamOptions: rest.streamOptions,
                 priorityRequest: true,
                 signal: combinedSignal,
                 enforceFastTimeout: enforceProviderFastTimeout
@@ -2851,9 +3198,23 @@ export class ProviderService {
                 providerParallelTimeoutId.unref?.();
               })
             ]);
-            return { provider: providerId, streams, error: null };
+            return {
+              provider: providerId,
+              streams,
+              error: null,
+              durationMs: Date.now() - providerStartedAt
+            };
           } catch (error) {
-            return { provider: providerId, streams: [], error };
+            const durationMs = Date.now() - providerStartedAt;
+            const logMethod = isProviderCancellationError(error) ? 'info' : 'warn';
+            logger[logMethod]('fast provider isolated failure', {
+              provider: providerId,
+              tmdbId: rest.tmdbId,
+              mediaType: rest.mediaType,
+              durationMs,
+              error: error?.message || String(error)
+            });
+            return { provider: providerId, streams: [], error, durationMs };
           } finally {
             clearTimeout(providerParallelTimeoutId);
             if (providerAbortControllers.get(providerId) === providerAbortController) {
@@ -3135,7 +3496,20 @@ export class ProviderService {
         });
         return lastGood;
       }
-      throw error;
+      logger.error('fast provider search failed without last-good fallback', {
+        tmdbId: rest.tmdbId,
+        mediaType: rest.mediaType,
+        providers: prioritizedProviders,
+        error
+      });
+      return {
+        reason: 'search-error',
+        providers: prioritizedProviders,
+        tried: prioritizedProviders.map((providerId) => ({ provider: providerId, count: 0 })),
+        partial: true,
+        pendingProviders: [],
+        streams: []
+      };
     }
 
     if (!result.streams.length) {
@@ -3164,6 +3538,7 @@ export class ProviderService {
     season = null,
     episode = null,
     privateProviderSettings = null,
+    streamOptions = null,
     priorityRequest = false,
     signal = null,
     enforceFastTimeout = false
@@ -3198,8 +3573,24 @@ export class ProviderService {
       mediaType: normalizedMediaType,
       season: normalizedSeason,
       episode: normalizedEpisode,
+      pluginProviderSelections: getPluginSelectionKey(streamOptions),
       privateProviderSettingsKey: getPrivateProviderSettingsKey(providerId, privateProviderSettings)
     });
+
+    let expectedTitle = null;
+    if (normalizedMediaType === 'tv') {
+      try {
+        const expectedMetadata = await this.getTmdbMetadata({ tmdbId: normalizedTmdbId, mediaType: normalizedMediaType });
+        expectedTitle = expectedMetadata?.name || expectedMetadata?.title || null;
+      } catch (error) {
+        logger.warn('provider expected title lookup failed', {
+          provider: providerId,
+          tmdbId: normalizedTmdbId,
+          mediaType: normalizedMediaType,
+          error: error?.message || error
+        });
+      }
+    }
 
     const cached = await this.getCachedResult(cacheKey);
 
@@ -3210,7 +3601,8 @@ export class ProviderService {
         mediaType: normalizedMediaType,
         season: normalizedSeason,
         episode: normalizedEpisode,
-        tmdbId: normalizedTmdbId
+        tmdbId: normalizedTmdbId,
+        expectedTitle
       });
 
       if (cachedStreams.length !== cached.length) {
@@ -3242,7 +3634,8 @@ export class ProviderService {
           mediaType: normalizedMediaType,
           season: normalizedSeason,
           episode: normalizedEpisode,
-          tmdbId: normalizedTmdbId
+          tmdbId: normalizedTmdbId,
+          expectedTitle
         });
 
         if (staleFallbackStreams.length === 0) {
@@ -3285,19 +3678,41 @@ export class ProviderService {
       const staleFallback = await this.getStaleFallbackResult(cacheKey, providerId);
 
       if (staleFallback?.length) {
+        const staleFallbackStreams = filterEpisodeMismatchedProviderStreams({
+          streams: staleFallback,
+          providerId,
+          mediaType: normalizedMediaType,
+          season: normalizedSeason,
+          episode: normalizedEpisode,
+          tmdbId: normalizedTmdbId,
+          expectedTitle
+        });
+
+        if (staleFallbackStreams.length === 0) {
+          logger.warn('provider stale fallback skipped after tv episode filter during host cooldown', {
+            provider: providerId,
+            hostKey: providerHostKey,
+            tmdbId: normalizedTmdbId,
+            mediaType: normalizedMediaType,
+            season: normalizedSeason,
+            episode: normalizedEpisode
+          });
+          return [];
+        }
+
         logger.warn('provider served stale fallback during host cooldown', {
           provider: providerId,
           hostKey: providerHostKey,
           tmdbId: normalizedTmdbId,
           mediaType: normalizedMediaType,
-          resultCount: staleFallback.length
+          resultCount: staleFallbackStreams.length
         });
         this.updateProviderRuntime(providerId, {
           lastCacheHitAt: Date.now(),
-          lastResultCount: staleFallback.length,
+          lastResultCount: staleFallbackStreams.length,
           lastError: 'Served stale fallback during host cooldown'
         });
-        return staleFallback;
+        return staleFallbackStreams;
       }
 
       logger.warn('provider skipped due to host cooldown', {
@@ -3325,9 +3740,11 @@ export class ProviderService {
       normalizedSeason,
       normalizedEpisode,
       privateProviderSettings,
+      streamOptions,
       priorityRequest,
       signal,
-      enforceFastTimeout
+      enforceFastTimeout,
+      expectedTitle
     });
 
     this.inFlight.set(cacheKey, execution);
@@ -3350,9 +3767,11 @@ export class ProviderService {
     normalizedSeason,
     normalizedEpisode,
     privateProviderSettings,
+    streamOptions = null,
     priorityRequest = false,
     signal = null,
-    enforceFastTimeout = false
+    enforceFastTimeout = false,
+    expectedTitle = null
   }) {
     const startedAt = Date.now();
     const existingRuntime = this.providerRuntime.get(providerId) || {};
@@ -3378,6 +3797,7 @@ export class ProviderService {
           season: normalizedSeason,
           episode: normalizedEpisode,
           privateProviderSettings,
+          streamOptions,
           signal,
           enforceFastTimeout
         }), signal, priorityRequest),
@@ -3401,7 +3821,8 @@ export class ProviderService {
         mediaType: normalizedMediaType,
         season: normalizedSeason,
         episode: normalizedEpisode,
-        tmdbId: normalizedTmdbId
+        tmdbId: normalizedTmdbId,
+        expectedTitle
       });
 
       if (normalizedStreams.length !== streams.length) {
@@ -3449,7 +3870,8 @@ export class ProviderService {
         mediaType: normalizedMediaType,
         season: normalizedSeason,
         episode: normalizedEpisode,
-        tmdbId: normalizedTmdbId
+        tmdbId: normalizedTmdbId,
+        expectedTitle
       });
 
       await this.setCachedResult(cacheKey, normalizedStreams, providerId);
@@ -3458,12 +3880,27 @@ export class ProviderService {
         const staleFallback = await this.getStaleFallbackResult(cacheKey, providerId);
 
         if (staleFallback?.length) {
+          const staleFallbackStreams = filterEpisodeMismatchedProviderStreams({
+            streams: staleFallback,
+            providerId,
+            mediaType: normalizedMediaType,
+            season: normalizedSeason,
+            episode: normalizedEpisode,
+            tmdbId: normalizedTmdbId,
+            expectedTitle
+          });
+
+          if (staleFallbackStreams.length === 0) {
+            await this.deleteCachedResult(cacheKey);
+            return normalizedStreams;
+          }
+
           const staleRuntime = this.providerRuntime.get(providerId) || {};
           this.updateProviderRuntime(providerId, {
             running: false,
             lastFinishedAt: Date.now(),
             lastDurationMs: Date.now() - startedAt,
-            lastResultCount: staleFallback.length,
+            lastResultCount: staleFallbackStreams.length,
             lastError: 'Served stale fallback after empty result',
             totalSuccesses: (staleRuntime.totalSuccesses || 0) + 1,
             consecutiveFailures: 0
@@ -3473,9 +3910,9 @@ export class ProviderService {
             hostKey: providerHostKey,
             tmdbId: normalizedTmdbId,
             mediaType: normalizedMediaType,
-            resultCount: staleFallback.length
+            resultCount: staleFallbackStreams.length
           });
-          return staleFallback;
+          return staleFallbackStreams;
         }
       }
 
@@ -3496,6 +3933,7 @@ export class ProviderService {
         hostKey: providerHostKey,
         tmdbId: normalizedTmdbId,
         mediaType: normalizedMediaType,
+        durationMs: Date.now() - startedAt,
         resultCount: normalizedStreams.length
       });
 
@@ -3518,28 +3956,46 @@ export class ProviderService {
           provider: providerId,
           hostKey: providerHostKey,
           tmdbId: normalizedTmdbId,
-          mediaType: normalizedMediaType
+          mediaType: normalizedMediaType,
+          durationMs: Date.now() - startedAt,
+          timeoutSource: error?.message || 'provider-timeout'
         });
 
         const staleFallback = await this.getStaleFallbackResult(cacheKey, providerId);
 
         if (staleFallback?.length) {
+          const staleFallbackStreams = filterEpisodeMismatchedProviderStreams({
+            streams: staleFallback,
+            providerId,
+            mediaType: normalizedMediaType,
+            season: normalizedSeason,
+            episode: normalizedEpisode,
+            tmdbId: normalizedTmdbId,
+            expectedTitle
+          });
+
+          if (staleFallbackStreams.length === 0) {
+            await this.deleteCachedResult(cacheKey);
+            await this.setCachedResult(cacheKey, [], providerId);
+            return [];
+          }
+
           logger.info('provider served stale fallback after timeout', {
             provider: providerId,
             hostKey: providerHostKey,
             tmdbId: normalizedTmdbId,
             mediaType: normalizedMediaType,
-            resultCount: staleFallback.length
+            resultCount: staleFallbackStreams.length
           });
           this.updateProviderRuntime(providerId, {
             running: false,
             lastFinishedAt: Date.now(),
             lastDurationMs: Date.now() - startedAt,
-            lastResultCount: staleFallback.length,
+            lastResultCount: staleFallbackStreams.length,
             lastError: 'Served stale fallback after timeout'
           });
           await this.deleteCachedResult(cacheKey);
-          return staleFallback;
+          return staleFallbackStreams;
         }
 
         // Cache empty result with empty-cache TTL to prevent hammering
@@ -3563,6 +4019,7 @@ export class ProviderService {
           hostKey: providerHostKey,
           tmdbId: normalizedTmdbId,
           mediaType: normalizedMediaType,
+          durationMs: Date.now() - startedAt,
           error: error?.message || error?.name || 'Unknown cancellation'
         });
         return [];
@@ -3585,28 +4042,44 @@ export class ProviderService {
         hostKey: providerHostKey,
         tmdbId: normalizedTmdbId,
         mediaType: normalizedMediaType,
+        durationMs: Date.now() - startedAt,
         error
       });
 
       const staleFallback = await this.getStaleFallbackResult(cacheKey, providerId);
 
       if (staleFallback?.length) {
+        const staleFallbackStreams = filterEpisodeMismatchedProviderStreams({
+          streams: staleFallback,
+          providerId,
+          mediaType: normalizedMediaType,
+          season: normalizedSeason,
+          episode: normalizedEpisode,
+          tmdbId: normalizedTmdbId,
+          expectedTitle
+        });
+
+        if (staleFallbackStreams.length === 0) {
+          await this.deleteCachedResult(cacheKey);
+          return [];
+        }
+
         logger.warn('provider served stale fallback after failure', {
           provider: providerId,
           hostKey: providerHostKey,
           tmdbId: normalizedTmdbId,
           mediaType: normalizedMediaType,
-          resultCount: staleFallback.length
+          resultCount: staleFallbackStreams.length
         });
         this.updateProviderRuntime(providerId, {
           running: false,
           lastFinishedAt: Date.now(),
           lastDurationMs: Date.now() - startedAt,
-          lastResultCount: staleFallback.length,
+          lastResultCount: staleFallbackStreams.length,
           lastError: 'Served stale fallback after failure'
         });
         await this.deleteCachedResult(cacheKey);
-        return staleFallback;
+        return staleFallbackStreams;
       }
 
       await this.deleteCachedResult(cacheKey);
@@ -3847,6 +4320,7 @@ export class ProviderService {
       return hydratedStreams;
     } catch (error) {
       if (error?.code !== 'ENOENT') {
+        await rm(cachePath, { force: true }).catch(() => {});
         logger.warn('provider disk cache read failed', {
           cacheKey: this.hashCacheKey(cacheKey),
           error
@@ -3919,10 +4393,10 @@ export class ProviderService {
     pruneMapByApproxBytes(this.resultCache, config.PROVIDER_RESULT_MEMORY_CACHE_MAX_MB * 1024 * 1024);
 
     try {
-      await writeFile(this.getCacheFilePath(cacheKey), JSON.stringify({
+      await writeJsonFileAtomic(this.getCacheFilePath(cacheKey), {
         expiresAt: entry.expiresAt,
         serializedStreams
-      }));
+      });
     } catch (error) {
       logger.warn('provider disk cache write failed', {
         cacheKey: this.hashCacheKey(cacheKey),
@@ -3932,10 +4406,10 @@ export class ProviderService {
 
     if (providerId && STALE_IF_ERROR_PROVIDERS.has(providerId) && streams.length > 0) {
       try {
-        await writeFile(this.getStaleFallbackCacheFilePath(cacheKey), JSON.stringify({
+        await writeJsonFileAtomic(this.getStaleFallbackCacheFilePath(cacheKey), {
           expiresAt: Date.now() + (config.PROVIDER_CACHE_TTL_SECONDS * 4 * 1000),
           serializedStreams
-        }));
+        });
       } catch (error) {
         logger.warn('provider stale fallback cache write failed', {
           provider: providerId,
@@ -4226,6 +4700,8 @@ export class ProviderService {
         season: params.season,
         episode: params.episode,
         privateProviderSettings: params.privateProviderSettings,
+        streamOptions: params.streamOptions,
+        pluginProviderSelections: normalizePluginProviderSelections(params.streamOptions?.pluginProviderSelections),
         signal: params.signal
       });
     }
@@ -4258,6 +4734,10 @@ export class ProviderService {
   }
 
   async invokeR2PluginProvider(params) {
+    const selections = normalizePluginProviderSelections(params.streamOptions?.pluginProviderSelections);
+    const selected = Array.isArray(selections['r2-plugin']) && selections['r2-plugin'].length > 0
+      ? new Set(selections['r2-plugin'])
+      : null;
     const sourceProviders = [
       '4khdhub',
       'scrapling-4khdhub',
@@ -4265,7 +4745,9 @@ export class ProviderService {
       'hdhub4u',
       'vidlink',
       'moviebox'
-    ].filter((providerId) => providerId !== 'r2-plugin' && this.providers.has(providerId));
+    ]
+      .filter((providerId) => !selected || selected.has(providerId))
+      .filter((providerId) => providerId !== 'r2-plugin' && this.providers.has(providerId));
     const results = [];
     let nextIndex = 0;
     const startedAt = Date.now();
@@ -4323,7 +4805,7 @@ export class ProviderService {
     };
 
     await Promise.race([
-      Promise.all(Array.from({ length: workerCount }, () => worker())),
+      Promise.allSettled(Array.from({ length: workerCount }, () => worker())),
       new Promise((resolve) => {
         const interval = setInterval(() => {
           if (results.length >= earlyReturnCount || Date.now() - startedAt >= deadlineMs) {

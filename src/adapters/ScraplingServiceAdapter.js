@@ -12,7 +12,30 @@ const DEFAULT_SERVICE_URL = 'http://127.0.0.1:8787';
 const execFileAsync = promisify(execFile);
 const VIDEO_GEN_HOSTS = new Set(['cdn.video-gen.xyz', 'video-gen.xyz']);
 
-const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const wait = (ms, signal = null) => new Promise((resolve, reject) => {
+  if (signal?.aborted) {
+    reject(signal.reason || new Error('Scrapling wait aborted'));
+    return;
+  }
+
+  let abortHandler = null;
+  const timeout = setTimeout(() => {
+    if (abortHandler) {
+      signal?.removeEventListener?.('abort', abortHandler);
+    }
+    resolve();
+  }, ms);
+  timeout.unref?.();
+
+  if (signal) {
+    abortHandler = () => {
+      clearTimeout(timeout);
+      signal.removeEventListener?.('abort', abortHandler);
+      reject(signal.reason || new Error('Scrapling wait aborted'));
+    };
+    signal.addEventListener('abort', abortHandler, { once: true });
+  }
+});
 
 const isVideoGenUrl = (value) => {
   try {
@@ -56,7 +79,7 @@ export class ScraplingServiceAdapter extends PluginProviderAdapter {
     const providerId = request.providerId || 'scrapling-hdhub4u';
 
     return withTimeout(async (signal) => {
-      await this.ensureService();
+      await this.ensureService(signal);
       const response = await fetch(`${this.serviceUrl}/scrape`, {
         method: 'POST',
         signal,
@@ -224,18 +247,46 @@ export class ScraplingServiceAdapter extends PluginProviderAdapter {
 
   async startService(signal = null) {
     if (sharedState.startPromise) {
-      return sharedState.startPromise;
+      return this.waitForSharedStart(signal);
     }
 
     if (await this.isHealthy()) {
       return;
     }
 
-    sharedState.startPromise = this.spawnAndWait(signal).finally(() => {
+    sharedState.startPromise = this.spawnAndWait().finally(() => {
       sharedState.startPromise = null;
     });
 
-    return sharedState.startPromise;
+    return this.waitForSharedStart(signal);
+  }
+
+  async waitForSharedStart(signal = null) {
+    if (!sharedState.startPromise) {
+      return;
+    }
+
+    if (!signal) {
+      return sharedState.startPromise;
+    }
+
+    if (signal.aborted) {
+      throw signal.reason || new Error('Scrapling service start aborted');
+    }
+
+    return Promise.race([
+      sharedState.startPromise,
+      new Promise((_, reject) => {
+        const onAbort = () => {
+          signal.removeEventListener?.('abort', onAbort);
+          reject(signal.reason || new Error('Scrapling service start aborted'));
+        };
+        signal.addEventListener('abort', onAbort, { once: true });
+        sharedState.startPromise.finally(() => {
+          signal.removeEventListener?.('abort', onAbort);
+        }).catch(() => {});
+      })
+    ]);
   }
 
   async spawnAndWait(signal = null) {

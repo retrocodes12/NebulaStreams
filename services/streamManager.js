@@ -3,14 +3,27 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:
 import path from 'node:path';
 import { promises as fsPromises } from 'node:fs';
 import { setMaxListeners } from 'node:events';
+import v8 from 'node:v8';
 import { createClient } from 'redis';
 import { config, cacheConfig } from '../config.js';
-import { enhanceMagnet, extractInfoHash } from '../utils/magnet.js';
+import { enhanceMagnet, extractInfoHash, isVideoFile } from '../utils/magnet.js';
 import { logger } from '../utils/logger.js';
 import { RogPlayAdapter } from '../providers/rogplay/RogPlayAdapter.js';
 import { GermanIptvLiveAdapter } from '../src/adapters/GermanIptvLiveAdapter.js';
 
-const { mkdir, readFile, readdir, rm, writeFile } = fsPromises;
+const { mkdir, readFile, readdir, rename, rm, writeFile } = fsPromises;
+
+const writeJsonFileAtomic = async (filePath, payload) => {
+  const tempPath = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
+
+  try {
+    await writeFile(tempPath, JSON.stringify(payload));
+    await rename(tempPath, filePath);
+  } catch (error) {
+    await rm(tempPath, { force: true }).catch(() => {});
+    throw error;
+  }
+};
 
 const allowHighFanoutAbortSignal = (signal) => {
   if (!signal?.addEventListener) {
@@ -24,6 +37,12 @@ const allowHighFanoutAbortSignal = (signal) => {
   }
 
   return signal;
+};
+
+const getProcessHeapPressurePercent = () => {
+  const heapLimitBytes = v8.getHeapStatistics().heap_size_limit;
+  const heapUsedBytes = process.memoryUsage().heapUsed;
+  return heapLimitBytes > 0 ? (heapUsedBytes / heapLimitBytes) * 100 : 0;
 };
 
 const detectSourceType = (source) => {
@@ -315,7 +334,8 @@ const DEFAULT_STREAM_OPTIONS = Object.freeze({
   torboxOnlyStreams: false,
   torboxUsenet: false,
   formatterStyle: 'clean',
-  customProxyUrl: null
+  customProxyUrl: null,
+  pluginProviderSelections: Object.freeze({})
 });
 const DEFAULT_PRIVATE_PROVIDER_SETTINGS = Object.freeze({
   febboxUiCookie: null,
@@ -331,6 +351,28 @@ const normalizeContentSelection = (value) => {
   return CONTENT_SELECTIONS.has(normalized) ? normalized : 'default';
 };
 
+const normalizePluginProviderSelections = (value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+
+  return Object.fromEntries(Object.entries(value)
+    .map(([adapterId, providers]) => {
+      const normalizedAdapterId = String(adapterId || '').trim().toLowerCase();
+      const normalizedProviders = Array.isArray(providers)
+        ? providers
+          .map((providerId) => String(providerId || '').trim().toLowerCase())
+          .filter(Boolean)
+          .filter((providerId, index, values) => values.indexOf(providerId) === index)
+        : [];
+
+      return normalizedAdapterId && normalizedProviders.length > 0
+        ? [normalizedAdapterId, normalizedProviders]
+        : null;
+    })
+    .filter(Boolean));
+};
+
 const normalizePositiveIntegerOption = (value) => {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
@@ -340,7 +382,23 @@ const HIGH_VALUE_CACHE_PROVIDERS = new Set(['4khdhub', 'scrapling-4khdhub', '4kh
 const HIGH_VALUE_CACHE_PATTERN = /\b(4khdhub|hdhub|hubcloud|hub cloud)\b/iu;
 const LAST_GOOD_PRIMARY_PROVIDERS = new Set(['4khdhub', 'scrapling 4khdhub', '4khdhub tv', 'hdhub4u', 'uhdmovies']);
 const LAST_GOOD_SECONDARY_PROVIDERS = new Set(['vidsrc', 'vixsrc', 'vidlink', 'moviebox', 'cinestream', 'streamflix']);
-const DIRECT_PLAYBACK_PROVIDER_IDS = new Set(['4khdhub', 'scrapling-4khdhub', '4khdhub_tv', 'hdhub4u', 'showbox']);
+const TORBOX_DEFAULT_PROVIDER_ORDER = Object.freeze([
+  'torrent-scraper',
+  'streamrip-plugin',
+  'r5-plugin',
+  'nuvio',
+  'nuvio-2',
+  'cloudstream-phisher',
+  'r2-plugin',
+  'r3-plugin',
+  '4khdhub',
+  '4khdhub_tv',
+  'scrapling-4khdhub',
+  'hdhub4u',
+  'scrapling-hdhub4u',
+  'uhdmovies'
+]);
+const DIRECT_PLAYBACK_PROVIDER_IDS = new Set(['4khdhub', 'scrapling-4khdhub', '4khdhub_tv', 'hdhub4u', 'showbox', 'r5-plugin']);
 const REGISTERED_PLAYBACK_PROXY_PROVIDER_IDS = new Set([
   'hdhub4u',
   'scrapling-hdhub4u',
@@ -434,6 +492,39 @@ const extractTorBoxWebDownloadId = (payload) => {
   return null;
 };
 
+const extractTorBoxTorrentId = (payload) => {
+  const candidates = [
+    payload?.data?.torrent_id,
+    payload?.data?.torrentId,
+    payload?.data?.torrent?.id,
+    payload?.data?.id,
+    payload?.torrent_id,
+    payload?.torrentId,
+    payload?.id
+  ];
+
+  for (const value of candidates) {
+    const id = Number(value);
+    if (Number.isInteger(id) && id > 0) return id;
+  }
+
+  return null;
+};
+
+const getTorBoxPayloadData = (payload) => payload?.data && typeof payload.data === 'object'
+  ? payload.data
+  : null;
+
+const isTorBoxWebDownloadReady = (payload) => {
+  const data = getTorBoxPayloadData(payload);
+  if (!data) return false;
+
+  return data.download_finished === true
+    || data.download_present === true
+    || data.cached === true
+    || String(data.download_state || '').toLowerCase() === 'completed';
+};
+
 const findTorBoxVideoFileId = (payload) => {
   const data = payload?.data;
   const candidates = Array.isArray(data)
@@ -456,11 +547,101 @@ const findTorBoxVideoFileId = (payload) => {
   return null;
 };
 
+const getTorBoxFileList = (payload) => {
+  const data = payload?.data;
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.files)) return data.files;
+  if (Array.isArray(data?.download?.files)) return data.download.files;
+  if (Array.isArray(data?.torrent?.files)) return data.torrent.files;
+  if (Array.isArray(data?.webdl?.files)) return data.webdl.files;
+  if (Array.isArray(payload?.files)) return payload.files;
+  return [];
+};
+
+const getTorBoxCachedResults = (payload) => {
+  const data = payload?.data;
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.results)) return data.results;
+  if (Array.isArray(data?.hashes)) return data.hashes;
+  if (data && typeof data === 'object') return Object.entries(data).map(([hash, value]) => ({
+    hash,
+    ...(value && typeof value === 'object' ? value : { cached: Boolean(value) })
+  }));
+  return [];
+};
+
+const isTorBoxCachedEntry = (entry) =>
+  Boolean(entry)
+  && (
+    entry.cached === true
+    || entry.download_present === true
+    || entry.instant === true
+    || Array.isArray(entry.files)
+  );
+
+const pickTorBoxVideoFile = (files, preferredFileIndex = null, preferredFilename = null) => {
+  const normalizedPreferredIndex = Number.isInteger(Number(preferredFileIndex))
+    ? Number(preferredFileIndex)
+    : null;
+  const normalizedPreferredName = String(preferredFilename || '').trim().toLowerCase();
+  const videoFiles = (Array.isArray(files) ? files : [])
+    .filter((file) => isVideoFile(file?.name || file?.short_name || file?.filename || ''))
+    .sort((left, right) => Number(right?.size || 0) - Number(left?.size || 0));
+
+  if (normalizedPreferredIndex !== null) {
+    const byIndex = videoFiles.find((file) =>
+      Number(file?.fileIndex ?? file?.file_index ?? file?.index) === normalizedPreferredIndex
+    );
+    if (byIndex) return byIndex;
+  }
+
+  if (normalizedPreferredName) {
+    const byName = videoFiles.find((file) =>
+      String(file?.name || file?.short_name || file?.filename || '').toLowerCase().includes(normalizedPreferredName)
+    );
+    if (byName) return byName;
+  }
+
+  return videoFiles[0] || null;
+};
+
+const extractTorBoxRequestDownloadUrl = (payload) => {
+  const candidates = [
+    typeof payload?.data === 'string' ? payload.data : null,
+    payload?.data?.url,
+    payload?.data?.download_url,
+    payload?.data?.link,
+    payload?.url,
+    payload?.download_url,
+    payload?.link
+  ];
+
+  for (const value of candidates) {
+    try {
+      const parsed = new URL(String(value || '').trim());
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+        return parsed.toString();
+      }
+    } catch {
+      // Continue checking alternate response shapes.
+    }
+  }
+
+  return null;
+};
+
 const TORBOX_DDL_HOST_PATTERNS = Object.freeze([
   /(?:^|\.)1fichier\.com$/iu,
+  /(?:^|\.)bzzhr\.co$/iu,
   /(?:^|\.)buzzheavier\.com$/iu,
   /(?:^|\.)filemoon\./iu,
+  /(?:^|\.)gadgetsweb\.xyz$/iu,
+  /(?:^|\.)gigabytes\.icu$/iu,
   /(?:^|\.)gofile\.io$/iu,
+  /(?:^|\.)hub\.homelander\.buzz$/iu,
+  /(?:^|\.)hubcdn\./iu,
+  /(?:^|\.)hubcloud\./iu,
+  /(?:^|\.)hubdrive\./iu,
   /(?:^|\.)katfile\.com$/iu,
   /(?:^|\.)krakenfiles\.com$/iu,
   /(?:^|\.)mediafire\.com$/iu,
@@ -476,6 +657,7 @@ const TORBOX_DDL_HOST_PATTERNS = Object.freeze([
   /(?:^|\.)userscloud\.com$/iu,
   /(?:^|\.)workupload\.com$/iu
 ]);
+const TORBOX_DDL_TEXT_PATTERN = /\b(?:direct\s*download|download\s*link|fast\s*dl|hub\s*cloud|hub\s*drive|hubcloud|hubdrive|hubcdn|pixeldrain|gofile|mediafire|mega|ddl)\b/iu;
 
 const isDirectPlayableMediaUrl = (url) => {
   try {
@@ -493,11 +675,27 @@ const isTorBoxDdlCandidateStream = (stream) => {
 
   try {
     const host = new URL(String(stream.url)).hostname.toLowerCase();
-    return TORBOX_DDL_HOST_PATTERNS.some((pattern) => pattern.test(host));
+    if (TORBOX_DDL_HOST_PATTERNS.some((pattern) => pattern.test(host))) {
+      return true;
+    }
   } catch {
-    return false;
+    // Fall through to metadata text detection.
   }
+
+  const metadataText = [
+    stream.name,
+    stream.title,
+    stream.description,
+    stream.sourceSite,
+    stream.sourceProvider,
+    stream.pluginProviderName,
+    stream.provider,
+    stream.url
+  ].filter(Boolean).join(' ');
+  return TORBOX_DDL_TEXT_PATTERN.test(metadataText);
 };
+
+const getTorBoxTorrentInfoHash = (stream) => extractInfoHash(stream?.magnet || stream?.torrent || '');
 
 const enableTorBoxDdlStreams = (streams, privateProviderSettings = null) => {
   if (!String(privateProviderSettings?.torboxApiKey || '').trim()) {
@@ -505,6 +703,23 @@ const enableTorBoxDdlStreams = (streams, privateProviderSettings = null) => {
   }
 
   return streams.map((stream) => {
+    const torrentInfoHash = getTorBoxTorrentInfoHash(stream);
+    if (torrentInfoHash) {
+      return {
+        ...stream,
+        url: stream.url || stream.magnet || stream.torrent,
+        torboxTorrent: true,
+        torboxInfoHash: torrentInfoHash,
+        torboxMagnet: stream.magnet || stream.torrent,
+        transport: 'http',
+        sourceSite: stream.sourceSite ? `${stream.sourceSite} via TorBox` : 'TorBox Torrent',
+        behaviorHints: {
+          ...(stream.behaviorHints || {}),
+          notWebReady: false
+        }
+      };
+    }
+
     if (!isTorBoxDdlCandidateStream(stream)) {
       return stream;
     }
@@ -519,6 +734,68 @@ const enableTorBoxDdlStreams = (streams, privateProviderSettings = null) => {
       }
     };
   });
+};
+
+const filterTorBoxCachedTorrentStreams = async (streams, privateProviderSettings = null, streamOptions = null) => {
+  const apiKey = normalizePrivateCookie(privateProviderSettings?.torboxApiKey);
+  if (!apiKey || !streamOptions?.torboxOnlyStreams) {
+    return streams;
+  }
+
+  const torrentStreams = streams.filter((stream) => stream?.torboxTorrent && stream.torboxInfoHash);
+  if (torrentStreams.length === 0) {
+    return streams;
+  }
+
+  const hashes = [...new Set(torrentStreams.map((stream) => stream.torboxInfoHash).filter(Boolean))].slice(0, 100);
+  if (hashes.length === 0) {
+    return streams.filter((stream) => !stream?.torboxTorrent);
+  }
+
+  try {
+    const checkUrl = new URL('https://api.torbox.app/v1/api/torrents/checkcached');
+    checkUrl.searchParams.set('format', 'list');
+    checkUrl.searchParams.set('list_files', 'true');
+    const response = await fetch(checkUrl, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${apiKey}`,
+        accept: 'application/json',
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({ hashes }),
+      signal: AbortSignal.timeout(8_000)
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload?.success === false) {
+      logger.warn('torbox cached torrent availability failed', {
+        status: response.status,
+        detail: payload?.detail || payload?.error || null
+      });
+      return streams.filter((stream) => !stream?.torboxTorrent);
+    }
+
+    const cachedByHash = new Map(getTorBoxCachedResults(payload)
+      .filter((entry) => isTorBoxCachedEntry(entry))
+      .map((entry) => [String(entry.hash || entry.info_hash || entry.infoHash || '').toLowerCase(), entry]));
+
+    return streams
+      .map((stream) => {
+        if (!stream?.torboxTorrent) return stream;
+        const cachedEntry = cachedByHash.get(String(stream.torboxInfoHash || '').toLowerCase());
+        if (!cachedEntry) return null;
+        return {
+          ...stream,
+          torboxCachedFiles: Array.isArray(cachedEntry.files) ? cachedEntry.files : []
+        };
+      })
+      .filter(Boolean);
+  } catch (error) {
+    logger.warn('torbox cached torrent availability request failed', {
+      error: error?.message || String(error)
+    });
+    return streams.filter((stream) => !stream?.torboxTorrent);
+  }
 };
 
 const normalizeProviderLabel = (value) =>
@@ -859,6 +1136,101 @@ const isHighValueCacheStream = (stream) => {
 const shouldUseWeakResultCache = (streams) =>
   streams.length > 0 && !streams.some((stream) => isHighValueCacheStream(stream));
 
+const STRICT_TV_TITLE_PROVIDER_IDS = new Set(['4khdhub', '4khdhub_tv', 'hdhub4u', 'scrapling-4khdhub', 'scrapling-hdhub4u']);
+
+const normalizeTitleForTvGuard = (value) =>
+  String(value || '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/gu, '')
+    .toLowerCase()
+    .replace(/\b(?:the|a|an)\b/gu, ' ')
+    .replace(/[^a-z0-9]+/gu, ' ')
+    .trim();
+
+const getTvGuardText = (stream) => [
+  stream?.filename,
+  stream?.fileName,
+  stream?.title,
+  stream?.name,
+  stream?.description,
+  stream?.sourceProvider,
+  stream?.pluginProviderName,
+  stream?.sourceSite,
+  stream?.url
+].map((value) => {
+  const text = String(value || '');
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    return text;
+  }
+}).join(' ').replace(/[._-]+/g, ' ');
+
+const hasExactEpisodeMarker = (stream, season, episode) => {
+  const normalizedSeason = normalizePositiveIntegerOption(season);
+  const normalizedEpisode = normalizePositiveIntegerOption(episode);
+  if (!normalizedSeason || !normalizedEpisode) {
+    return false;
+  }
+
+  const text = getTvGuardText(stream);
+  const markerPatterns = [
+    /\bs\s*0*(\d{1,2})\s*(?:e|ep)\s*0*(\d{1,3})\b/giu,
+    /\b0*(\d{1,2})\s*x\s*0*(\d{1,3})\b/giu,
+    /\bseason\s*0*(\d{1,2})\D{0,24}\b(?:episode|ep)\s*0*(\d{1,3})\b/giu
+  ];
+
+  for (const pattern of markerPatterns) {
+    for (const match of text.matchAll(pattern)) {
+      if (Number.parseInt(match[1], 10) === normalizedSeason && Number.parseInt(match[2], 10) === normalizedEpisode) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+};
+
+const isStrictTvTitleProviderStream = (stream) => {
+  const ids = [
+    stream?.provider,
+    stream?.sourceProvider,
+    stream?.pluginProvider,
+    stream?.sourceSite
+  ].map((value) => String(value || '').trim().toLowerCase());
+
+  return ids.some((id) =>
+    STRICT_TV_TITLE_PROVIDER_IDS.has(id)
+    || id.startsWith('4khdhub')
+    || id.startsWith('scrapling-4khdhub')
+    || id.startsWith('scrapling-hdhub4u')
+  );
+};
+
+const filterMismatchedHubTvStreams = (streams, { expectedTitle, season, episode }) => {
+  const normalizedExpectedTitle = normalizeTitleForTvGuard(expectedTitle);
+  const expectedTokens = normalizedExpectedTitle
+    .split(/\s+/u)
+    .filter((token) => token.length >= 4);
+
+  if (expectedTokens.length === 0) {
+    return streams;
+  }
+
+  return streams.filter((stream) => {
+    if (!isStrictTvTitleProviderStream(stream)) {
+      return true;
+    }
+
+    if (hasExactEpisodeMarker(stream, season, episode)) {
+      return true;
+    }
+
+    const normalizedText = normalizeTitleForTvGuard(getTvGuardText(stream));
+    return expectedTokens.every((token) => normalizedText.includes(token));
+  });
+};
+
 const shouldCacheEmptyFastResult = (result) =>
   result?.reason === 'all-complete';
 
@@ -1006,7 +1378,7 @@ const needsRegisteredPlaybackProxy = (stream) => {
   }
 
   if (hasForwardHeaders(forwardHeaders)) {
-    if (providerId === 'nuvio') {
+    if (providerId === 'nuvio' || providerId.startsWith('nuvio-')) {
       return true;
     }
 
@@ -1275,7 +1647,7 @@ const filterConfiguredStreamsDetailed = (streams, streamOptions) => {
       reason = 'notWebReady';
     } else if (streamOptions.hideHeavyFormats && hasHeavyFormatTraits(stream)) {
       reason = 'heavyFormat';
-    } else if (streamOptions.torboxOnlyStreams && !stream.torboxWebDownload) {
+    } else if (streamOptions.torboxOnlyStreams && !stream.torboxWebDownload && !stream.torboxTorrent) {
       reason = 'notWebReady';
     } else if (maxBytes > 0) {
       const sizeBytes = getStreamSizeBytes(stream);
@@ -1805,6 +2177,10 @@ const fetchTextWithTimeout = async (url, options = {}, timeout = 8000) => {
   }
 };
 
+const isExpectedHubCloudResolutionError = (error) =>
+  /\b(?:HTTP (?:403|404|429|500|502|503|504)|fetch failed|aborted|timed out|terminated|ECONNRESET|ENOTFOUND|EAI_AGAIN|ETIMEDOUT)\b/iu
+    .test(String(error?.message || error || ''));
+
 const withTimeoutFallback = async (promise, timeoutMs, fallbackValue) => {
   let timeoutId = null;
   const timeoutPromise = new Promise((resolve) => {
@@ -2186,6 +2562,7 @@ const getStreamFilenameLabel = (stream) => {
 const isGenericStreamTitle = (value) =>
   /^(?:stream|download|watch|play|video|link|file|master\s*m3u8|m3u8|playlist|index)$/iu.test(String(value || '').trim())
     || /^[a-z0-9_-]{8,}\s*(?:lo|la|ll|==)?\s*=\s*m3u8$/iu.test(String(value || '').trim())
+    || /^[a-z0-9_-]{12,}={0,2}\.(?:m3u8|mp4)$/iu.test(String(value || '').trim())
     || /^[a-z0-9_-]{12,}$/iu.test(String(value || '').trim());
 
 const getStreamSizeLabel = (stream) => {
@@ -2565,6 +2942,11 @@ const getAioStreamData = (stream, stremioStream, parsedRequest, context = {}) =>
   return data;
 };
 
+const isR5PluginStream = (stream) =>
+  String(stream?.provider || '').trim().toLowerCase() === 'r5-plugin'
+  || String(stream?.sourceProvider || '').trim().toLowerCase().startsWith('r5-plugin:')
+  || String(stream?.pluginProviderName || '').trim().toLowerCase() === 'r5-plugin';
+
 const toStremioStreamObject = (stream, parsedRequest, streamOptions = DEFAULT_STREAM_OPTIONS) => {
   const streamQuality = stream.quality || 'Unknown';
   const providerLabel = stream.provider ? toTitleCaseLabel(stream.provider) : 'Default';
@@ -2649,6 +3031,10 @@ const toStremioStreamObject = (stream, parsedRequest, streamOptions = DEFAULT_ST
     }
 
     cardTitle = cleanTitleLines.filter(Boolean).join('\n');
+  }
+
+  if (isR5PluginStream(stream) && !/play in vlc\/external player/iu.test(cardTitle)) {
+    cardTitle = [cardTitle, '▶ Play in VLC/external player'].filter(Boolean).join('\n');
   }
 
   const base = {
@@ -2993,6 +3379,10 @@ export class StreamManager {
 
   handleMemoryPressure({ critical = false } = {}) {
     if (critical) {
+      for (const request of this.stremioResultInFlight.values()) {
+        request?.controller?.abort?.(createHttpError(499, 'Critical memory pressure'));
+      }
+      this.stremioResultInFlight.clear();
       this.stremioResultCache.clear();
       this.hubCloudCache.clear();
       this.stremioBackgroundRefreshQueue = [];
@@ -3154,7 +3544,7 @@ export class StreamManager {
       return null;
     }
 
-    const providers = this.providerService.normalizeProviders(payload.providers);
+    let providers = this.providerService.normalizeProviders(payload.providers);
     const requestedQualityPriority = Array.isArray(payload.qualityPriority)
       ? payload.qualityPriority
         .map((value) => normalizeQualityKey(value))
@@ -3203,9 +3593,18 @@ export class StreamManager {
       torboxOnlyStreams: Boolean(baseStreamOptions.torboxOnlyStreams),
       torboxUsenet: Boolean(baseStreamOptions.torboxUsenet),
       formatterStyle: normalizeFormatterStyle(baseStreamOptions.formatterStyle),
-      customProxyUrl: normalizeCustomProxyUrl(baseStreamOptions.customProxyUrl)
+      customProxyUrl: normalizeCustomProxyUrl(baseStreamOptions.customProxyUrl),
+      pluginProviderSelections: normalizePluginProviderSelections(baseStreamOptions.pluginProviderSelections)
     };
     const privateProviderSettings = normalizePrivateProviderSettings(payload.privateProviderSettings);
+    if (
+      providers.length === 0 &&
+      streamOptions.torboxOnlyStreams &&
+      String(privateProviderSettings.torboxApiKey || '').trim() &&
+      this.providerService.providers.has('torrent-scraper')
+    ) {
+      providers = ['torrent-scraper'];
+    }
     const profileCode = typeof payload.profileCode === 'string'
       ? payload.profileCode.trim().toLowerCase()
       : null;
@@ -3318,7 +3717,7 @@ export class StreamManager {
 
   buildStremioResultCacheKey({ tmdbId, mediaType, season, episode, providers, qualityPriority, streamOptions, privateProviderSettingsHash = null }) {
     return JSON.stringify({
-      version: 129,
+      version: 145,
       tmdbId,
       mediaType,
       season: season ?? null,
@@ -3341,22 +3740,88 @@ export class StreamManager {
   }
 
   sendStremioStreamsResponse(res, streams) {
-    if (res.headersSent) {
+    if (res.locals?.nebulaStremioKeepaliveStartTimer) {
+      clearTimeout(res.locals.nebulaStremioKeepaliveStartTimer);
+      res.locals.nebulaStremioKeepaliveStartTimer = null;
+    }
+
+    if (res.destroyed || res.writableEnded) {
       return;
     }
 
     const normalizedStreams = Array.isArray(streams) ? streams : [];
 
-    if (normalizedStreams.length === 0) {
-      res.setHeader('Cache-Control', 'no-store, max-age=0');
-    } else {
-      res.setHeader('Cache-Control', 'public, max-age=60');
+    try {
+      if (res.headersSent && res.locals?.nebulaStremioKeepaliveStarted) {
+        this.stopStremioResponseKeepalive(res);
+        res.end(JSON.stringify({
+          streams: normalizedStreams
+        }));
+        return;
+      }
+
+      if (res.headersSent) {
+        return;
+      }
+
+      if (normalizedStreams.length === 0) {
+        res.setHeader('Cache-Control', 'no-store, max-age=0');
+      } else {
+        res.setHeader('Cache-Control', 'public, max-age=60');
+      }
+
+      res.setHeader('X-NebulaStreams-Stream-Count', String(normalizedStreams.length));
+      res.json({
+        streams: normalizedStreams
+      });
+    } catch (error) {
+      logger.warn('stremio stream response write skipped', {
+        error: error?.message || String(error),
+        streamCount: normalizedStreams.length
+      });
+    }
+  }
+
+  startStremioResponseKeepalive(res) {
+    if (res.headersSent || res.destroyed || res.writableEnded || res.locals?.nebulaStremioKeepaliveStarted) {
+      return;
     }
 
-    res.setHeader('X-NebulaStreams-Stream-Count', String(normalizedStreams.length));
-    res.json({
-      streams: normalizedStreams
-    });
+    try {
+      res.locals.nebulaStremioKeepaliveStarted = true;
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-store, max-age=0');
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.flushHeaders?.();
+      res.write('\n');
+
+      const interval = setInterval(() => {
+        if (res.destroyed || res.writableEnded) {
+          this.stopStremioResponseKeepalive(res);
+          return;
+        }
+
+        try {
+          res.write('\n');
+        } catch {
+          this.stopStremioResponseKeepalive(res);
+        }
+      }, 8_000);
+      interval.unref?.();
+      res.locals.nebulaStremioKeepaliveInterval = interval;
+    } catch (error) {
+      logger.warn('stremio response keepalive failed', {
+        error: error?.message || String(error)
+      });
+    }
+  }
+
+  stopStremioResponseKeepalive(res) {
+    const interval = res.locals?.nebulaStremioKeepaliveInterval;
+    if (interval) {
+      clearInterval(interval);
+      res.locals.nebulaStremioKeepaliveInterval = null;
+    }
   }
 
   toCacheLookupResult(cacheKey, entry) {
@@ -3432,6 +3897,7 @@ export class StreamManager {
       return null;
     } catch (error) {
       if (error?.code !== 'ENOENT') {
+        await rm(this.getStremioResultCachePath(cacheKey), { force: true }).catch(() => {});
         logger.warn('stremio result cache read failed', {
           error
         });
@@ -3457,6 +3923,7 @@ export class StreamManager {
       return result.streams;
     } catch (error) {
       if (error?.code !== 'ENOENT') {
+        await rm(this.getStremioLastGoodCachePath(cacheKey), { force: true }).catch(() => {});
         logger.warn('stremio last-good cache read failed', {
           error
         });
@@ -3513,7 +3980,7 @@ export class StreamManager {
     await this.ensureStremioResultCacheDir();
 
     try {
-      await writeFile(this.getStremioResultCachePath(cacheKey), JSON.stringify(entry));
+      await writeJsonFileAtomic(this.getStremioResultCachePath(cacheKey), entry);
     } catch (error) {
       logger.warn('stremio result cache write failed', {
         error
@@ -3534,7 +4001,7 @@ export class StreamManager {
       };
 
       try {
-        await writeFile(this.getStremioLastGoodCachePath(cacheKey), JSON.stringify(lastGoodEntry));
+        await writeJsonFileAtomic(this.getStremioLastGoodCachePath(cacheKey), lastGoodEntry);
       } catch (error) {
         logger.warn('stremio last-good cache write failed', {
           error
@@ -3547,6 +4014,10 @@ export class StreamManager {
     const privateConfig = this.getRequestedPrivateConfig(req);
 
     if (privateConfig) {
+      if (privateConfig.providers.length === 0 && privateConfig.streamOptions?.torboxOnlyStreams) {
+        return ['torrent-scraper'].filter((providerId) => this.providerService.providers.has(providerId));
+      }
+
       return [...privateConfig.providers];
     }
 
@@ -3625,7 +4096,8 @@ export class StreamManager {
           : [],
         contentSelection: normalizeContentSelection(privateConfig.streamOptions?.contentSelection),
         formatterStyle: normalizeFormatterStyle(privateConfig.streamOptions?.formatterStyle),
-        customProxyUrl: normalizeCustomProxyUrl(privateConfig.streamOptions?.customProxyUrl)
+        customProxyUrl: normalizeCustomProxyUrl(privateConfig.streamOptions?.customProxyUrl),
+        pluginProviderSelections: normalizePluginProviderSelections(privateConfig.streamOptions?.pluginProviderSelections)
       };
     }
 
@@ -3725,7 +4197,8 @@ export class StreamManager {
       torboxOnlyStreams: tokens.includes('torbox-only-streams'),
       torboxUsenet: tokens.includes('torbox-usenet'),
       formatterStyle,
-      customProxyUrl: null
+      customProxyUrl: null,
+      pluginProviderSelections: {}
     };
   }
 
@@ -3890,12 +4363,26 @@ export class StreamManager {
     );
     const requestAbortController = new AbortController();
     allowHighFanoutAbortSignal(requestAbortController.signal);
+    const setResponseHeader = (name, value) => {
+      if (!res.headersSent && !res.destroyed && !res.writableEnded) {
+        res.setHeader(name, value);
+      }
+    };
+    res.locals.nebulaStremioKeepaliveStartTimer = setTimeout(() => {
+      this.startStremioResponseKeepalive(res);
+    }, 3_500);
+    res.locals.nebulaStremioKeepaliveStartTimer.unref?.();
     const abortActiveSearch = (message) => {
       if (!requestAbortController.signal.aborted) {
         requestAbortController.abort(createHttpError(499, message));
       }
     };
     const onClientClose = () => {
+      if (res.locals?.nebulaStremioKeepaliveStartTimer) {
+        clearTimeout(res.locals.nebulaStremioKeepaliveStartTimer);
+        res.locals.nebulaStremioKeepaliveStartTimer = null;
+      }
+      this.stopStremioResponseKeepalive(res);
       if (!res.writableEnded) {
         abortActiveSearch('Stremio client disconnected');
       }
@@ -3905,7 +4392,7 @@ export class StreamManager {
     let timeoutFallbackContext = null;
     const overallTimeout = setTimeout(() => {
       void (async () => {
-        if (res.headersSent) {
+        if (res.headersSent && !res.locals?.nebulaStremioKeepaliveStarted) {
           return;
         }
 
@@ -3946,7 +4433,7 @@ export class StreamManager {
             cacheSource: fallbackSource,
             resultCount: fallbackStreams.length
           });
-          res.setHeader('X-NebulaStreams-Cache', fallbackSource);
+          setResponseHeader('X-NebulaStreams-Cache', fallbackSource);
           this.sendStremioStreamsResponse(res, fallbackStreams);
           return;
         }
@@ -3994,7 +4481,26 @@ export class StreamManager {
       const privateProviderSettingsHash = getPrivateProviderSettingsHash(privateProviderSettings);
       const isConfiguredRequest = String(req.path || '').startsWith('/configured/')
         || String(req.path || '').startsWith('/private/');
-      const bypassStremioResultCache = requestedProviders.length === 1 && requestedProviders[0] === 'allyoucanwatch';
+      const clientUserAgent = String(req.get?.('user-agent') || '').toLowerCase();
+      const isShortDeadlineClient = /\b(?:aiostreams|nuvio|stremio-apple|stremioshell|strmr|fusionapp|ktor-client|okhttp)\b/u
+        .test(clientUserAgent);
+      const hasExplicitProviderConfig = isConfiguredRequest && requestedProviders.length > 0;
+      const hasOnlyNuvioProviders = hasExplicitProviderConfig
+        && requestedProviders.every((providerId) => String(providerId || '').startsWith('nuvio'));
+      const routeSoftDeadlineMs = Math.max(5_000, Math.min(
+        overallTimeoutMs - 500,
+        isShortDeadlineClient && hasOnlyNuvioProviders
+          ? 8_500
+          : isShortDeadlineClient && hasExplicitProviderConfig
+            ? 12_500
+          : isShortDeadlineClient
+            ? 11_500
+            : hasExplicitProviderConfig
+              ? 13_500
+              : overallTimeoutMs - 500
+      ));
+      const bypassStremioResultCache = (requestedProviders.length === 1 && requestedProviders[0] === 'allyoucanwatch')
+        || streamOptions.torboxOnlyStreams;
       const resultCacheKey = this.buildStremioResultCacheKey({
         tmdbId,
         mediaType: parsed.mediaType,
@@ -4047,7 +4553,7 @@ export class StreamManager {
           cacheResult: false
         });
 
-        res.setHeader('X-NebulaStreams-Mode', 'uncached-explicit-provider');
+        setResponseHeader('X-NebulaStreams-Mode', 'uncached-explicit-provider');
         clearTimeout(overallTimeout);
         this.sendStremioStreamsResponse(res, uncachedStreams);
         return;
@@ -4065,7 +4571,7 @@ export class StreamManager {
           ? lastGoodStreams
           : (cachedResult?.streams || []);
 
-        res.setHeader('X-NebulaStreams-Mode', degradedStreams.length > 0 ? 'configured-degraded-cache' : 'configured-degraded-empty');
+        setResponseHeader('X-NebulaStreams-Mode', degradedStreams.length > 0 ? 'configured-degraded-cache' : 'configured-degraded-empty');
         clearTimeout(overallTimeout);
         this.sendStremioStreamsResponse(res, degradedStreams);
         return;
@@ -4085,7 +4591,7 @@ export class StreamManager {
 
       if (lastGoodStreams?.length && getLastGoodStreamSetScore(lastGoodStreams) > 0) {
         this.scheduleStremioBackgroundRefresh(buildInput);
-        res.setHeader('X-NebulaStreams-Cache', 'last-good-refreshing');
+        setResponseHeader('X-NebulaStreams-Cache', 'last-good-refreshing');
         clearTimeout(overallTimeout);
         this.sendStremioStreamsResponse(res, lastGoodStreams);
         return;
@@ -4093,7 +4599,7 @@ export class StreamManager {
 
       if (cachedResult?.state === 'stale') {
         this.scheduleStremioBackgroundRefresh(buildInput);
-        res.setHeader('X-NebulaStreams-Cache', 'stale');
+        setResponseHeader('X-NebulaStreams-Cache', 'stale');
         clearTimeout(overallTimeout);
         this.sendStremioStreamsResponse(res, cachedResult.streams);
         return;
@@ -4106,7 +4612,7 @@ export class StreamManager {
         const buildPromise = this.getOrBuildStremioStreams(buildInput);
         stremioStreams = await withTimeoutFallback(
           buildPromise,
-          Math.max(5_000, overallTimeoutMs - 500),
+          routeSoftDeadlineMs,
           buildTimeoutSentinel
         );
 
@@ -4122,7 +4628,7 @@ export class StreamManager {
               resultCount: fallbackStreams.length
             });
 
-            res.setHeader('X-NebulaStreams-Cache', 'deadline-fallback');
+            setResponseHeader('X-NebulaStreams-Cache', 'deadline-fallback');
             abortActiveSearch('Stremio deadline fallback served');
             clearTimeout(overallTimeout);
             this.sendStremioStreamsResponse(res, fallbackStreams);
@@ -4134,7 +4640,7 @@ export class StreamManager {
             mediaType: parsed.mediaType
           });
           abortActiveSearch('Stremio soft deadline reached');
-          res.setHeader('X-NebulaStreams-Cache', 'deadline-empty');
+          setResponseHeader('X-NebulaStreams-Cache', 'deadline-empty');
           clearTimeout(overallTimeout);
           this.sendStremioStreamsResponse(res, []);
           return;
@@ -4148,7 +4654,7 @@ export class StreamManager {
             error
           });
           await this.setCachedStremioStreams(resultCacheKey, lastGoodStreams, { weak: true });
-          res.setHeader('X-NebulaStreams-Cache', 'last-good-error');
+          setResponseHeader('X-NebulaStreams-Cache', 'last-good-error');
           clearTimeout(overallTimeout);
           this.sendStremioStreamsResponse(res, lastGoodStreams);
           return;
@@ -4170,7 +4676,7 @@ export class StreamManager {
             freshScore
           });
           await this.setCachedStremioStreams(resultCacheKey, lastGoodStreams, { weak: true });
-          res.setHeader('X-NebulaStreams-Cache', 'last-good-empty');
+          setResponseHeader('X-NebulaStreams-Cache', 'last-good-empty');
           clearTimeout(overallTimeout);
           this.sendStremioStreamsResponse(res, lastGoodStreams);
           return;
@@ -4181,7 +4687,20 @@ export class StreamManager {
       this.sendStremioStreamsResponse(res, stremioStreams);
     } catch (error) {
       clearTimeout(overallTimeout);
-      next(error);
+      logger.warn('stremio stream route failed; serving fallback response', {
+        id: req.params.id,
+        mediaType: req.params.type,
+        error: error?.message || String(error)
+      });
+
+      const fallbackStreams = Array.isArray(timeoutFallbackContext?.lastGoodStreams) && timeoutFallbackContext.lastGoodStreams.length > 0
+        ? timeoutFallbackContext.lastGoodStreams
+        : (Array.isArray(timeoutFallbackContext?.cachedResult?.streams) ? timeoutFallbackContext.cachedResult.streams : []);
+
+      if (!res.headersSent && !res.destroyed && !res.writableEnded) {
+        res.setHeader('X-NebulaStreams-Cache', fallbackStreams.length > 0 ? 'route-error-fallback' : 'route-error-empty');
+      }
+      this.sendStremioStreamsResponse(res, fallbackStreams);
     } finally {
       req.off('aborted', onClientClose);
       res.off('close', onClientClose);
@@ -4257,11 +4776,73 @@ export class StreamManager {
   }) {
     this.sweepStaleStremioInFlight();
 
+    const waitForSharedRequest = (request) => {
+      if (!signal) {
+        return request.then((streams) => copyObjects(streams));
+      }
+
+      allowHighFanoutAbortSignal(signal);
+
+      if (signal.aborted) {
+        return Promise.resolve([]);
+      }
+
+      return new Promise((resolve, reject) => {
+        const cleanup = () => {
+          signal.removeEventListener('abort', onAbort);
+        };
+        const onAbort = () => {
+          cleanup();
+          resolve([]);
+        };
+
+        signal.addEventListener('abort', onAbort, { once: true });
+        request.then(
+          (streams) => {
+            cleanup();
+            resolve(copyObjects(streams));
+          },
+          (error) => {
+            cleanup();
+            reject(error);
+          }
+        );
+      });
+    };
+
     const existingRequest = this.stremioResultInFlight.get(resultCacheKey);
 
     if (existingRequest) {
-      return existingRequest.then((streams) => copyObjects(streams));
+      return waitForSharedRequest(existingRequest);
     }
+
+    const getQueuedFallbackStreams = async (reason) => {
+      const lastGoodStreams = await this.getLastGoodStremioStreams(resultCacheKey);
+
+      if (Array.isArray(lastGoodStreams) && lastGoodStreams.length > 0) {
+        logger.warn('serving last-good streams while stream search is saturated', {
+          reason,
+          resultCount: lastGoodStreams.length,
+          tmdbId,
+          mediaType: parsed.mediaType
+        });
+        return copyObjects(lastGoodStreams);
+      }
+
+      const staleResult = await this.getCachedStremioStreams(resultCacheKey, { allowStale: true });
+
+      if (Array.isArray(staleResult?.streams) && staleResult.streams.length > 0) {
+        logger.warn('serving stale streams while stream search is saturated', {
+          reason,
+          resultCount: staleResult.streams.length,
+          tmdbId,
+          mediaType: parsed.mediaType
+        });
+        return copyObjects(staleResult.streams);
+      }
+
+      return null;
+    };
 
     if (this.isLoadShedding()) {
       logger.warn('stremio stream search rejected due to load shedding', {
@@ -4270,6 +4851,33 @@ export class StreamManager {
         tmdbId,
         mediaType: parsed.mediaType
       });
+      const fallbackStreams = await getQueuedFallbackStreams('load-shedding');
+      if (fallbackStreams) {
+        return fallbackStreams;
+      }
+      return [];
+    }
+
+    const heapPressurePercent = getProcessHeapPressurePercent();
+    if (heapPressurePercent >= config.MEMORY_GUARD_PRESSURE_PERCENT) {
+      const critical = heapPressurePercent >= config.MEMORY_GUARD_CRITICAL_PERCENT;
+      this.handleMemoryPressure({ critical });
+      this.enableLoadShedding({
+        durationMs: config.MEMORY_GUARD_SHED_SECONDS * 1000,
+        reason: critical ? 'stream-heap-critical' : 'stream-heap-pressure'
+      });
+      logger.warn('stremio stream search rejected due to heap pressure', {
+        heapPressurePercent: Number(heapPressurePercent.toFixed(1)),
+        pressurePercent: config.MEMORY_GUARD_PRESSURE_PERCENT,
+        criticalPercent: config.MEMORY_GUARD_CRITICAL_PERCENT,
+        critical,
+        tmdbId,
+        mediaType: parsed.mediaType
+      });
+      const fallbackStreams = await getQueuedFallbackStreams('heap-pressure');
+      if (fallbackStreams) {
+        return fallbackStreams;
+      }
       return [];
     }
 
@@ -4282,7 +4890,7 @@ export class StreamManager {
       const inFlightRequest = this.stremioResultInFlight.get(resultCacheKey);
 
       if (inFlightRequest) {
-        return inFlightRequest.then((streams) => copyObjects(streams));
+        return waitForSharedRequest(inFlightRequest);
       }
 
       if (!slotAvailable) {
@@ -4293,6 +4901,10 @@ export class StreamManager {
           tmdbId,
           mediaType: parsed.mediaType
         });
+        const fallbackStreams = await getQueuedFallbackStreams('in-flight-limit');
+        if (fallbackStreams) {
+          return fallbackStreams;
+        }
         return [];
       }
     }
@@ -4304,25 +4916,20 @@ export class StreamManager {
         tmdbId,
         mediaType: parsed.mediaType
       });
+      const fallbackStreams = await getQueuedFallbackStreams('in-flight-limit-after-wait');
+      if (fallbackStreams) {
+        return fallbackStreams;
+      }
       return [];
     }
 
     const requestAbortController = new AbortController();
     allowHighFanoutAbortSignal(requestAbortController.signal);
-    let abortHandler = null;
-
-    if (signal) {
-      allowHighFanoutAbortSignal(signal);
-
-      if (signal.aborted) {
-        return [];
-      }
-
-      abortHandler = () => {
-        requestAbortController.abort(signal.reason || createHttpError(499, 'Stremio search aborted'));
-      };
-      signal.addEventListener('abort', abortHandler, { once: true });
-    }
+    const hardCleanupMs = Math.max(60_000, config.STREMIO_STREAM_OVERALL_TIMEOUT_MS + 45_000);
+    const hardCleanupTimer = setTimeout(() => {
+      requestAbortController.abort(createHttpError(499, 'Stremio shared build cleanup timeout'));
+    }, hardCleanupMs);
+    hardCleanupTimer.unref?.();
 
     const request = this.buildStremioStreams({
       resultCacheKey,
@@ -4334,21 +4941,27 @@ export class StreamManager {
       tmdbId,
       privateProviderSettings,
       signal: requestAbortController.signal
+    }).catch(async (error) => {
+      logger.warn('stremio shared build failed; serving fallback', {
+        tmdbId,
+        mediaType: parsed.mediaType,
+        error: error?.message || String(error)
+      });
+      const fallbackStreams = await getQueuedFallbackStreams('shared-build-error');
+      return fallbackStreams || [];
     });
     request.startedAt = Date.now();
     request.controller = requestAbortController;
 
     this.stremioResultInFlight.set(resultCacheKey, request);
+    request
+      .finally(() => {
+        clearTimeout(hardCleanupTimer);
+        this.stremioResultInFlight.delete(resultCacheKey);
+      })
+      .catch(() => {});
 
-    try {
-      const streams = await request;
-      return copyObjects(streams);
-    } finally {
-      if (abortHandler && signal) {
-        signal.removeEventListener('abort', abortHandler);
-      }
-      this.stremioResultInFlight.delete(resultCacheKey);
-    }
+    return waitForSharedRequest(request);
   }
 
   async buildStremioStreams({
@@ -4404,7 +5017,7 @@ export class StreamManager {
         }
       }
 
-      if (cacheResult && shouldCacheEmptyFastResult(result)) {
+      if (cacheResult && shouldCacheEmptyFastResult(result) && !streamOptions.torboxOnlyStreams) {
         await this.setCachedStremioStreams(resultCacheKey, []);
       } else if (!cacheResult) {
         logger.info('skipping stremio cache write for degraded configured request', {
@@ -4432,6 +5045,7 @@ export class StreamManager {
       : result.streams;
     let normalizedStreams = await this.normalizeProviderStreams(baseUrl, rawStreamsForNormalization);
     normalizedStreams = enableTorBoxDdlStreams(normalizedStreams, privateProviderSettings);
+    normalizedStreams = await filterTorBoxCachedTorrentStreams(normalizedStreams, privateProviderSettings, streamOptions);
     let { streams: configuredStreams } = filterConfiguredStreamsDetailed(normalizedStreams, streamOptions);
 
     if (configuredStreams.length === 0 && normalizedStreams.length > 0) {
@@ -4448,6 +5062,38 @@ export class StreamManager {
       }
     }
 
+    if (parsed.mediaType === 'series' && configuredStreams.length > 0) {
+      let expectedTitle = null;
+      try {
+        const metadata = await this.providerService.getTmdbMetadata({ tmdbId, mediaType: 'tv' });
+        expectedTitle = metadata?.name || metadata?.title || null;
+      } catch (error) {
+        logger.warn('stremio tv title guard metadata lookup failed', {
+          tmdbId,
+          season: parsed.season,
+          episode: parsed.episode,
+          error: error?.message || error
+        });
+      }
+
+      const guardedStreams = filterMismatchedHubTvStreams(configuredStreams, {
+        expectedTitle,
+        season: parsed.season,
+        episode: parsed.episode
+      });
+
+      if (guardedStreams.length !== configuredStreams.length) {
+        logger.warn('stremio tv title guard dropped mismatched hub streams', {
+          tmdbId,
+          season: parsed.season,
+          episode: parsed.episode,
+          droppedCount: configuredStreams.length - guardedStreams.length,
+          resultCount: guardedStreams.length
+        });
+        configuredStreams = guardedStreams;
+      }
+    }
+
     if (configuredStreams.length === 0) {
       logger.warn('stremio stream search produced no configured streams', {
         tmdbId,
@@ -4458,7 +5104,7 @@ export class StreamManager {
         normalizedStreamCount: normalizedStreams.length,
         streamOptions
       });
-      if (cacheResult && shouldCacheEmptyFastResult(result)) {
+      if (cacheResult && shouldCacheEmptyFastResult(result) && !streamOptions.torboxOnlyStreams) {
         await this.setCachedStremioStreams(resultCacheKey, []);
       }
       return [];
@@ -4475,7 +5121,40 @@ export class StreamManager {
         requestedProviders
       })
     );
-    const playbackStreams = await Promise.all(dedupedStreams.map(async (stream) => {
+    const playbackSettled = await Promise.allSettled(dedupedStreams.map(async (stream) => {
+      if (stream?.torboxTorrent && privateProviderSettings?.torboxApiKey) {
+        try {
+          const streamUrl = this.createTorBoxTorrentStreamUrl(baseUrl, {
+            magnet: stream.torboxMagnet || stream.magnet || stream.torrent || stream.url,
+            apiKey: privateProviderSettings.torboxApiKey,
+            filename: stream.filename || stream.fileName || stream.title,
+            fileIndex: stream.fileIdx,
+            provider: stream.provider
+          });
+
+          return {
+            ...stream,
+            url: streamUrl.toString(),
+            magnet: null,
+            torrent: null,
+            transport: 'http',
+            headers: null,
+            sourceSite: stream.sourceSite || 'TorBox Torrent',
+            behaviorHints: {
+              ...stream.behaviorHints,
+              notWebReady: false
+            }
+          };
+        } catch (error) {
+          logger.warn('failed to create torbox torrent stream url', {
+            provider: stream.provider,
+            infoHash: stream.torboxInfoHash,
+            error
+          });
+          return stream;
+        }
+      }
+
       if (stream?.torboxWebDownload && privateProviderSettings?.torboxApiKey) {
         try {
           const streamUrl = this.createTorBoxWebDownloadStreamUrl(baseUrl, {
@@ -4541,6 +5220,19 @@ export class StreamManager {
         return stream;
       }
     }));
+    const playbackStreams = playbackSettled
+      .map((result, index) => {
+        if (result.status === 'fulfilled') {
+          return result.value;
+        }
+
+        logger.warn('stremio playback stream preparation failed', {
+          provider: dedupedStreams[index]?.provider,
+          error: result.reason?.message || String(result.reason)
+        });
+        return dedupedStreams[index];
+      })
+      .filter(Boolean);
     const useWeakCache = Boolean(result.partial) || shouldUseWeakResultCache(playbackStreams);
     const hasCinestream = playbackStreams.some((stream) =>
       String(stream?.provider || '').trim().toLowerCase() === 'cinestream'
@@ -4600,7 +5292,7 @@ export class StreamManager {
       await this.sendStream(res, descriptor);
     } catch (error) {
       if (res.headersSent) {
-        res.destroy(error);
+        res.end();
         return;
       }
 
@@ -4618,7 +5310,7 @@ export class StreamManager {
       await this.sendStream(res, descriptor);
     } catch (error) {
       if (res.headersSent) {
-        res.destroy(error);
+        res.end();
         return;
       }
 
@@ -4676,7 +5368,42 @@ export class StreamManager {
     return streamUrl;
   }
 
-  decodeTorBoxWebDownloadToken(token) {
+  createTorBoxTorrentStreamUrl(baseUrl, {
+    magnet,
+    apiKey,
+    filename = null,
+    fileIndex = null,
+    provider = null
+  } = {}) {
+    const normalizedMagnet = enhanceMagnet(magnet);
+    const normalizedApiKey = normalizePrivateCookie(apiKey);
+    const infoHash = extractInfoHash(normalizedMagnet);
+
+    if (!normalizedApiKey) {
+      throw createHttpError(400, 'TorBox API key is required');
+    }
+
+    if (!infoHash) {
+      throw createHttpError(400, 'Invalid torrent magnet');
+    }
+
+    const token = encryptSourceTokenPayload(JSON.stringify({
+      version: SOURCE_TOKEN_VERSION,
+      expiresAt: Date.now() + (90 * 60 * 1000),
+      source: normalizedMagnet,
+      infoHash,
+      apiKey: normalizedApiKey,
+      filename: filename ? String(filename).slice(0, 180) : null,
+      fileIndex: Number.isInteger(Number(fileIndex)) ? Number(fileIndex) : null,
+      provider: provider ? String(provider).slice(0, 80) : null
+    }));
+
+    const streamUrl = new URL('/torbox/torrent', baseUrl);
+    streamUrl.searchParams.set('token', token);
+    return streamUrl;
+  }
+
+  decodeTorBoxToken(token) {
     let parsed;
 
     try {
@@ -4693,19 +5420,22 @@ export class StreamManager {
       throw createHttpError(404, 'TorBox token has expired');
     }
 
+    const rawSource = String(parsed.source || '').trim();
     return {
-      source: this.normalizeHttpSource(parsed.source),
+      source: rawSource.startsWith('magnet:') ? rawSource : this.normalizeHttpSource(rawSource),
+      magnet: rawSource.startsWith('magnet:') ? enhanceMagnet(rawSource) : null,
+      infoHash: parsed.infoHash ? String(parsed.infoHash).trim().toLowerCase() : extractInfoHash(rawSource),
       apiKey: normalizePrivateCookie(parsed.apiKey),
-      filename: parsed.filename ? String(parsed.filename).slice(0, 180) : null
+      filename: parsed.filename ? String(parsed.filename).slice(0, 180) : null,
+      fileIndex: Number.isInteger(Number(parsed.fileIndex)) ? Number(parsed.fileIndex) : null
     };
   }
 
   async handleTorBoxWebDownload(req, res, next) {
     try {
-      const payload = this.decodeTorBoxWebDownloadToken(req.query.token);
+      const payload = this.decodeTorBoxToken(req.query.token);
       const form = new FormData();
       form.set('link', payload.source);
-      form.set('as_queued', 'true');
       if (payload.filename) {
         form.set('name', payload.filename);
       }
@@ -4730,23 +5460,45 @@ export class StreamManager {
       }
 
       let fileId = null;
-      try {
-        const listUrl = new URL('https://api.torbox.app/v1/api/webdl/mylist');
-        listUrl.searchParams.set('id', String(webId));
-        listUrl.searchParams.set('bypass_cache', 'true');
-        const listResponse = await fetch(listUrl, {
-          headers: {
-            authorization: `Bearer ${payload.apiKey}`,
-            accept: 'application/json'
+      let ready = false;
+      let lastListPayload = null;
+      const readyTimeoutMs = Math.max(5_000, Number(process.env.TORBOX_WEBDL_READY_TIMEOUT_MS || 25_000));
+      const deadline = Date.now() + readyTimeoutMs;
+
+      do {
+        try {
+          const listUrl = new URL('https://api.torbox.app/v1/api/webdl/mylist');
+          listUrl.searchParams.set('id', String(webId));
+          listUrl.searchParams.set('bypass_cache', 'true');
+          const listResponse = await fetch(listUrl, {
+            headers: {
+              authorization: `Bearer ${payload.apiKey}`,
+              accept: 'application/json'
+            },
+            signal: AbortSignal.timeout(10_000)
+          });
+          lastListPayload = await listResponse.json().catch(() => ({}));
+          const data = getTorBoxPayloadData(lastListPayload);
+          if (data?.error) {
+            throw createHttpError(502, data.error);
           }
-        });
-        const listPayload = await listResponse.json().catch(() => ({}));
-        fileId = findTorBoxVideoFileId(listPayload);
-      } catch (error) {
-        logger.info('torbox webdl file lookup failed', {
-          webId,
-          error: error?.message || String(error)
-        });
+          fileId = findTorBoxVideoFileId(lastListPayload);
+          ready = isTorBoxWebDownloadReady(lastListPayload) || fileId !== null;
+          if (ready) break;
+        } catch (error) {
+          logger.info('torbox webdl file lookup failed', {
+            webId,
+            error: error?.message || String(error)
+          });
+          break;
+        }
+
+        await delay(2_000);
+      } while (Date.now() < deadline);
+
+      if (!ready) {
+        const state = String(getTorBoxPayloadData(lastListPayload)?.download_state || 'preparing');
+        throw createHttpError(425, `TorBox web download is ${state}; try again soon`);
       }
 
       const requestUrl = new URL('https://api.torbox.app/v1/api/webdl/requestdl');
@@ -4754,10 +5506,135 @@ export class StreamManager {
       requestUrl.searchParams.set('web_id', String(webId));
       if (fileId !== null) requestUrl.searchParams.set('file_id', String(fileId));
       else requestUrl.searchParams.set('zip_link', 'true');
-      requestUrl.searchParams.set('redirect', 'true');
+      requestUrl.searchParams.set('redirect', 'false');
       requestUrl.searchParams.set('append_name', 'true');
 
-      res.redirect(302, requestUrl.toString());
+      const requestResponse = await fetch(requestUrl, {
+        headers: {
+          accept: 'application/json'
+        },
+        signal: AbortSignal.timeout(15_000)
+      });
+      const requestPayload = await requestResponse.json().catch(() => ({}));
+      const downloadUrl = extractTorBoxRequestDownloadUrl(requestPayload);
+
+      if (!requestResponse.ok) {
+        throw createHttpError(requestResponse.status || 502, requestPayload?.detail || 'TorBox download link request failed');
+      }
+
+      if (!downloadUrl) {
+        throw createHttpError(425, requestPayload?.detail || 'TorBox download link is not ready');
+      }
+
+      res.redirect(302, downloadUrl);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async handleTorBoxTorrentDownload(req, res, next) {
+    try {
+      const payload = this.decodeTorBoxToken(req.query.token);
+      const magnet = payload.magnet || enhanceMagnet(payload.source);
+      const infoHash = payload.infoHash || extractInfoHash(magnet);
+
+      if (!infoHash) {
+        throw createHttpError(400, 'Invalid torrent magnet');
+      }
+
+      const createForm = new FormData();
+      createForm.set('magnet', magnet);
+      createForm.set('allow_zip', 'false');
+      createForm.set('add_only_if_cached', 'true');
+      if (payload.filename) {
+        createForm.set('name', payload.filename);
+      }
+
+      const createResponse = await fetch('https://api.torbox.app/v1/api/torrents/createtorrent', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${payload.apiKey}`,
+          accept: 'application/json'
+        },
+        body: createForm,
+        signal: AbortSignal.timeout(15_000)
+      });
+      const createPayload = await createResponse.json().catch(() => ({}));
+      if (!createResponse.ok && createResponse.status !== 409) {
+        throw createHttpError(createResponse.status || 502, createPayload?.detail || 'TorBox torrent create failed');
+      }
+
+      let torrentId = extractTorBoxTorrentId(createPayload);
+      let torrentPayload = null;
+
+      if (torrentId) {
+        const listUrl = new URL('https://api.torbox.app/v1/api/torrents/mylist');
+        listUrl.searchParams.set('id', String(torrentId));
+        listUrl.searchParams.set('bypass_cache', 'true');
+        const listResponse = await fetch(listUrl, {
+          headers: {
+            authorization: `Bearer ${payload.apiKey}`,
+            accept: 'application/json'
+          },
+          signal: AbortSignal.timeout(10_000)
+        });
+        torrentPayload = await listResponse.json().catch(() => ({}));
+      } else {
+        const listUrl = new URL('https://api.torbox.app/v1/api/torrents/mylist');
+        listUrl.searchParams.set('bypass_cache', 'true');
+        const listResponse = await fetch(listUrl, {
+          headers: {
+            authorization: `Bearer ${payload.apiKey}`,
+            accept: 'application/json'
+          },
+          signal: AbortSignal.timeout(10_000)
+        });
+        const listPayload = await listResponse.json().catch(() => ({}));
+        const torrents = Array.isArray(listPayload?.data) ? listPayload.data : [];
+        const found = torrents.find((torrent) =>
+          String(torrent?.hash || torrent?.info_hash || '').toLowerCase() === infoHash.toLowerCase()
+        );
+        if (found) {
+          torrentId = Number(found.id);
+          torrentPayload = { data: found };
+        }
+      }
+
+      const torrentData = getTorBoxPayloadData(torrentPayload);
+      if (!torrentId || !torrentData) {
+        throw createHttpError(425, 'TorBox cached torrent is not ready');
+      }
+
+      if (!isTorBoxWebDownloadReady(torrentPayload)) {
+        throw createHttpError(425, `TorBox torrent is ${String(torrentData.download_state || 'preparing')}; try again soon`);
+      }
+
+      const targetFile = pickTorBoxVideoFile(getTorBoxFileList(torrentPayload), payload.fileIndex, payload.filename);
+      const fileId = Number(targetFile?.id ?? targetFile?.file_id);
+      if (!Number.isInteger(fileId) || fileId < 0) {
+        throw createHttpError(404, 'No playable TorBox video file found');
+      }
+
+      const requestUrl = new URL('https://api.torbox.app/v1/api/torrents/requestdl');
+      requestUrl.searchParams.set('token', payload.apiKey);
+      requestUrl.searchParams.set('torrent_id', String(torrentId));
+      requestUrl.searchParams.set('file_id', String(fileId));
+      requestUrl.searchParams.set('redirect', 'false');
+      requestUrl.searchParams.set('append_name', 'true');
+      const requestResponse = await fetch(requestUrl, {
+        headers: { accept: 'application/json' },
+        signal: AbortSignal.timeout(15_000)
+      });
+      const requestPayload = await requestResponse.json().catch(() => ({}));
+      const downloadUrl = extractTorBoxRequestDownloadUrl(requestPayload);
+      if (!requestResponse.ok) {
+        throw createHttpError(requestResponse.status || 502, requestPayload?.detail || 'TorBox torrent download link request failed');
+      }
+      if (!downloadUrl) {
+        throw createHttpError(425, requestPayload?.detail || 'TorBox torrent download link is not ready');
+      }
+
+      res.redirect(302, downloadUrl);
     } catch (error) {
       next(error);
     }
@@ -4905,17 +5782,37 @@ export class StreamManager {
         return;
       }
 
+      const search = String(req.query.search || req.params.search || '').trim().toLowerCase();
+      if (search) {
+        if (search.length < 3) {
+          res
+            .setHeader('Cache-Control', 'public, max-age=30')
+            .json({ metas: [] });
+          return;
+        }
+
+        const channels = typeof liveAdapter.loadLiveChannels === 'function'
+          ? await liveAdapter.loadLiveChannels()
+          : [];
+        const metas = channels
+          .filter((channel) => !catalog.source || channel.source === catalog.source)
+          .filter((channel) => catalog.source || catalog.category === 'all' || channel.category === catalog.category)
+          .filter((channel) => String(channel.title || channel.name || '').toLowerCase().includes(search))
+          .slice(0, 30)
+          .map((channel) => liveAdapter.toLiveMeta(channel));
+
+        res
+          .setHeader('Cache-Control', 'public, max-age=60')
+          .json({ metas });
+        return;
+      }
+
       const skip = Number.parseInt(req.query.skip || '0', 10);
       let metas = await liveAdapter.getLiveCatalog({
         category: catalog.category,
         source: catalog.source || null,
         skip: Number.isInteger(skip) && skip > 0 ? skip : 0
       });
-
-      const search = String(req.query.search || '').trim().toLowerCase();
-      if (search) {
-        metas = metas.filter((meta) => String(meta.name || '').toLowerCase().includes(search));
-      }
 
       res.json({ metas });
     } catch (error) {
@@ -4967,7 +5864,7 @@ export class StreamManager {
       await this.sendStream(res, descriptor);
     } catch (error) {
       if (res.headersSent) {
-        res.destroy(error);
+        res.end();
         return;
       }
 
@@ -5021,7 +5918,9 @@ export class StreamManager {
         streamOptions,
         privateProviderSettings
       });
-      const normalizedStreams = await this.normalizeProviderStreams(baseUrl, result.streams);
+      let normalizedStreams = await this.normalizeProviderStreams(baseUrl, result.streams);
+      normalizedStreams = enableTorBoxDdlStreams(normalizedStreams, privateProviderSettings);
+      normalizedStreams = await filterTorBoxCachedTorrentStreams(normalizedStreams, privateProviderSettings, streamOptions);
       let { streams: configuredStreams, diagnostics } = filterConfiguredStreamsDetailed(normalizedStreams, streamOptions);
 
       if (configuredStreams.length === 0 && normalizedStreams.length > 0) {
@@ -5086,7 +5985,7 @@ export class StreamManager {
       await this.sendStream(res, descriptor);
     } catch (error) {
       if (res.headersSent) {
-        res.destroy(error);
+        res.end();
         return;
       }
 
@@ -5316,6 +6215,10 @@ export class StreamManager {
       return this.hubCloudInFlight.get(normalizedUrl);
     }
 
+    if (this.hubCloudInFlight.size >= config.HUBCLOUD_MAX_INFLIGHT) {
+      return [];
+    }
+
     const request = (async () => {
       try {
         if (isHubDriveUrl(normalizedUrl)) {
@@ -5465,7 +6368,10 @@ export class StreamManager {
         } catch {
           streamHost = 'invalid-url';
         }
-        logger.warn('hubcloud resolution failed', {
+        const logHubCloudFailure = isExpectedHubCloudResolutionError(error)
+          ? logger.info.bind(logger)
+          : logger.warn.bind(logger);
+        logHubCloudFailure('hubcloud resolution failed', {
           streamHost,
           errorName: error?.name || 'Error',
           errorMessage: error?.message || String(error),
@@ -5493,7 +6399,7 @@ export class StreamManager {
 
   async normalizeProviderStreams(_baseUrl, streams, fallbackProvider = null) {
     let hubCloudResolutionBudget = 8;
-    const settled = await Promise.all(streams.flatMap((stream) => {
+    const settled = await Promise.allSettled(streams.flatMap((stream) => {
       const provider = stream.provider || fallbackProvider;
       const variants = [];
       const normalizedUrl = typeof stream.url === 'string' ? stream.url.trim() : '';
@@ -5622,7 +6528,19 @@ export class StreamManager {
       });
     }));
 
-    return settled.flat().filter(Boolean);
+    return settled
+      .flatMap((result) => {
+        if (result.status === 'fulfilled') {
+          return result.value;
+        }
+
+        logger.warn('provider stream normalization failed', {
+          error: result.reason?.message || String(result.reason)
+        });
+        return [];
+      })
+      .flat()
+      .filter(Boolean);
   }
 
   parseStremioStreamRequest(type, id) {

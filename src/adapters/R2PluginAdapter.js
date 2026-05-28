@@ -115,7 +115,10 @@ export class R2PluginAdapter extends PluginProviderAdapter {
     const results = [];
     let nextIndex = 0;
     const startedAt = Date.now();
-    const providers = this.providerOrder.filter((providerId) => this.hasProviderModule(providerId));
+    const selected = this.getRequestedProviderSet(request);
+    const providers = this.providerOrder
+      .filter((providerId) => !selected || selected.has(String(providerId || '').toLowerCase()))
+      .filter((providerId) => this.hasProviderModule(providerId));
     const workerCount = Math.min(this.providerConcurrency, providers.length);
 
     const worker = async () => {
@@ -136,7 +139,7 @@ export class R2PluginAdapter extends PluginProviderAdapter {
     };
 
     await Promise.race([
-      Promise.all(Array.from({ length: workerCount }, () => worker())),
+      Promise.allSettled(Array.from({ length: workerCount }, () => worker())),
       new Promise((resolve) => {
         const timeout = setTimeout(resolve, Math.max(1, this.overallTimeoutMs - (Date.now() - startedAt)));
         timeout.unref?.();
@@ -146,6 +149,13 @@ export class R2PluginAdapter extends PluginProviderAdapter {
     return results
       .sort((left, right) => left.index - right.index)
       .flatMap((result) => result.streams);
+  }
+
+  getRequestedProviderSet(request) {
+    const selections = request?.pluginProviderSelections || request?.streamOptions?.pluginProviderSelections || {};
+    const selected = selections[this.id] || selections[request?.providerId] || null;
+    if (!Array.isArray(selected) || selected.length === 0) return null;
+    return new Set(selected.map((providerId) => String(providerId || '').trim().toLowerCase()).filter(Boolean));
   }
 
   async runProvider(providerId, request) {

@@ -10,6 +10,10 @@ const HEADERS = {
 };
 const SOURCES = [
   {
+    id: 'torrentio',
+    streamUrl: 'https://torrentio.strem.fun'
+  },
+  {
     id: '1337x',
     baseUrl: 'https://1337xx.to'
   },
@@ -95,14 +99,71 @@ const getTmdbInfo = async (tmdbId, mediaType) => {
   const endpoint = mediaType === 'tv' ? 'tv' : 'movie';
   const response = await withRetries(() => client.get(`${TMDB_BASE_URL}/${endpoint}/${tmdbId}`, {
     params: {
-      api_key: TMDB_API_KEY
+      api_key: TMDB_API_KEY,
+      append_to_response: 'external_ids'
     }
   }), [300, 900, 1800]);
 
   return {
     title: response.data.title || response.data.name || '',
-    year: String(response.data.release_date || response.data.first_air_date || '').slice(0, 4) || null
+    year: String(response.data.release_date || response.data.first_air_date || '').slice(0, 4) || null,
+    imdbId: response.data.external_ids?.imdb_id || null
   };
+};
+
+const buildTorrentioId = (mediaInfo, mediaType, season, episode) => {
+  if (!mediaInfo.imdbId) {
+    return null;
+  }
+
+  if (mediaType === 'tv' && season && episode) {
+    return `${mediaInfo.imdbId}:${season}:${episode}`;
+  }
+
+  return mediaInfo.imdbId;
+};
+
+const parseTorrentioSeeders = (stream) => {
+  const match = String(stream?.title || '').match(/👤\s*(\d+)/u);
+  return match ? toInt(match[1]) : 0;
+};
+
+const normalizeTorrentioStream = (stream) => {
+  const infoHash = String(stream?.infoHash || '').trim().toLowerCase();
+  if (!/^[a-f0-9]{40}$/u.test(infoHash)) {
+    return null;
+  }
+
+  const filename = stream?.behaviorHints?.filename || String(stream?.title || '').split('\n')[0] || 'Torrentio';
+  const quality = getQuality(`${stream?.name || ''} ${stream?.title || ''}`);
+
+  return {
+    name: 'Torrentio Scraper',
+    title: filename,
+    filename,
+    quality,
+    size: String(stream?.title || '').match(/💾\s*([^\n]+)/u)?.[1] || null,
+    provider: 'torrent-scraper',
+    magnet: `magnet:?xt=urn:btih:${infoHash}&dn=${encodeURIComponent(filename)}`,
+    fileIdx: Number.isInteger(stream?.fileIdx) ? stream.fileIdx : null,
+    seeders: parseTorrentioSeeders(stream),
+    sourceSite: 'Torrentio'
+  };
+};
+
+const searchTorrentio = async (mediaInfo, mediaType, season, episode) => {
+  const torrentioId = buildTorrentioId(mediaInfo, mediaType, season, episode);
+  if (!torrentioId) {
+    return [];
+  }
+
+  const type = mediaType === 'tv' ? 'series' : 'movie';
+  const response = await fastClient.get(`${SOURCES[0].streamUrl}/stream/${type}/${encodeURIComponent(torrentioId)}.json`);
+  const streams = Array.isArray(response.data?.streams) ? response.data.streams : [];
+  return streams
+    .map(normalizeTorrentioStream)
+    .filter(Boolean)
+    .slice(0, 30);
 };
 
 const search1337x = async (query) => {
@@ -176,6 +237,11 @@ async function getStreams(tmdbId, mediaType = 'movie', season = null, episode = 
     const mediaInfo = await getTmdbInfo(tmdbId, mediaType);
     const query = buildSearchQuery(mediaInfo, mediaType, season, episode);
 
+    const torrentsTorrentio = await searchTorrentio(mediaInfo, mediaType, season, episode).catch(() => []);
+    if (torrentsTorrentio.length >= 8) {
+      return torrentsTorrentio;
+    }
+
     const torrentsTpb = await searchThePirateBay(query).catch(() => []);
     const shouldTry1337x = torrentsTpb.length < 3;
     const torrents1337x = shouldTry1337x
@@ -203,6 +269,7 @@ async function getStreams(tmdbId, mediaType = 'movie', season = null, episode = 
     }
 
     const merged = [
+      ...torrentsTorrentio,
       ...torrentsTpb.slice(0, 5).map((torrent) => normalizeTorrent(torrent, 'ThePirateBay')),
       ...enriched1337x.map((torrent) => normalizeTorrent(torrent, '1337x'))
     ].filter((torrent) => torrent.magnet);

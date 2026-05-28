@@ -1,6 +1,9 @@
 import crypto from 'node:crypto';
 import { promises as fsPromises } from 'node:fs';
+import http from 'node:http';
+import https from 'node:https';
 import os from 'node:os';
+import v8 from 'node:v8';
 import express from 'express';
 
 import { config } from './config.js';
@@ -14,6 +17,31 @@ import { StreamManager, HttpError } from './services/streamManager.js';
 import { TorrentEngineService } from './services/torrentEngine.js';
 import { UserTrackerService } from './services/userTracker.js';
 import { logger } from './utils/logger.js';
+
+const getHeapUsagePercent = () => {
+  const heapLimitBytes = v8.getHeapStatistics().heap_size_limit;
+  return heapLimitBytes > 0 ? (process.memoryUsage().heapUsed / heapLimitBytes) * 100 : 0;
+};
+
+if (!config.VERBOSE_INFO_LOGS) {
+  console.log = () => {};
+  const shouldSuppressProviderConsoleNoise = (args) => {
+    const message = args.map((arg) => String(arg ?? '')).join(' ');
+    if (message.trim().startsWith('{')) return false;
+    return /\b(?:Provider request cancelled|skipped: HTTP 403|Kwik extraction failed: HTTP 403|Failed to fetch page: 403|Failed to fetch movie page|Response does not indicate success: 403|HTTP 404 Not Found|fetch failed)\b/iu
+      .test(message);
+  };
+  const originalConsoleWarn = console.warn.bind(console);
+  const originalConsoleError = console.error.bind(console);
+  console.warn = (...args) => {
+    if (shouldSuppressProviderConsoleNoise(args)) return;
+    originalConsoleWarn(...args);
+  };
+  console.error = (...args) => {
+    if (shouldSuppressProviderConsoleNoise(args)) return;
+    originalConsoleError(...args);
+  };
+}
 
 const escapeHtml = (value) =>
   String(value ?? '')
@@ -32,6 +60,171 @@ const sleep = (delayMs) => new Promise((resolve) => {
   const timer = setTimeout(resolve, delayMs);
   timer.unref?.();
 });
+
+const createUptimeKumaProxy = ({ targetBaseUrl, mountPath = '/status' }) => {
+  const target = new URL(targetBaseUrl);
+  const client = target.protocol === 'https:' ? https : http;
+  const agent = target.protocol === 'https:'
+    ? new https.Agent({ keepAlive: true, maxSockets: 32 })
+    : new http.Agent({ keepAlive: true, maxSockets: 32 });
+
+  const rewriteSetCookie = (headers) => {
+    const cookies = headers['set-cookie'];
+    if (!Array.isArray(cookies)) {
+      return;
+    }
+
+    headers['set-cookie'] = cookies.map((cookie) => {
+      if (/;\s*path=/iu.test(cookie)) {
+        return cookie.replace(/;\s*path=[^;]*/iu, `; Path=${mountPath}`);
+      }
+
+      return `${cookie}; Path=${mountPath}`;
+    });
+  };
+
+  const rewriteLocation = (headers) => {
+    const location = headers.location;
+    if (typeof location !== 'string' || !location.startsWith('/')) {
+      return;
+    }
+
+    if (location === mountPath || location.startsWith(`${mountPath}/`)) {
+      return;
+    }
+
+    headers.location = `${mountPath}${location === '/' ? '' : location}`;
+  };
+
+  const getUpstreamPath = (req) => {
+    const originalUrl = req.originalUrl || req.url || '/';
+    if (originalUrl === mountPath) {
+      return '/';
+    }
+
+    if (originalUrl.startsWith(`${mountPath}/`)) {
+      const unmountedPath = originalUrl.slice(mountPath.length) || '/';
+      const pathOnly = unmountedPath.split('?', 1)[0];
+      const firstSegment = pathOnly.split('/').filter(Boolean)[0] || '';
+      const rootRoutes = new Set([
+        'add',
+        'add-maintenance',
+        'add-status-page',
+        'api',
+        'assets',
+        'clone',
+        'dashboard',
+        'edit',
+        'empty',
+        'icon.svg',
+        'list',
+        'maintenance',
+        'manage-status-page',
+        'manifest.json',
+        'page-not-found',
+        'serviceWorker.js',
+        'settings',
+        'setup',
+        'setup-database',
+        'setup-database-info',
+        'socket.io',
+        'upload'
+      ]);
+
+      return rootRoutes.has(firstSegment) ? unmountedPath : `${mountPath}${unmountedPath}`;
+    }
+
+    return originalUrl;
+  };
+
+  const handle = (req, res, next) => {
+    const upstreamPath = getUpstreamPath(req);
+    const headers = {
+      ...req.headers,
+      host: target.host,
+      origin: `${target.protocol}//${target.host}`,
+      referer: `${target.protocol}//${target.host}${upstreamPath}`,
+      'x-forwarded-host': req.headers.host,
+      'x-forwarded-proto': req.protocol,
+      'x-forwarded-prefix': mountPath
+    };
+    delete headers['content-length'];
+
+    const upstreamReq = client.request({
+      protocol: target.protocol,
+      hostname: target.hostname,
+      port: target.port || (target.protocol === 'https:' ? 443 : 80),
+      method: req.method,
+      path: upstreamPath,
+      headers,
+      agent,
+      timeout: 30_000
+    }, (upstreamRes) => {
+      const responseHeaders = { ...upstreamRes.headers };
+      rewriteSetCookie(responseHeaders);
+      rewriteLocation(responseHeaders);
+      res.writeHead(upstreamRes.statusCode || 502, responseHeaders);
+      upstreamRes.pipe(res);
+    });
+
+    upstreamReq.on('timeout', () => {
+      upstreamReq.destroy(new Error('Uptime Kuma proxy timeout'));
+    });
+    upstreamReq.on('error', (error) => {
+      if (res.headersSent) {
+        res.end();
+        return;
+      }
+      next(error);
+    });
+    req.on('aborted', () => upstreamReq.destroy());
+    req.pipe(upstreamReq);
+  };
+
+  const handleUpgrade = (req, socket, head) => {
+    const upstreamPath = getUpstreamPath(req);
+    const headers = {
+      ...req.headers,
+      host: target.host,
+      origin: `${target.protocol}//${target.host}`,
+      'x-forwarded-host': req.headers.host,
+      'x-forwarded-proto': 'http',
+      'x-forwarded-prefix': mountPath
+    };
+
+    const upstreamReq = client.request({
+      protocol: target.protocol,
+      hostname: target.hostname,
+      port: target.port || (target.protocol === 'https:' ? 443 : 80),
+      method: req.method,
+      path: upstreamPath,
+      headers,
+      agent: false
+    });
+
+    upstreamReq.on('upgrade', (upstreamRes, upstreamSocket, upstreamHead) => {
+      socket.write([
+        `HTTP/${upstreamRes.httpVersion} ${upstreamRes.statusCode} ${upstreamRes.statusMessage}`,
+        ...Object.entries(upstreamRes.headers).map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(', ') : value}`),
+        '',
+        ''
+      ].join('\r\n'));
+      if (upstreamHead?.length) {
+        socket.write(upstreamHead);
+      }
+      if (head?.length) {
+        upstreamSocket.write(head);
+      }
+      upstreamSocket.pipe(socket);
+      socket.pipe(upstreamSocket);
+    });
+
+    upstreamReq.on('error', () => socket.destroy());
+    upstreamReq.end();
+  };
+
+  return { handle, handleUpgrade, mountPath };
+};
 
 const sampleCpuTimes = () => os.cpus().reduce((totals, cpu) => {
   const cpuTotal = Object.values(cpu.times).reduce((sum, value) => sum + value, 0);
@@ -171,6 +364,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
     .join(', ');
   const donationPrimaryUrl = escapeHtml(String(config.DONATION_PRIMARY_URL || '').trim());
   const simpleKoFiUrl = donationPrimaryUrl || `${escapeHtml(baseUrl)}/donate`;
+  const statusPageUrl = escapeHtml(String(config.STATUS_PAGE_URL || `${baseUrl}/health`).trim() || `${baseUrl}/health`);
   const nowPaymentsWidgetUrl = escapeHtml(String(config.DONATION_NOWPAYMENTS_WIDGET_URL || '').trim());
   const hasDonationSupport = Boolean(
     config.DONATION_CRYPTO_ADDRESS ||
@@ -1156,6 +1350,74 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         font-family: 'JetBrains Mono', monospace;
       }
 
+      .adapter-provider-list {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        margin-top: 12px;
+      }
+
+      .adapter-provider-group {
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+        background: var(--surface);
+        overflow: hidden;
+      }
+
+      .adapter-provider-head {
+        width: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 12px 14px;
+        background: transparent;
+        color: var(--text);
+        text-align: left;
+        font-weight: 800;
+      }
+
+      .adapter-provider-head small {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .adapter-provider-body {
+        display: none;
+        padding: 0 14px 14px;
+        border-top: 1px solid var(--border);
+      }
+
+      .adapter-provider-group.open .adapter-provider-body {
+        display: block;
+      }
+
+      .adapter-provider-actions {
+        display: flex;
+        gap: 8px;
+        margin: 12px 0;
+      }
+
+      .adapter-provider-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 8px;
+      }
+
+      .adapter-provider-option {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 9px 10px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        background: var(--surface-2);
+        color: var(--text-dim);
+        font-size: 12px;
+        font-weight: 700;
+      }
+
       /* ----- Support ----- */
       .support-shell {
         display: flex;
@@ -1993,23 +2255,26 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
           <button type="button" class="nav-item advanced-only" data-section-target="providers-section">
             <span class="nav-index">03</span><span class="nav-label">Providers</span>
           </button>
+          <button type="button" class="nav-item advanced-only" data-section-target="adapter-providers-section">
+            <span class="nav-index">04</span><span class="nav-label">Adapters</span>
+          </button>
           <button type="button" class="nav-item advanced-only" data-section-target="sorting-section">
-            <span class="nav-index">04</span><span class="nav-label">Quality</span>
+            <span class="nav-index">05</span><span class="nav-label">Quality</span>
           </button>
           <button type="button" class="nav-item advanced-only" data-section-target="filters-section">
-            <span class="nav-index">05</span><span class="nav-label">Filters</span>
+            <span class="nav-index">06</span><span class="nav-label">Filters</span>
           </button>
           <button type="button" class="nav-item advanced-only" data-section-target="ranking-section">
-            <span class="nav-index">06</span><span class="nav-label">Ranking</span>
+            <span class="nav-index">07</span><span class="nav-label">Ranking</span>
           </button>
           <button type="button" class="nav-item" data-section-target="torbox-section">
-            <span class="nav-index">07</span><span class="nav-label">TorBox</span>
+            <span class="nav-index">08</span><span class="nav-label">TorBox</span>
           </button>
           <button type="button" class="nav-item" data-section-target="support-section">
-            <span class="nav-index">08</span><span class="nav-label">Support</span>
+            <span class="nav-index">09</span><span class="nav-label">Support</span>
           </button>
           <button type="button" class="nav-item" data-section-target="notes-section">
-            <span class="nav-index">09</span><span class="nav-label">Notes</span>
+            <span class="nav-index">10</span><span class="nav-label">Notes</span>
           </button>
         </aside>
 
@@ -2089,8 +2354,8 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
               <div class="field">
                 <label class="field-label" for="simple-default-sorting">Default Sorting</label>
                 <select id="simple-default-sorting" class="field-input">
+                  <option value="highest" selected>Highest Quality</option>
                   <option value="highest-non-4k">Highest Non-4K Quality</option>
-                  <option value="highest">Highest Quality</option>
                   <option value="balanced">Balanced</option>
                 </select>
               </div>
@@ -2204,6 +2469,21 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
 
               <div class="summary-strip" id="provider-summary">All providers selected</div>
               <div class="provider-grid" id="provider-grid"></div>
+            </div>
+          </section>
+
+          <section class="card advanced-only" id="adapter-providers-section">
+            <div class="card-inner">
+              <div class="card-header">
+                <div>
+                  <h3 class="card-title">Adapter Providers</h3>
+                  <p class="card-desc">Open adapter groups and choose source providers inside plugins.</p>
+                </div>
+                <span class="card-badge">Adapters</span>
+              </div>
+
+              <div class="summary-strip" id="adapter-provider-summary">Loading adapter providers...</div>
+              <div class="adapter-provider-list" id="adapter-provider-list"></div>
             </div>
           </section>
 
@@ -2436,7 +2716,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
                   <path fill="currentColor" d="M20.32 4.37A19.8 19.8 0 0 0 15.36 2.8a.07.07 0 0 0-.08.04c-.21.38-.45.88-.62 1.27a18.29 18.29 0 0 0-5.5 0 12.7 12.7 0 0 0-.63-1.27.08.08 0 0 0-.08-.04A19.74 19.74 0 0 0 3.5 4.37a.07.07 0 0 0-.03.03C.35 9.05-.46 13.58.02 18.06c0 .02.02.05.04.06a19.9 19.9 0 0 0 6.08 3.07.08.08 0 0 0 .09-.03c.47-.64.89-1.31 1.25-2.02a.08.08 0 0 0-.04-.11 13.16 13.16 0 0 1-1.9-.91.08.08 0 0 1 0-.13l.38-.3a.08.08 0 0 1 .08-.01c3.96 1.8 8.24 1.8 12.15 0a.08.08 0 0 1 .09.01l.38.3a.08.08 0 0 1-.01.13c-.6.35-1.23.66-1.9.91a.08.08 0 0 0-.04.11c.37.7.79 1.38 1.25 2.02a.08.08 0 0 0 .09.03 19.84 19.84 0 0 0 6.09-3.07.08.08 0 0 0 .03-.06c.58-5.18-.98-9.67-3.87-13.66a.06.06 0 0 0-.03-.03ZM8.02 15.33c-1.19 0-2.17-1.1-2.17-2.44 0-1.35.96-2.44 2.17-2.44 1.22 0 2.18 1.1 2.17 2.44 0 1.35-.96 2.44-2.17 2.44Zm7.97 0c-1.19 0-2.17-1.1-2.17-2.44 0-1.35.96-2.44 2.17-2.44 1.22 0 2.18 1.1 2.17 2.44 0 1.35-.95 2.44-2.17 2.44Z"/>
                 </svg>
               </a>
-              <a class="simple-status-link" href="${escapeHtml(baseUrl)}/health" target="_blank" rel="noopener">Status</a>
+              <a class="simple-status-link" href="${statusPageUrl}" target="_blank" rel="noopener">Status</a>
             </div>
             <p class="simple-footer-credit">2026. By <a href="https://discord.gg/Y3gEjpcjm" target="_blank" rel="noopener">retrocodex</a></p>
           </footer>
@@ -2513,6 +2793,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
     <script>
       const origin = ${JSON.stringify(baseUrl)};
       const providerData = ${JSON.stringify(providerIds)};
+      const hiddenAdapterProviderGroups = new Set(['r3-plugin', 'r4-asian-drama-movies', 'r5-plugin']);
       const defaultQualityPriority = ['2160p', '1440p', '1080p', '720p', '480p', '360p', 'auto', 'unknown'];
       const simpleSortingOrders = {
         'highest-non-4k': ['1080p', '720p', '480p', '360p', '2160p', '1440p', 'auto', 'unknown'],
@@ -2523,6 +2804,8 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
       let qualityPriority = [...defaultQualityPriority];
       let activePresetId = null;
       let configMode = 'simple';
+      let adapterProviderGroups = [];
+      const adapterProviderSelections = {};
 
       providerData.forEach((p) => selectedProviders.add(p));
 
@@ -2536,6 +2819,8 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
       const providerSearch = $('provider-search');
       const providerGrid = $('provider-grid');
       const providerSummary = $('provider-summary');
+      const adapterProviderList = $('adapter-provider-list');
+      const adapterProviderSummary = $('adapter-provider-summary');
       const manifestUrl = $('manifest-url');
       const flash = $('flash');
       const copyButton = $('copy-url');
@@ -2614,11 +2899,57 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
           .filter(Boolean);
 
       const getSimpleQualityPriority = () => {
-        const order = simpleSortingOrders[simpleDefaultSorting.value] || simpleSortingOrders['highest-non-4k'];
+        const order = simpleSortingOrders[simpleDefaultSorting.value] || simpleSortingOrders.highest;
         return [
           ...order.filter((quality) => getSimpleAllowedQualities().includes(quality)),
           ...order.filter((quality) => !getSimpleAllowedQualities().includes(quality))
         ];
+      };
+
+      const hasAdapterProviderSelections = () =>
+        Object.values(adapterProviderSelections).some((selection) => selection instanceof Set && selection.size > 0);
+
+      const getSelectedAdapterProviderIds = () =>
+        Object.entries(adapterProviderSelections)
+          .filter(([, selection]) => selection instanceof Set && selection.size > 0)
+          .map(([adapterId]) => adapterId);
+
+      const getAdapterProviderSelectionPayload = () =>
+        Object.fromEntries(Object.entries(adapterProviderSelections)
+          .map(([adapterId, selection]) => [adapterId, Array.from(selection || [])])
+          .filter(([, selection]) => selection.length > 0));
+
+      const isDefaultSimpleConfig = () => {
+        if (configMode !== 'simple') return false;
+
+        const defaultSimpleQualities = ['2160p', '1080p', '720p', '480p'];
+        const selectedSimpleQualities = getSimpleAllowedQualities();
+        const allProvidersSelected = selectedProviders.size === providerData.length
+          && providerData.every((providerId) => selectedProviders.has(providerId));
+
+        return allProvidersSelected
+          && activePresetId === null
+          && selectedSimpleQualities.length === defaultSimpleQualities.length
+          && defaultSimpleQualities.every((quality) => selectedSimpleQualities.includes(quality))
+          && simpleContentSelection.value === 'default'
+          && simpleDefaultSorting.value === 'highest'
+          && Number.parseInt(simpleMaxPerQuality.value, 10) === 0
+          && Number.parseInt(simpleMaxPerProvider.value, 10) === 0
+          && !webReadyOnly.checked
+          && !hideHeavyFormats.checked
+          && !preferHdr.checked
+          && !preferH264.checked
+          && !preferSmallerFiles.checked
+          && !preferDirectHosts.checked
+          && !preferredAudioLanguage.value
+          && (!dedupeMode.value || dedupeMode.value === 'off')
+          && (!formatterStyle.value || formatterStyle.value === 'clean')
+          && !(Number.parseFloat(maxSizeGb.value) > 0)
+          && !blockedHosts.value.trim()
+          && !customProxyUrl.value.trim()
+          && !hasAdapterProviderSelections()
+          && !febboxUiCookie.value.trim()
+          && !(torboxEnabled.checked && torboxApiKey.value.trim());
       };
 
       const syncSimpleQualityPriority = () => {
@@ -2649,7 +2980,10 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
       };
 
       const getOrderedProviders = () =>
-        providerData.filter((p) => selectedProviders.has(p));
+        [
+          ...providerData.filter((p) => selectedProviders.has(p)),
+          ...getSelectedAdapterProviderIds().filter((providerId) => !providerData.includes(providerId))
+        ];
 
       const setSelectedProviders = (input) => {
         selectedProviders.clear();
@@ -2732,8 +3066,12 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
       };
 
       const buildManifestPath = () => {
+        if (isDefaultSimpleConfig()) return '/manifest.json';
+
         const ordered = getOrderedProviders();
-        const ps = ordered.length > 0 && ordered.length < providerData.length ? encodeURIComponent(ordered.join(',')) : 'all';
+        const nativeOrdered = ordered.filter((providerId) => providerData.includes(providerId));
+        const hasAdapterProviders = ordered.some((providerId) => !providerData.includes(providerId));
+        const ps = (hasAdapterProviders || (nativeOrdered.length > 0 && nativeOrdered.length < providerData.length)) ? encodeURIComponent(ordered.join(',')) : 'all';
         const qs = isDefaultQualityOrder() ? 'default' : encodeURIComponent(qualityPriority.join(','));
         const ot = getOptionTokens();
         if (ps === 'all' && qs === 'default' && ot.length === 0) return '/manifest.json';
@@ -2746,7 +3084,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         const ordered = getOrderedProviders();
         const simpleAllowedQualities = getSimpleAllowedQualities();
         return {
-          providers: ordered.length === 0 || ordered.length === providerData.length ? [] : ordered,
+          providers: ordered.length === 0 || (ordered.length === providerData.length && !hasAdapterProviderSelections()) ? [] : ordered,
           qualityPriority: [...qualityPriority],
           streamOptions: {
             webReadyOnly: webReadyOnly.checked,
@@ -2768,7 +3106,8 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
             preferDirectHosts: preferDirectHosts.checked,
             torboxOnlyStreams: Boolean(torboxEnabled.checked && torboxApiKey.value.trim() && torboxOnlyStreams.checked),
             torboxUsenet: Boolean(torboxEnabled.checked && torboxApiKey.value.trim() && torboxUsenet.checked),
-            customProxyUrl: customProxyUrl.value.trim() || null
+            customProxyUrl: customProxyUrl.value.trim() || null,
+            pluginProviderSelections: getAdapterProviderSelectionPayload()
           },
           privateProviderSettings: {
             febboxUiCookie: febboxUiCookie.value.trim(),
@@ -2778,11 +3117,82 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         };
       };
 
+      const getAdapterProviderGroupSelection = (group) => {
+        const id = String(group?.id || '').toLowerCase();
+        if (!adapterProviderSelections[id]) {
+          adapterProviderSelections[id] = new Set();
+        }
+        return adapterProviderSelections[id];
+      };
+
+      const updateAdapterProviderSummary = () => {
+        if (!adapterProviderSummary) return;
+        const selectedCount = Object.values(adapterProviderSelections)
+          .reduce((count, selection) => count + (selection?.size || 0), 0);
+        if (selectedCount === 0) {
+          adapterProviderSummary.textContent = 'No adapter sub-provider locks. Each selected adapter uses its default provider set.';
+          return;
+        }
+        adapterProviderSummary.innerHTML = '<strong>' + selectedCount + '</strong> adapter provider' + (selectedCount === 1 ? '' : 's') + ' selected.';
+      };
+
+      const renderAdapterProviders = () => {
+        if (!adapterProviderList) return;
+        const groups = adapterProviderGroups.filter((group) =>
+          !hiddenAdapterProviderGroups.has(String(group.id || '').toLowerCase()) &&
+          Array.isArray(group.providers) &&
+          group.providers.length > 0
+        );
+        if (groups.length === 0) {
+          adapterProviderList.innerHTML = '<div class="empty-state">No adapter provider manifests loaded.</div>';
+          updateAdapterProviderSummary();
+          return;
+        }
+
+        adapterProviderList.innerHTML = groups.map((group) => {
+          const selection = getAdapterProviderGroupSelection(group);
+          const providers = group.providers || [];
+          const selectedText = selection.size > 0 ? selection.size + ' selected' : 'default';
+          return '<div class="adapter-provider-group" data-adapter-id="' + escapeHtmlClient(group.id) + '">' +
+            '<button type="button" class="adapter-provider-head" data-adapter-toggle="' + escapeHtmlClient(group.id) + '">' +
+              '<span>' + escapeHtmlClient(group.label || group.id) + '</span><small>' + selectedText + ' / ' + providers.length + '</small>' +
+            '</button>' +
+            '<div class="adapter-provider-body">' +
+              '<div class="adapter-provider-actions">' +
+                '<button type="button" class="btn-ghost" data-adapter-select-all="' + escapeHtmlClient(group.id) + '">Select all</button>' +
+                '<button type="button" class="btn-ghost" data-adapter-clear="' + escapeHtmlClient(group.id) + '">Default</button>' +
+              '</div>' +
+              '<div class="adapter-provider-grid">' + providers.map((provider) =>
+                '<label class="adapter-provider-option">' +
+                  '<input type="checkbox" data-adapter-id="' + escapeHtmlClient(group.id) + '" data-adapter-provider-id="' + escapeHtmlClient(provider.id) + '" ' + (selection.has(provider.id) ? 'checked' : '') + '>' +
+                  '<span>' + escapeHtmlClient(provider.label || provider.id) + '</span>' +
+                '</label>'
+              ).join('') + '</div>' +
+            '</div>' +
+          '</div>';
+        }).join('');
+        updateAdapterProviderSummary();
+      };
+
+      const loadAdapterProviders = async () => {
+        if (!adapterProviderList) return;
+        try {
+          const response = await fetch(origin + '/configure/adapter-providers');
+          if (!response.ok) throw new Error('Adapter provider list failed');
+          const payload = await response.json();
+          adapterProviderGroups = Array.isArray(payload?.groups) ? payload.groups : [];
+          renderAdapterProviders();
+        } catch (error) {
+          adapterProviderList.innerHTML = '<div class="empty-state">Adapter providers unavailable.</div>';
+          if (adapterProviderSummary) adapterProviderSummary.textContent = 'Adapter provider list failed.';
+        }
+      };
+
       const resolveManifestPath = async () => {
         const cookie = febboxUiCookie.value.trim();
         const torbox = torboxEnabled.checked ? torboxApiKey.value.trim() : '';
         const proxy = customProxyUrl.value.trim();
-        if (!cookie && !torbox && !proxy) return buildManifestPath();
+        if (!cookie && !torbox && !proxy && !hasAdapterProviderSelections()) return buildManifestPath();
         const r = await fetch(origin + '/configure/private-config', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -2842,7 +3252,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         updateProviderSummary();
         const nonce = ++manifestResolveNonce;
         const fb = buildManifestPath();
-        manifestUrl.textContent = (febboxUiCookie.value.trim() || (torboxEnabled.checked && torboxApiKey.value.trim())) ? 'Preparing private manifest...' : origin + fb;
+        manifestUrl.textContent = (febboxUiCookie.value.trim() || (torboxEnabled.checked && torboxApiKey.value.trim()) || customProxyUrl.value.trim() || hasAdapterProviderSelections()) ? 'Preparing private manifest...' : origin + fb;
         try {
           const resolved = await resolveManifestPath();
           if (nonce !== manifestResolveNonce) return;
@@ -2878,6 +3288,42 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         if (!id) return;
         if (e.target.checked) selectedProviders.add(id); else selectedProviders.delete(id);
         markPresetAsCustom();
+        updateManifest();
+      });
+      adapterProviderList?.addEventListener('click', (e) => {
+        const toggle = e.target?.closest?.('[data-adapter-toggle]');
+        if (toggle) {
+          toggle.closest('.adapter-provider-group')?.classList.toggle('open');
+          return;
+        }
+
+        const selectAllId = e.target?.dataset?.adapterSelectAll;
+        const clearId = e.target?.dataset?.adapterClear;
+        const groupId = selectAllId || clearId;
+        if (!groupId) return;
+
+        const group = adapterProviderGroups.find((entry) => entry.id === groupId);
+        const selection = getAdapterProviderGroupSelection({ id: groupId });
+        selection.clear();
+        if (selectAllId && group) {
+          group.providers.forEach((provider) => selection.add(provider.id));
+          selectedProviders.add(groupId);
+        }
+        markPresetAsCustom();
+        renderProviderOptions();
+        renderAdapterProviders();
+        updateManifest();
+      });
+      adapterProviderList?.addEventListener('change', (e) => {
+        const adapterId = e.target?.dataset?.adapterId;
+        const providerId = e.target?.dataset?.adapterProviderId;
+        if (!adapterId || !providerId) return;
+        const selection = getAdapterProviderGroupSelection({ id: adapterId });
+        if (e.target.checked) selection.add(providerId); else selection.delete(providerId);
+        if (selection.size > 0) selectedProviders.add(adapterId);
+        markPresetAsCustom();
+        renderProviderOptions();
+        renderAdapterProviders();
         updateManifest();
       });
 
@@ -2955,7 +3401,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         navItems.forEach((it) => it.classList.toggle('is-active', it.dataset.sectionTarget === id));
       }, { rootMargin: '-18% 0px -55% 0px', threshold: [0.1, 0.35, 0.6] });
 
-      ['overview-section','simple-section','presets-section','providers-section','sorting-section','filters-section','ranking-section','torbox-section','support-section','notes-section']
+      ['overview-section','simple-section','presets-section','providers-section','adapter-providers-section','sorting-section','filters-section','ranking-section','torbox-section','support-section','notes-section']
         .map((id) => document.getElementById(id))
         .filter(Boolean)
         .forEach((s) => observer.observe(s));
@@ -2964,6 +3410,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
       renderQualityList();
       updatePresetUi();
       setConfigMode('simple');
+      loadAdapterProviders();
     </script>
   </body>
 </html>`;
@@ -3924,6 +4371,7 @@ const isExpensiveBotProtectionPath = (pathName) =>
   || pathName === '/stream/torrent'
   || pathName.startsWith('/stream/')
   || pathName.startsWith('/stremio/stream/')
+  || (pathName.includes('/catalog/') && pathName.includes('/search='))
   || pathName.startsWith('/preview/')
   || pathName.startsWith('/stremio/preview/')
   || (pathName.startsWith('/configured/') && (pathName.includes('/stream/') || pathName.includes('/preview/')))
@@ -4028,6 +4476,51 @@ const sendBotThrottleResponse = (req, res, retryAfterSeconds) => {
   res.status(429).json({
     error: 'Too Many Requests'
   });
+};
+
+const createMemoryFuse = (streamManager) => (req, res, next) => {
+  const heapUsagePercent = getHeapUsagePercent();
+
+  if (heapUsagePercent < config.MEMORY_GUARD_PRESSURE_PERCENT) {
+    next();
+    return;
+  }
+
+  streamManager.handleMemoryPressure({
+    critical: heapUsagePercent >= config.MEMORY_GUARD_CRITICAL_PERCENT
+  });
+  streamManager.enableLoadShedding({
+    durationMs: config.MEMORY_GUARD_SHED_SECONDS * 1000,
+    reason: 'route-heap-pressure'
+  });
+
+  const pathName = req.path || '';
+  logger.warn('memory fuse short-circuited addon route', {
+    path: pathName,
+    heapPressurePercent: Number(heapUsagePercent.toFixed(1)),
+    pressurePercent: config.MEMORY_GUARD_PRESSURE_PERCENT,
+    criticalPercent: config.MEMORY_GUARD_CRITICAL_PERCENT
+  });
+
+  if (pathName.includes('/stream/') || pathName.endsWith('/stream') || pathName === '/stream') {
+    res.setHeader('X-NebulaStreams-Mode', 'memory-fuse');
+    res.json({ streams: [] });
+    return;
+  }
+
+  if (pathName.includes('/catalog/')) {
+    res.setHeader('X-NebulaStreams-Mode', 'memory-fuse');
+    res.json({ metas: [] });
+    return;
+  }
+
+  if (pathName.includes('/meta/')) {
+    res.setHeader('X-NebulaStreams-Mode', 'memory-fuse');
+    res.json({ meta: null });
+    return;
+  }
+
+  next();
 };
 
 const createBotProtection = () => {
@@ -4221,6 +4714,56 @@ const startMemoryGuard = ({
 
   let running = false;
   let criticalStrikes = 0;
+  const trimRuntime = ({ critical, reason }) => {
+    streamManager.handleMemoryPressure({ critical });
+    streamManager.enableLoadShedding({
+      durationMs: config.MEMORY_GUARD_SHED_SECONDS * 1000,
+      reason
+    });
+    providerService.handleMemoryPressure({ critical });
+    imdbResolver.handleMemoryPressure({ critical });
+    userTracker.handleMemoryPressure({ critical });
+    sourceRegistry.handleMemoryPressure({ critical });
+  };
+  const runEmergencyCheck = () => {
+    const processMemory = process.memoryUsage();
+    const heapLimitBytes = v8.getHeapStatistics().heap_size_limit;
+    const heapUsagePercent = heapLimitBytes > 0
+      ? (processMemory.heapUsed / heapLimitBytes) * 100
+      : 0;
+
+    if (heapUsagePercent < config.MEMORY_GUARD_PRESSURE_PERCENT) {
+      return;
+    }
+
+    const critical = heapUsagePercent >= config.MEMORY_GUARD_CRITICAL_PERCENT;
+    trimRuntime({
+      critical,
+      reason: critical ? 'emergency-heap-critical' : 'emergency-heap-pressure'
+    });
+
+    logger.warn('memory guard emergency heap trim', {
+      critical,
+      heapPressurePercent: Number(heapUsagePercent.toFixed(1)),
+      pressurePercent: config.MEMORY_GUARD_PRESSURE_PERCENT,
+      criticalPercent: config.MEMORY_GUARD_CRITICAL_PERCENT,
+      restartPercent: config.MEMORY_GUARD_RESTART_PERCENT,
+      heapUsedBytes: processMemory.heapUsed,
+      heapLimitBytes,
+      processRssBytes: processMemory.rss
+    });
+
+    if (heapUsagePercent >= config.MEMORY_GUARD_RESTART_PERCENT) {
+      logger.error('memory guard emergency restart before heap OOM', {
+        heapPressurePercent: Number(heapUsagePercent.toFixed(1)),
+        restartPercent: config.MEMORY_GUARD_RESTART_PERCENT,
+        heapUsedBytes: processMemory.heapUsed,
+        heapLimitBytes,
+        processRssBytes: processMemory.rss
+      });
+      process.exit(1);
+    }
+  };
   const runCleanup = async () => {
     if (running) {
       return;
@@ -4230,9 +4773,17 @@ const startMemoryGuard = ({
 
     try {
       const memory = await getSystemMemorySnapshot();
-      const usagePercent = memory.totalMemoryBytes > 0
+      const processMemory = process.memoryUsage();
+      const heapLimitBytes = v8.getHeapStatistics().heap_size_limit;
+      const systemUsagePercent = memory.totalMemoryBytes > 0
         ? ((memory.totalMemoryBytes - memory.availableMemoryBytes) / memory.totalMemoryBytes) * 100
         : 0;
+      const heapUsagePercent = heapLimitBytes > 0
+        ? (processMemory.heapUsed / heapLimitBytes) * 100
+        : 0;
+      const minAvailableBytes = config.MEMORY_GUARD_MIN_AVAILABLE_MB * 1024 * 1024;
+      const systemPressureActive = memory.availableMemoryBytes <= minAvailableBytes;
+      const usagePercent = Math.max(systemPressureActive ? systemUsagePercent : 0, heapUsagePercent);
 
       if (usagePercent < config.MEMORY_GUARD_PRESSURE_PERCENT) {
         criticalStrikes = 0;
@@ -4244,29 +4795,32 @@ const startMemoryGuard = ({
       const before = {
         availableMemoryBytes: memory.availableMemoryBytes,
         usagePercent,
-        processMemory: process.memoryUsage(),
+        systemUsagePercent,
+        heapUsagePercent,
+        heapLimitBytes,
+        processMemory,
         streams: streamManager.getStats(),
         providers: providerService.getStats(),
         users: userTracker.getStats(),
         sourceRegistry: sourceRegistry.getStats()
       };
 
-      streamManager.handleMemoryPressure({ critical });
-      streamManager.enableLoadShedding({
-        durationMs: config.MEMORY_GUARD_SHED_SECONDS * 1000,
+      trimRuntime({
+        critical,
         reason: critical ? 'critical-memory-pressure' : 'memory-pressure'
       });
-      providerService.handleMemoryPressure({ critical });
-      imdbResolver.handleMemoryPressure({ critical });
-      userTracker.handleMemoryPressure({ critical });
-      sourceRegistry.handleMemoryPressure({ critical });
 
       logger.warn('memory guard trimmed runtime caches', {
         critical,
         pressurePercent: Number(usagePercent.toFixed(1)),
+        systemPressurePercent: Number(systemUsagePercent.toFixed(1)),
+        heapPressurePercent: Number(heapUsagePercent.toFixed(1)),
         thresholdPercent: config.MEMORY_GUARD_PRESSURE_PERCENT,
         criticalPercent: config.MEMORY_GUARD_CRITICAL_PERCENT,
+        systemPressureActive,
         availableMemoryBytes: memory.availableMemoryBytes,
+        heapUsedBytes: before.processMemory.heapUsed,
+        heapLimitBytes,
         processRssBytes: before.processMemory.rss,
         stremioResultCacheEntries: before.streams.stremioResultCacheEntries,
         hubCloudCacheEntries: before.streams.hubCloudCacheEntries,
@@ -4281,9 +4835,14 @@ const startMemoryGuard = ({
         logger.error('memory guard restarting process before system lockup', {
           criticalStrikes,
           pressurePercent: Number(usagePercent.toFixed(1)),
+          systemPressurePercent: Number(systemUsagePercent.toFixed(1)),
+          heapPressurePercent: Number(heapUsagePercent.toFixed(1)),
+          systemPressureActive,
           restartPercent: config.MEMORY_GUARD_RESTART_PERCENT,
           availableMemoryBytes: memory.availableMemoryBytes,
-          minAvailableBytes: config.MEMORY_GUARD_MIN_AVAILABLE_MB * 1024 * 1024,
+          minAvailableBytes,
+          heapUsedBytes: before.processMemory.heapUsed,
+          heapLimitBytes,
           processRssBytes: before.processMemory.rss
         });
 
@@ -4304,6 +4863,11 @@ const startMemoryGuard = ({
 
   const timer = setInterval(runCleanup, config.MEMORY_GUARD_INTERVAL_SECONDS * 1000);
   timer.unref();
+  const emergencyTimer = setInterval(runEmergencyCheck, 250);
+  emergencyTimer.unref();
+  timer.emergencyTimer = emergencyTimer;
+  const warmupTimer = setTimeout(runCleanup, 1000);
+  warmupTimer.unref?.();
   return timer;
 };
 
@@ -4335,10 +4899,27 @@ const bootstrap = async () => {
   app.disable('x-powered-by');
   app.set('trust proxy', true);
 
+  app.use((req, _res, next) => {
+    const originalUrl = String(req.url || '');
+    const trimmedUrl = originalUrl.replace(/(?:%20|\s)+(?=$|\?)/giu, '');
+
+    if (trimmedUrl && trimmedUrl !== originalUrl) {
+      req.url = trimmedUrl;
+    }
+
+    next();
+  });
+
   const reverseProxy = config.REVERSE_PROXY_TARGET
     ? new ReverseProxyService({
       targetBaseUrl: config.REVERSE_PROXY_TARGET,
       timeoutSeconds: config.REVERSE_PROXY_TIMEOUT_SECONDS
+    })
+    : null;
+  const uptimeKumaProxy = config.UPTIME_KUMA_TARGET
+    ? createUptimeKumaProxy({
+      targetBaseUrl: config.UPTIME_KUMA_TARGET,
+      mountPath: '/status'
     })
     : null;
 
@@ -4378,6 +4959,10 @@ const bootstrap = async () => {
 
     next();
   });
+  if (uptimeKumaProxy) {
+    app.use('/status', uptimeKumaProxy.handle);
+  }
+  app.use(createMemoryFuse(streamManager));
   app.use(createBotProtection());
   app.use((req, _res, next) => {
     userTracker.trackRequest(req);
@@ -4426,9 +5011,20 @@ const bootstrap = async () => {
 
   app.get('/health', async (_req, res, next) => {
     try {
-      const cacheStats = await cacheManager.getCacheStats(torrentEngine.getActiveCachePaths());
+      const includeFullStats = _req.query?.full === '1' || _req.query?.full === 'true';
+      const includeCacheStats = (_req.query?.cache === '1' || _req.query?.cache === 'true')
+        && process.memoryUsage().heapUsed < 256 * 1024 * 1024;
+      const activeCachePaths = torrentEngine.getActiveCachePaths();
+      const cacheStats = includeCacheStats
+        ? await cacheManager.getCacheStats(activeCachePaths)
+        : null;
       const streamStats = streamManager.getStats();
       const memory = await getSystemMemorySnapshot();
+      const processMemory = process.memoryUsage();
+      const heapLimitBytes = v8.getHeapStatistics().heap_size_limit;
+      const heapUsagePercent = heapLimitBytes > 0
+        ? (processMemory.heapUsed / heapLimitBytes) * 100
+        : 0;
       const memoryUsagePercent = memory.totalMemoryBytes > 0
         ? ((memory.totalMemoryBytes - memory.availableMemoryBytes) / memory.totalMemoryBytes) * 100
         : 0;
@@ -4441,7 +5037,7 @@ const bootstrap = async () => {
       res.json({
         status: 'ok',
         uptimeSeconds: Math.round(process.uptime()),
-        activeTorrentEngines: torrentEngine.getActiveCachePaths().length,
+        activeTorrentEngines: activeCachePaths.length,
         activeStreams: streamStats.activeStreams,
         maxActiveStreams: streamStats.maxActiveStreams,
         streams: streamStats,
@@ -4450,12 +5046,20 @@ const bootstrap = async () => {
           availableMemoryBytes: memory.availableMemoryBytes,
           freeMemoryBytes: memory.freeMemoryBytes,
           usagePercent: memoryUsagePercent,
+          heapUsagePercent,
+          heapUsedBytes: processMemory.heapUsed,
+          heapLimitBytes,
+          processRssBytes: processMemory.rss,
           guardEnabled: config.MEMORY_GUARD_ENABLED,
           guardPressurePercent: config.MEMORY_GUARD_PRESSURE_PERCENT,
           guardCriticalPercent: config.MEMORY_GUARD_CRITICAL_PERCENT
         },
         users: publicUserStats,
-        cache: cacheStats,
+        cache: cacheStats || {
+          cacheDir: config.CACHE_DIR,
+          fullStats: false,
+          skippedReason: includeFullStats ? 'cache stats require ?cache=1 and low heap usage' : 'not requested'
+        },
         reverseProxy: reverseProxy
           ? {
             enabled: true,
@@ -4592,7 +5196,9 @@ const bootstrap = async () => {
   app.get('/stream/:type/:id.json', streamManager.handleStremioStreams.bind(streamManager));
   app.get('/stremio/stream/:type/:id.json', streamManager.handleStremioStreams.bind(streamManager));
   app.get('/catalog/:type/:id.json', streamManager.handleStremioCatalog.bind(streamManager));
+  app.get('/catalog/:type/:id/search=:search.json', streamManager.handleStremioCatalog.bind(streamManager));
   app.get('/stremio/catalog/:type/:id.json', streamManager.handleStremioCatalog.bind(streamManager));
+  app.get('/stremio/catalog/:type/:id/search=:search.json', streamManager.handleStremioCatalog.bind(streamManager));
   app.get('/meta/:type/:id.json', streamManager.handleStremioMeta.bind(streamManager));
   app.get('/stremio/meta/:type/:id.json', streamManager.handleStremioMeta.bind(streamManager));
   app.get('/rogplay/live/:id/playlist.m3u8', streamManager.handleRogPlayLivePlaylist.bind(streamManager));
@@ -4601,7 +5207,9 @@ const bootstrap = async () => {
   app.get('/private/:privateConfigId/stream/:type/:id.json', streamManager.handleStremioStreams.bind(streamManager));
   app.get('/private/:privateConfigId/stremio/stream/:type/:id.json', streamManager.handleStremioStreams.bind(streamManager));
   app.get('/private/:privateConfigId/catalog/:type/:id.json', streamManager.handleStremioCatalog.bind(streamManager));
+  app.get('/private/:privateConfigId/catalog/:type/:id/search=:search.json', streamManager.handleStremioCatalog.bind(streamManager));
   app.get('/private/:privateConfigId/stremio/catalog/:type/:id.json', streamManager.handleStremioCatalog.bind(streamManager));
+  app.get('/private/:privateConfigId/stremio/catalog/:type/:id/search=:search.json', streamManager.handleStremioCatalog.bind(streamManager));
   app.get('/private/:privateConfigId/meta/:type/:id.json', streamManager.handleStremioMeta.bind(streamManager));
   app.get('/private/:privateConfigId/stremio/meta/:type/:id.json', streamManager.handleStremioMeta.bind(streamManager));
   app.get('/private/:privateConfigId/preview/:type/:id.json', streamManager.handleStremioPreview.bind(streamManager));
@@ -4609,7 +5217,9 @@ const bootstrap = async () => {
   app.get('/configured/:providerConfig/stream/:type/:id.json', streamManager.handleStremioStreams.bind(streamManager));
   app.get('/configured/:providerConfig/stremio/stream/:type/:id.json', streamManager.handleStremioStreams.bind(streamManager));
   app.get('/configured/:providerConfig/catalog/:type/:id.json', streamManager.handleStremioCatalog.bind(streamManager));
+  app.get('/configured/:providerConfig/catalog/:type/:id/search=:search.json', streamManager.handleStremioCatalog.bind(streamManager));
   app.get('/configured/:providerConfig/stremio/catalog/:type/:id.json', streamManager.handleStremioCatalog.bind(streamManager));
+  app.get('/configured/:providerConfig/stremio/catalog/:type/:id/search=:search.json', streamManager.handleStremioCatalog.bind(streamManager));
   app.get('/configured/:providerConfig/meta/:type/:id.json', streamManager.handleStremioMeta.bind(streamManager));
   app.get('/configured/:providerConfig/stremio/meta/:type/:id.json', streamManager.handleStremioMeta.bind(streamManager));
   app.get('/configured/:providerConfig/preview/:type/:id.json', streamManager.handleStremioPreview.bind(streamManager));
@@ -4617,7 +5227,9 @@ const bootstrap = async () => {
   app.get('/configured/:providerConfig/:qualityConfig/stream/:type/:id.json', streamManager.handleStremioStreams.bind(streamManager));
   app.get('/configured/:providerConfig/:qualityConfig/stremio/stream/:type/:id.json', streamManager.handleStremioStreams.bind(streamManager));
   app.get('/configured/:providerConfig/:qualityConfig/catalog/:type/:id.json', streamManager.handleStremioCatalog.bind(streamManager));
+  app.get('/configured/:providerConfig/:qualityConfig/catalog/:type/:id/search=:search.json', streamManager.handleStremioCatalog.bind(streamManager));
   app.get('/configured/:providerConfig/:qualityConfig/stremio/catalog/:type/:id.json', streamManager.handleStremioCatalog.bind(streamManager));
+  app.get('/configured/:providerConfig/:qualityConfig/stremio/catalog/:type/:id/search=:search.json', streamManager.handleStremioCatalog.bind(streamManager));
   app.get('/configured/:providerConfig/:qualityConfig/meta/:type/:id.json', streamManager.handleStremioMeta.bind(streamManager));
   app.get('/configured/:providerConfig/:qualityConfig/stremio/meta/:type/:id.json', streamManager.handleStremioMeta.bind(streamManager));
   app.get('/configured/:providerConfig/:qualityConfig/preview/:type/:id.json', streamManager.handleStremioPreview.bind(streamManager));
@@ -4625,7 +5237,9 @@ const bootstrap = async () => {
   app.get('/configured/:providerConfig/:qualityConfig/:optionConfig/stream/:type/:id.json', streamManager.handleStremioStreams.bind(streamManager));
   app.get('/configured/:providerConfig/:qualityConfig/:optionConfig/stremio/stream/:type/:id.json', streamManager.handleStremioStreams.bind(streamManager));
   app.get('/configured/:providerConfig/:qualityConfig/:optionConfig/catalog/:type/:id.json', streamManager.handleStremioCatalog.bind(streamManager));
+  app.get('/configured/:providerConfig/:qualityConfig/:optionConfig/catalog/:type/:id/search=:search.json', streamManager.handleStremioCatalog.bind(streamManager));
   app.get('/configured/:providerConfig/:qualityConfig/:optionConfig/stremio/catalog/:type/:id.json', streamManager.handleStremioCatalog.bind(streamManager));
+  app.get('/configured/:providerConfig/:qualityConfig/:optionConfig/stremio/catalog/:type/:id/search=:search.json', streamManager.handleStremioCatalog.bind(streamManager));
   app.get('/configured/:providerConfig/:qualityConfig/:optionConfig/meta/:type/:id.json', streamManager.handleStremioMeta.bind(streamManager));
   app.get('/configured/:providerConfig/:qualityConfig/:optionConfig/stremio/meta/:type/:id.json', streamManager.handleStremioMeta.bind(streamManager));
   app.get('/configured/:providerConfig/:qualityConfig/:optionConfig/preview/:type/:id.json', streamManager.handleStremioPreview.bind(streamManager));
@@ -4634,6 +5248,17 @@ const bootstrap = async () => {
     res.json({
       providers: providerService.listProviders()
     });
+  });
+  app.get('/configure/adapter-providers', async (_req, res, next) => {
+    try {
+      res
+        .set('Cache-Control', 'no-store, max-age=0')
+        .json({
+          groups: await providerService.listAdapterProviderGroups()
+        });
+    } catch (error) {
+      next(error);
+    }
   });
   app.get('/aiostreams.json', (req, res) => {
     const baseUrl = getPublicBaseUrl(req).replace(/\/+$/u, '');
@@ -4676,6 +5301,7 @@ const bootstrap = async () => {
   app.get('/cache/stats', streamManager.handleCacheStats.bind(streamManager));
   app.post('/add-source', streamManager.handleAddSource.bind(streamManager));
   app.get('/torbox/webdl', streamManager.handleTorBoxWebDownload.bind(streamManager));
+  app.get('/torbox/torrent', streamManager.handleTorBoxTorrentDownload.bind(streamManager));
   app.get('/stream', streamManager.handleUnifiedStream.bind(streamManager));
   app.get('/http-stream', streamManager.handleHttpStream.bind(streamManager));
   app.get('/stream/http', streamManager.handleHttpStream.bind(streamManager));
@@ -4720,6 +5346,16 @@ const bootstrap = async () => {
       torrentConnections: config.TORRENT_CONNECTIONS
     });
   });
+  if (uptimeKumaProxy) {
+    server.on('upgrade', (req, socket, head) => {
+      if ((req.url || '').startsWith(`${uptimeKumaProxy.mountPath}/socket.io`)) {
+        uptimeKumaProxy.handleUpgrade(req, socket, head);
+        return;
+      }
+
+      socket.destroy();
+    });
+  }
   server.keepAliveTimeout = 65_000;
   server.headersTimeout = 66_000;
   const memoryGuardTimer = startMemoryGuard({
@@ -4769,6 +5405,9 @@ const bootstrap = async () => {
 
     if (memoryGuardTimer) {
       clearInterval(memoryGuardTimer);
+      if (memoryGuardTimer.emergencyTimer) {
+        clearInterval(memoryGuardTimer.emergencyTimer);
+      }
     }
 
     await torrentEngine.close();

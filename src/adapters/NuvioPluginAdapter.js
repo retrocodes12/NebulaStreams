@@ -1,5 +1,6 @@
 import vm from 'node:vm';
 import { createRequire } from 'node:module';
+import { AsyncLocalStorage } from 'node:async_hooks';
 
 import { PluginProviderAdapter } from './PluginProviderAdapter.js';
 import { normalizePluginStreams } from '../normalizers/pluginStreamNormalizer.js';
@@ -7,6 +8,8 @@ import { withTimeout } from '../utils/timeout.js';
 import { config } from '../../config.js';
 
 const require = createRequire(import.meta.url);
+const cheerio = require('cheerio');
+const pluginAbortSignalStorage = new AsyncLocalStorage();
 
 const DEFAULT_MANIFEST_URL = 'https://raw.githubusercontent.com/D3adlyRocket/All-in-One-Nuvio/refs/heads/main/manifest.json';
 const DEFAULT_RAW_BASE_URL = 'https://raw.githubusercontent.com/D3adlyRocket/All-in-One-Nuvio/refs/heads/main/';
@@ -126,6 +129,9 @@ const STABLE_PRIORITY_PLUGIN_IDS = new Set([
   'movies4u',
   'moviesdrive'
 ]);
+const isNoisyPluginConsoleMessage = (message) =>
+  /\b(?:HTTP error (?:403|404|429|no-response)|No match found|not available|Search HTML fallback also failed|Provider request cancelled|timed out|exceeded \d+ms)\b/iu
+    .test(String(message || ''));
 const SLOW_OR_NOISY_PLUGIN_IDS = new Set([
   'brazucaplay',
   'cinestream',
@@ -179,12 +185,15 @@ export class NuvioPluginAdapter extends PluginProviderAdapter {
     manifestUrl = DEFAULT_MANIFEST_URL,
     rawBaseUrl = DEFAULT_RAW_BASE_URL,
     providerOrder = DEFAULT_PROVIDER_ORDER,
-    maxProvidersPerRequest = Infinity,
-    pluginConcurrency = Number(process.env.NUVIO_PLUGIN_CONCURRENCY || 6),
-    earlyReturnStreams = Number(process.env.NUVIO_EARLY_RETURN_STREAMS || 40),
+    maxProvidersPerRequest = Number(process.env.NUVIO_MAX_PLUGIN_EXECUTIONS || 36),
+    pluginConcurrency = Number(process.env.NUVIO_PLUGIN_CONCURRENCY || 3),
+    earlyReturnStreams = Number(process.env.NUVIO_EARLY_RETURN_STREAMS || 30),
     providerTimeoutMs = 7_000,
     overallTimeoutMs = 18_000,
-    pluginFetchHeaders = null
+    pluginFetchHeaders = null,
+    manifestSources = null,
+    moduleCacheMaxEntries = Number(process.env.NUVIO_MODULE_CACHE_MAX_ENTRIES || 96),
+    metadataCacheMaxEntries = Number(process.env.NUVIO_METADATA_CACHE_MAX_ENTRIES || 500)
   }) {
     super({ id, logger });
     this.name = name;
@@ -194,18 +203,71 @@ export class NuvioPluginAdapter extends PluginProviderAdapter {
     this.rawBaseUrl = rawBaseUrl;
     this.providerOrder = providerOrder;
     this.maxProvidersPerRequest = maxProvidersPerRequest;
-    this.pluginConcurrency = Math.max(1, Number(pluginConcurrency) || 6);
-    this.earlyReturnStreams = Math.max(1, Number(earlyReturnStreams) || 40);
+    this.pluginConcurrency = Math.max(1, Number(pluginConcurrency) || 3);
+    this.earlyReturnStreams = Math.max(1, Number(earlyReturnStreams) || 30);
     this.providerTimeoutMs = providerTimeoutMs;
     this.overallTimeoutMs = overallTimeoutMs;
     this.pluginFetchHeaders = pluginFetchHeaders && typeof pluginFetchHeaders === 'object'
       ? pluginFetchHeaders
       : null;
+    this.manifestSources = Array.isArray(manifestSources)
+      ? manifestSources
+        .map((source) => ({
+          manifestUrl: String(source?.manifestUrl || '').trim(),
+          rawBaseUrl: String(source?.rawBaseUrl || rawBaseUrl || '').trim()
+        }))
+        .filter((source) => source.manifestUrl && source.rawBaseUrl)
+      : null;
     this.moduleCache = new Map();
     this.metadataCache = new Map();
+    this.moduleCacheMaxEntries = Math.max(16, Number(moduleCacheMaxEntries) || 96);
+    this.metadataCacheMaxEntries = Math.max(50, Number(metadataCacheMaxEntries) || 500);
   }
 
   async getManifest(signal = null) {
+    if (this.manifestSources?.length > 0) {
+      const settled = await Promise.allSettled(this.manifestSources.map(async (source, index) => {
+        const manifest = await this.cache.getJson(`${this.cacheNamespace}/manifest/${index}`, source.manifestUrl, {
+          signal,
+          ttlMs: 60 * 60 * 1000
+        });
+
+        return {
+          ...manifest,
+          scrapers: (Array.isArray(manifest?.scrapers) ? manifest.scrapers : [])
+            .map((scraper) => ({
+              ...scraper,
+              rawBaseUrl: source.rawBaseUrl
+            }))
+        };
+      }));
+      const manifests = settled
+        .map((result, index) => {
+          if (result.status === 'fulfilled') {
+            return result.value;
+          }
+
+          this.logger.warn?.('nuvio manifest source failed', {
+            adapter: this.id,
+            manifestUrl: this.manifestSources[index]?.manifestUrl,
+            error: result.reason?.message || String(result.reason)
+          });
+          return null;
+        })
+        .filter(Boolean);
+
+      if (manifests.length === 0) {
+        const firstError = settled.find((result) => result.status === 'rejected')?.reason;
+        throw firstError || new Error(`${this.name} manifest load failed`);
+      }
+
+      return {
+        ...(manifests[0] || {}),
+        name: this.name,
+        scrapers: manifests.flatMap((manifest) => Array.isArray(manifest?.scrapers) ? manifest.scrapers : [])
+      };
+    }
+
     return this.cache.getJson(`${this.cacheNamespace}/manifest`, this.manifestUrl, {
       signal,
       ttlMs: 60 * 60 * 1000
@@ -245,12 +307,23 @@ export class NuvioPluginAdapter extends PluginProviderAdapter {
         .filter((scraper) => !providerOrderSet.has(String(scraper.id || '').toLowerCase()))
         .sort((left, right) => this.getPluginPriority(right) - this.getPluginPriority(left))
     ];
+    const selected = this.getRequestedPluginProviderSet(request);
+    const selectedOrdered = selected
+      ? ordered.filter((scraper) => selected.has(String(scraper.id || '').toLowerCase()))
+      : ordered;
 
-    if (!Number.isFinite(this.maxProvidersPerRequest) || this.maxProvidersPerRequest <= 0) {
-      return ordered;
+    if (selected || !Number.isFinite(this.maxProvidersPerRequest) || this.maxProvidersPerRequest <= 0) {
+      return selectedOrdered;
     }
 
-    return ordered.slice(0, this.maxProvidersPerRequest);
+    return selectedOrdered.slice(0, this.maxProvidersPerRequest);
+  }
+
+  getRequestedPluginProviderSet(request) {
+    const selections = request?.pluginProviderSelections || request?.streamOptions?.pluginProviderSelections || {};
+    const selected = selections[this.id] || selections[request?.providerId] || null;
+    if (!Array.isArray(selected) || selected.length === 0) return null;
+    return new Set(selected.map((providerId) => String(providerId || '').trim().toLowerCase()).filter(Boolean));
   }
 
   getPluginPriority(plugin) {
@@ -267,11 +340,12 @@ export class NuvioPluginAdapter extends PluginProviderAdapter {
   async runPluginsWithConcurrency(plugins, request, signal, timeoutMs) {
     const results = [];
     let nextIndex = 0;
+    let stopLaunching = false;
     const workerCount = Math.min(this.pluginConcurrency, plugins.length);
     const startedAt = Date.now();
 
     const worker = async () => {
-      while (nextIndex < plugins.length && !signal?.aborted && Date.now() - startedAt < timeoutMs) {
+      while (!stopLaunching && nextIndex < plugins.length && !signal?.aborted && Date.now() - startedAt < timeoutMs) {
         const index = nextIndex;
         nextIndex += 1;
         try {
@@ -281,6 +355,7 @@ export class NuvioPluginAdapter extends PluginProviderAdapter {
           }
           const streamCount = results.reduce((count, result) => count + result.streams.length, 0);
           if (streamCount >= this.earlyReturnStreams) {
+            stopLaunching = true;
             break;
           }
         } catch {
@@ -296,7 +371,7 @@ export class NuvioPluginAdapter extends PluginProviderAdapter {
     });
 
     await Promise.race([
-      Promise.all(Array.from({ length: workerCount }, () => worker())),
+      Promise.allSettled(Array.from({ length: workerCount }, () => worker())),
       timeout
     ]);
 
@@ -316,14 +391,14 @@ export class NuvioPluginAdapter extends PluginProviderAdapter {
 
       const metadata = await this.getTmdbMetadata(request, signal);
       const rawStreams = await withTimeout(
-        () => Promise.resolve(module.getStreams(
+        (timeoutSignal) => pluginAbortSignalStorage.run(timeoutSignal, () => Promise.resolve(module.getStreams(
           String(request.tmdbId || ''),
           toNuvioMediaType(request.mediaType),
           request.season,
           request.episode,
           metadata?.title,
           metadata?.year
-        )),
+        ))),
         this.getPluginTimeoutMs(pluginId),
         `${this.name} plugin ${pluginId} timed out`
       );
@@ -355,6 +430,8 @@ export class NuvioPluginAdapter extends PluginProviderAdapter {
     const cacheKey = `${mediaType}:${tmdbId}`;
     const cached = this.metadataCache.get(cacheKey);
     if (cached && Date.now() - cached.cachedAt < 6 * 60 * 60 * 1000) {
+      this.metadataCache.delete(cacheKey);
+      this.metadataCache.set(cacheKey, cached);
       return cached.value;
     }
 
@@ -374,6 +451,7 @@ export class NuvioPluginAdapter extends PluginProviderAdapter {
       const year = String(payload.release_date || payload.first_air_date || '').slice(0, 4);
       const value = title ? { title, year } : null;
       this.metadataCache.set(cacheKey, { value, cachedAt: Date.now() });
+      this.pruneMap(this.metadataCache, this.metadataCacheMaxEntries);
       return value;
     } catch {
       return null;
@@ -420,10 +498,14 @@ export class NuvioPluginAdapter extends PluginProviderAdapter {
     const cacheKey = `${pluginId}:${filename}`;
 
     if (this.moduleCache.has(cacheKey)) {
-      return this.moduleCache.get(cacheKey);
+      const cached = this.moduleCache.get(cacheKey);
+      this.moduleCache.delete(cacheKey);
+      this.moduleCache.set(cacheKey, cached);
+      return cached;
     }
 
-    const scriptUrl = new URL(filename, this.rawBaseUrl).toString();
+    const rawBaseUrl = String(plugin.rawBaseUrl || this.rawBaseUrl || '');
+    const scriptUrl = new URL(filename, rawBaseUrl).toString();
     const script = await this.cache.getText(`${this.cacheNamespace}/scripts/${encodeURIComponent(filename)}.js`, scriptUrl, {
       signal,
       ttlMs: 6 * 60 * 60 * 1000
@@ -431,7 +513,16 @@ export class NuvioPluginAdapter extends PluginProviderAdapter {
     const loaded = this.evaluateCommonJs(script, scriptUrl);
 
     this.moduleCache.set(cacheKey, loaded);
+    this.pruneMap(this.moduleCache, this.moduleCacheMaxEntries);
     return loaded;
+  }
+
+  pruneMap(map, maxEntries) {
+    while (map.size > maxEntries) {
+      const oldestKey = map.keys().next().value;
+      if (oldestKey === undefined) return;
+      map.delete(oldestKey);
+    }
   }
 
   evaluateCommonJs(script, filename) {
@@ -451,6 +542,9 @@ export class NuvioPluginAdapter extends PluginProviderAdapter {
       URLSearchParams,
       TextDecoder,
       TextEncoder,
+      atob: (value) => Buffer.from(String(value), 'base64').toString('binary'),
+      btoa: (value) => Buffer.from(String(value), 'binary').toString('base64'),
+      cheerio,
       setTimeout,
       clearTimeout,
       setInterval,
@@ -469,12 +563,32 @@ export class NuvioPluginAdapter extends PluginProviderAdapter {
       timeout: 1_000
     });
 
+    if (!module.exports?.getStreams && typeof sandbox.getStreams === 'function') {
+      return {
+        ...module.exports,
+        getStreams: sandbox.getStreams
+      };
+    }
+
     return module.exports;
   }
 
   fetchPlugin(input, init = {}) {
+    const pluginSignal = pluginAbortSignalStorage.getStore();
     if (!this.pluginFetchHeaders) {
-      return globalThis.fetch(input, init);
+      if (!pluginSignal) {
+        return globalThis.fetch(input, init);
+      }
+
+      const nextInit = { ...(init || {}) };
+      const signals = [nextInit.signal, pluginSignal].filter(Boolean);
+      if (signals.length > 1 && AbortSignal.any) {
+        nextInit.signal = AbortSignal.any(signals);
+      } else if (signals.length === 1) {
+        nextInit.signal = signals[0];
+      }
+
+      return globalThis.fetch(input, nextInit);
     }
 
     const headers = new Headers(init?.headers || input?.headers || {});
@@ -484,10 +598,18 @@ export class NuvioPluginAdapter extends PluginProviderAdapter {
       }
     }
 
-    return globalThis.fetch(input, {
+    const nextInit = {
       ...init,
       headers
-    });
+    };
+    const signals = [nextInit.signal, pluginSignal].filter(Boolean);
+    if (signals.length > 1 && AbortSignal.any) {
+      nextInit.signal = AbortSignal.any(signals);
+    } else if (signals.length === 1) {
+      nextInit.signal = signals[0];
+    }
+
+    return globalThis.fetch(input, nextInit);
   }
 
   createPluginConsole(filename) {
@@ -505,14 +627,22 @@ export class NuvioPluginAdapter extends PluginProviderAdapter {
     return {
       log: () => {},
       info: () => {},
-      warn: (...args) => this.logger.info?.('nuvio plugin warning', {
-        pluginFile: filename,
-        message: summarize(args)
-      }),
-      error: (...args) => this.logger.info?.('nuvio plugin error', {
-        pluginFile: filename,
-        message: summarize(args)
-      })
+      warn: (...args) => {
+        const message = summarize(args);
+        if (isNoisyPluginConsoleMessage(message)) return;
+        this.logger.info?.('nuvio plugin warning', {
+          pluginFile: filename,
+          message
+        });
+      },
+      error: (...args) => {
+        const message = summarize(args);
+        if (isNoisyPluginConsoleMessage(message)) return;
+        this.logger.info?.('nuvio plugin error', {
+          pluginFile: filename,
+          message
+        });
+      }
     };
   }
 }
