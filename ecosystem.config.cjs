@@ -1,0 +1,44 @@
+module.exports = {
+  apps: [
+    {
+      name: 'nebulastreams',
+      script: 'index.js',
+      instances: 1,
+      exec_mode: 'fork',
+      time: true,
+      max_memory_restart: '900M',
+      env: {
+        NODE_ENV: 'production',
+        PORT: '3000',
+        PUBLIC_BASE_URL: 'https://nebula.work.gd',
+        MEMORY_GUARD_ENABLED: 'true',
+        MEMORY_GUARD_PRESSURE_PERCENT: '45',
+        MEMORY_GUARD_CRITICAL_PERCENT: '60',
+        MEMORY_GUARD_RESTART_PERCENT: '95',
+        PROVIDER_GLOBAL_MAX_INFLIGHT: '16',
+        PROVIDER_MAX_CONCURRENCY: '4',
+        PROVIDER_HOST_MAX_INFLIGHT: '3',
+        PROVIDER_FETCH_REQUEST_TIMEOUT_MS: '18000',
+        PROVIDER_MAINTENANCE_INTERVAL_SECONDS: '300',
+        STREMIO_FAST_PROVIDER_CONCURRENCY: '5',
+        STREMIO_FAST_PROVIDER_LIMIT: '50',
+        STREMIO_FAST_STREAM_LIMIT: '100',
+        STREMIO_FAST_EARLY_RETURN_STREAMS: '3',
+        STREMIO_FAST_MIN_COMPLETED_PROVIDERS: '3',
+        STREMIO_FAST_MAX_WAIT_MS: '13000',
+        STREMIO_QUALITY_GRACE_MS: '3000',
+        STREMIO_PREMIUM_PROVIDER_MIN_WAIT_MS: '6500',
+        STREMIO_STREAM_OVERALL_TIMEOUT_MS: '19000',
+        STREMIO_MAX_INFLIGHT_SEARCHES: '10',
+        STREMIO_INFLIGHT_SLOT_WAIT_MS: '12000',
+        STREMIO_BACKGROUND_REFRESH_CONCURRENCY: '2',
+        STREMIO_BACKGROUND_REFRESH_QUEUE_MAX: '100',
+        STREMIO_BACKGROUND_REFRESH_MAX_INFLIGHT_SEARCHES: '20',
+        STREMIO_BACKGROUND_REFRESH_MAX_PROVIDER_EXECUTIONS: '8',
+        STREAM_RESULT_EXTERNAL_CACHE_ENABLED: 'false',
+        INCLUDE_LIVE_CATALOGS: 'false',
+        VERBOSE_INFO_LOGS: 'false'
+      }
+    }
+  ]
+};

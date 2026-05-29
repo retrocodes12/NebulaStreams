@@ -5412,6 +5412,7 @@ const bootstrap = async () => {
 
     await torrentEngine.close();
     await streamManager.close();
+    await providerService.close();
     sourceRegistry.close();
     await userTracker.close();
     clearTimeout(closeActiveConnectionsTimer);

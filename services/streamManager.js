@@ -3202,6 +3202,7 @@ export class StreamManager {
     this.stremioBackgroundRefreshes = new Set();
     this.stremioBackgroundRefreshQueue = [];
     this.activeStremioBackgroundRefreshes = 0;
+    this.stremioBackgroundRefreshWakeTimer = null;
     this.stremioResultCacheDir = cacheConfig.STREMIO_RESULT_CACHE_DIR;
     this.stremioResultCacheDirReady = null;
     this.privateConfigDir = path.join(config.CACHE_DIR, 'private-configs');
@@ -3244,6 +3245,11 @@ export class StreamManager {
     if (this.popularStreamPrewarmInitialTimer) {
       clearTimeout(this.popularStreamPrewarmInitialTimer);
       this.popularStreamPrewarmInitialTimer = null;
+    }
+
+    if (this.stremioBackgroundRefreshWakeTimer) {
+      clearTimeout(this.stremioBackgroundRefreshWakeTimer);
+      this.stremioBackgroundRefreshWakeTimer = null;
     }
 
     this.stremioBackgroundRefreshQueue = [];
@@ -3421,6 +3427,39 @@ export class StreamManager {
     const providerLoad = this.getProviderLiveLoad();
     return this.stremioResultInFlight.size >= config.STREMIO_BACKGROUND_REFRESH_MAX_INFLIGHT_SEARCHES
       || providerLoad.activeProviderExecutions >= config.STREMIO_BACKGROUND_REFRESH_MAX_PROVIDER_EXECUTIONS;
+  }
+
+  scheduleStremioBackgroundRefreshWake(delayMs = 1_000) {
+    if (this.stremioBackgroundRefreshWakeTimer) {
+      return;
+    }
+
+    this.stremioBackgroundRefreshWakeTimer = setTimeout(() => {
+      this.stremioBackgroundRefreshWakeTimer = null;
+      this.runStremioBackgroundRefreshQueue();
+    }, Math.max(250, delayMs));
+    this.stremioBackgroundRefreshWakeTimer.unref?.();
+  }
+
+  pruneStaleStremioBackgroundRefreshQueue(now = Date.now()) {
+    if (this.stremioBackgroundRefreshQueue.length === 0) {
+      return 0;
+    }
+
+    const staleMs = Math.max(120_000, Math.min(900_000, config.STREMIO_STREAM_OVERALL_TIMEOUT_MS * 16));
+    const before = this.stremioBackgroundRefreshQueue.length;
+    this.stremioBackgroundRefreshQueue = this.stremioBackgroundRefreshQueue.filter((input) => {
+      const scheduledAt = Number(input?.scheduledAt || 0);
+      const isStale = scheduledAt > 0 && now - scheduledAt > staleMs;
+
+      if (isStale) {
+        this.stremioBackgroundRefreshes.delete(input.resultCacheKey);
+      }
+
+      return !isStale;
+    });
+
+    return before - this.stremioBackgroundRefreshQueue.length;
   }
 
   shouldSkipPopularPrewarm() {
@@ -4278,8 +4317,8 @@ export class StreamManager {
       ? ['movie']
       : contentSelection === 'series'
         ? ['series']
-        : ['movie', 'series', 'tv'];
-    const liveCatalogs = contentSelection === 'default' ? [
+        : (config.INCLUDE_LIVE_CATALOGS ? ['movie', 'series', 'tv'] : ['movie', 'series']);
+    const liveCatalogs = config.INCLUDE_LIVE_CATALOGS && contentSelection === 'default' ? [
       ...this.rogPlayAdapter.getLiveCatalogDefinitions(),
       ...this.germanIptvLiveAdapter.getLiveCatalogDefinitions()
     ].map((catalog) => ({
@@ -4299,19 +4338,23 @@ export class StreamManager {
       description: addonPresentation.description,
       resources: [
         'stream',
-        {
-          name: 'catalog',
-          types: ['tv'],
-          idPrefixes: ['rogplay:', 'cs-german:']
-        },
-        {
-          name: 'meta',
-          types: ['tv'],
-          idPrefixes: ['rogplay:', 'cs-german:']
-        }
+        ...(config.INCLUDE_LIVE_CATALOGS ? [
+          {
+            name: 'catalog',
+            types: ['tv'],
+            idPrefixes: ['rogplay:', 'cs-german:']
+          },
+          {
+            name: 'meta',
+            types: ['tv'],
+            idPrefixes: ['rogplay:', 'cs-german:']
+          }
+        ] : [])
       ],
       types: manifestTypes,
-      idPrefixes: ['tt', 'tmdb:', 'rogplay:', 'cs-german:'],
+      idPrefixes: config.INCLUDE_LIVE_CATALOGS
+        ? ['tt', 'tmdb:', 'rogplay:', 'cs-german:']
+        : ['tt', 'tmdb:'],
       catalogs: liveCatalogs,
       behaviorHints: {
         configurable: addonPresentation.configurable,
@@ -4357,10 +4400,17 @@ export class StreamManager {
       return;
     }
 
-    const overallTimeoutMs = Math.max(
+    const clientUserAgent = String(req.get?.('user-agent') || '').toLowerCase();
+    const isAioStreamsClient = /\baiostreams\b/u.test(clientUserAgent);
+    const isShortDeadlineClient = /\b(?:nuvio|stremio-apple|stremioshell|strmr|fusionapp|ktor-client|okhttp)\b/u
+      .test(clientUserAgent);
+    const baseOverallTimeoutMs = Math.max(
       config.STREMIO_STREAM_OVERALL_TIMEOUT_MS,
       config.STREMIO_FAST_MAX_WAIT_MS + 5_000
     );
+    const overallTimeoutMs = isAioStreamsClient
+      ? Math.max(baseOverallTimeoutMs, 28_500)
+      : baseOverallTimeoutMs;
     const requestAbortController = new AbortController();
     allowHighFanoutAbortSignal(requestAbortController.signal);
     const setResponseHeader = (name, value) => {
@@ -4481,23 +4531,22 @@ export class StreamManager {
       const privateProviderSettingsHash = getPrivateProviderSettingsHash(privateProviderSettings);
       const isConfiguredRequest = String(req.path || '').startsWith('/configured/')
         || String(req.path || '').startsWith('/private/');
-      const clientUserAgent = String(req.get?.('user-agent') || '').toLowerCase();
-      const isShortDeadlineClient = /\b(?:aiostreams|nuvio|stremio-apple|stremioshell|strmr|fusionapp|ktor-client|okhttp)\b/u
-        .test(clientUserAgent);
       const hasExplicitProviderConfig = isConfiguredRequest && requestedProviders.length > 0;
       const hasOnlyNuvioProviders = hasExplicitProviderConfig
         && requestedProviders.every((providerId) => String(providerId || '').startsWith('nuvio'));
       const routeSoftDeadlineMs = Math.max(5_000, Math.min(
         overallTimeoutMs - 500,
-        isShortDeadlineClient && hasOnlyNuvioProviders
-          ? 8_500
-          : isShortDeadlineClient && hasExplicitProviderConfig
-            ? 12_500
-          : isShortDeadlineClient
-            ? 11_500
-            : hasExplicitProviderConfig
-              ? 13_500
-              : overallTimeoutMs - 500
+        isAioStreamsClient
+          ? 27_000
+          : isShortDeadlineClient && hasOnlyNuvioProviders
+            ? 8_500
+            : isShortDeadlineClient && hasExplicitProviderConfig
+              ? 12_500
+              : isShortDeadlineClient
+                ? 11_500
+                : hasExplicitProviderConfig
+                  ? 13_500
+                  : overallTimeoutMs - 500
       ));
       const bypassStremioResultCache = (requestedProviders.length === 1 && requestedProviders[0] === 'allyoucanwatch')
         || streamOptions.torboxOnlyStreams;
@@ -4712,38 +4761,73 @@ export class StreamManager {
       return;
     }
 
-    if (this.shouldSkipBackgroundRefresh()) {
+    if (this.stremioBackgroundRefreshes.has(input.resultCacheKey) || this.stremioResultInFlight.has(input.resultCacheKey)) {
       return;
     }
 
-    if (this.stremioBackgroundRefreshes.has(input.resultCacheKey) || this.stremioResultInFlight.has(input.resultCacheKey)) {
-      return;
+    const staleDropped = this.pruneStaleStremioBackgroundRefreshQueue();
+    if (staleDropped > 0) {
+      logger.warn('stale stremio background refreshes pruned', {
+        staleDropped,
+        queueSize: this.stremioBackgroundRefreshQueue.length
+      });
     }
 
     const trackedCount = this.stremioBackgroundRefreshes.size;
 
     if (trackedCount >= config.STREMIO_BACKGROUND_REFRESH_QUEUE_MAX) {
-      logger.warn('stremio background refresh skipped because queue is full', {
+      const dropped = this.stremioBackgroundRefreshQueue.shift();
+      if (!dropped) {
+        logger.warn('stremio background refresh queue full with active refreshes; deferred new refresh', {
+          activeRefreshes: this.activeStremioBackgroundRefreshes,
+          maxQueue: config.STREMIO_BACKGROUND_REFRESH_QUEUE_MAX,
+          tmdbId: input.tmdbId,
+          mediaType: input.parsed?.mediaType
+        });
+        this.scheduleStremioBackgroundRefreshWake(1_000);
+        return;
+      }
+
+      if (dropped?.resultCacheKey) {
+        this.stremioBackgroundRefreshes.delete(dropped.resultCacheKey);
+      }
+      logger.warn('stremio background refresh queue full; replaced oldest queued refresh', {
         queueSize: this.stremioBackgroundRefreshQueue.length,
         activeRefreshes: this.activeStremioBackgroundRefreshes,
         maxQueue: config.STREMIO_BACKGROUND_REFRESH_QUEUE_MAX,
+        droppedTmdbId: dropped?.tmdbId,
+        droppedMediaType: dropped?.parsed?.mediaType,
         tmdbId: input.tmdbId,
         mediaType: input.parsed?.mediaType
       });
-      return;
     }
 
     const { signal: _signal, ...backgroundInput } = input;
+    backgroundInput.scheduledAt = Date.now();
     this.stremioBackgroundRefreshes.add(input.resultCacheKey);
     this.stremioBackgroundRefreshQueue.push(backgroundInput);
     this.runStremioBackgroundRefreshQueue();
   }
 
   runStremioBackgroundRefreshQueue() {
+    this.pruneStaleStremioBackgroundRefreshQueue();
+
+    if (this.shouldSkipBackgroundRefresh()) {
+      if (this.stremioBackgroundRefreshQueue.length > 0) {
+        this.scheduleStremioBackgroundRefreshWake(this.isLoadShedding() ? 2_500 : 1_000);
+      }
+      return;
+    }
+
     while (
       this.activeStremioBackgroundRefreshes < config.STREMIO_BACKGROUND_REFRESH_CONCURRENCY &&
       this.stremioBackgroundRefreshQueue.length > 0
     ) {
+      if (this.shouldSkipBackgroundRefresh()) {
+        this.scheduleStremioBackgroundRefreshWake(this.isLoadShedding() ? 2_500 : 1_000);
+        break;
+      }
+
       const input = this.stremioBackgroundRefreshQueue.shift();
       this.activeStremioBackgroundRefreshes += 1;
 

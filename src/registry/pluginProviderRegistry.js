@@ -190,6 +190,12 @@ export class PluginProviderRegistry {
       ['r4-asian-drama-movies', new R4AsianDramaMoviesAdapter({ logger })],
       ['r5-plugin', new R5PluginAdapter({ logger })],
       ['streamrip-plugin', new StreamripPluginAdapter({ logger })],
+      ['pstream', new PStreamPluginAdapter({
+        id: 'pstream',
+        name: 'PStream Site',
+        pluginName: 'PStream',
+        logger
+      })],
       ['pstream-plugin', new PStreamPluginAdapter({ logger })],
       ['scrapling', new ScraplingServiceAdapter({ logger })],
       ['rogplay', rogPlayAdapter]
@@ -274,6 +280,13 @@ export class PluginProviderRegistry {
         kind: 'plugin-adapter',
         adapterId: 'streamrip-plugin',
         hostKey: 'plugin:streamrip-plugin'
+      },
+      {
+        id: 'pstream',
+        label: 'PStream Site',
+        kind: 'plugin-adapter',
+        adapterId: 'pstream',
+        hostKey: 'plugin:pstream'
       },
       {
         id: 'pstream-plugin',

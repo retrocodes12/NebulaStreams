@@ -6,13 +6,24 @@ import { normalizePluginStreams } from '../normalizers/pluginStreamNormalizer.js
 
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const DEFAULT_SOURCE_ORDER = Object.freeze([
-  'vidlink',
   'vidrock',
-  'fsharetv',
-  'pelisplushd',
+  'vidlink',
   'ridomovies',
-  'rgshows'
+  'fsharetv',
+  'rgshows',
+  'animekai',
+  'lookmovie',
+  'movies4f',
+  'pelisplushd',
+  'tugaflix',
+  'fedapi',
+  'fedapidb',
+  'ee3'
 ]);
+const TOKEN_REQUIRED_SOURCE_IDS = new Set(['fedapi', 'fedapidb', 'ee3']);
+const INCLUDE_TOKEN_REQUIRED_SOURCES_BY_DEFAULT = String(process.env.PSTREAM_PLUGIN_INCLUDE_TOKEN_SOURCES || '')
+  .trim()
+  .toLowerCase() === 'true';
 
 const toInteger = (value) => {
   const parsed = Number.parseInt(value, 10);
@@ -100,15 +111,20 @@ const buildFetchWithAbort = (parentSignal) => async (url, options = {}) => {
 
 export class PStreamPluginAdapter extends PluginProviderAdapter {
   constructor({
+    id = 'pstream-plugin',
+    name = 'P-Stream plugin',
+    pluginName = 'P-Stream',
     logger = console,
     timeoutMs = Number(process.env.PSTREAM_PLUGIN_TIMEOUT_MS || 18_000),
-    sourceLimit = Number(process.env.PSTREAM_PLUGIN_SOURCE_LIMIT || DEFAULT_SOURCE_ORDER.length),
-    sourceConcurrency = Number(process.env.PSTREAM_PLUGIN_SOURCE_CONCURRENCY || 2),
+    sourceLimit = Number(process.env.PSTREAM_PLUGIN_SOURCE_LIMIT || 10),
+    sourceConcurrency = Number(process.env.PSTREAM_PLUGIN_SOURCE_CONCURRENCY || 3),
     embedConcurrency = Number(process.env.PSTREAM_PLUGIN_EMBED_CONCURRENCY || 3),
     maxEmbedsPerSource = Number(process.env.PSTREAM_PLUGIN_MAX_EMBEDS_PER_SOURCE || 4),
-    maxStreams = Number(process.env.PSTREAM_PLUGIN_MAX_STREAMS || 20)
+    maxStreams = Number(process.env.PSTREAM_PLUGIN_MAX_STREAMS || 32)
   } = {}) {
-    super({ id: 'pstream-plugin', logger });
+    super({ id, logger });
+    this.name = name;
+    this.pluginName = pluginName;
     this.timeoutMs = Math.max(8_000, timeoutMs || 18_000);
     this.sourceLimit = Math.max(1, sourceLimit || 6);
     this.sourceConcurrency = Math.max(1, sourceConcurrency || 3);
@@ -143,7 +159,7 @@ export class PStreamPluginAdapter extends PluginProviderAdapter {
 
     return {
       id: this.id,
-      name: 'P-Stream plugin',
+      name: this.name,
       providers
     };
   }
@@ -194,7 +210,10 @@ export class PStreamPluginAdapter extends PluginProviderAdapter {
       .filter((sourceId) => availableIds.has(sourceId));
     const ordered = selected.length > 0
       ? selected
-      : DEFAULT_SOURCE_ORDER.filter((sourceId) => availableIds.has(sourceId));
+      : DEFAULT_SOURCE_ORDER.filter((sourceId) =>
+        availableIds.has(sourceId)
+        && (INCLUDE_TOKEN_REQUIRED_SOURCES_BY_DEFAULT || !TOKEN_REQUIRED_SOURCE_IDS.has(sourceId))
+      );
     const sourceIds = [...new Set(ordered)].slice(0, this.sourceLimit);
 
     const sourceResults = await this.runLimited(sourceIds, this.sourceConcurrency, async (sourceId) => {
@@ -263,23 +282,23 @@ export class PStreamPluginAdapter extends PluginProviderAdapter {
     return normalizePluginStreams(rawStreams.slice(0, this.maxStreams), {
       adapterId: this.id,
       pluginId: 'p-stream',
-      pluginName: 'P-Stream'
+      pluginName: this.pluginName
     }).map((stream) => {
       const sourceId = normalizeSourceId(stream.source || stream.pluginProviderName || 'p-stream');
-      const sourceLabel = stream.sourceSite && stream.sourceSite !== 'P-Stream'
+      const sourceLabel = stream.sourceSite && stream.sourceSite !== this.pluginName
         ? stream.sourceSite
         : (stream.source || sourceId);
       return {
         ...stream,
         provider: this.id,
-        sourceProvider: `pstream-plugin:${sourceId}`,
+        sourceProvider: `${this.id}:${sourceId}`,
         pluginProvider: sourceId,
         pluginProviderName: sourceLabel,
         sourceSite: sourceLabel,
-        name: `P-Stream ${sourceLabel} ${stream.quality || 'Unknown'}`.trim(),
+        name: `${this.pluginName} ${sourceLabel} ${stream.quality || 'Unknown'}`.trim(),
         behaviorHints: {
           ...(stream.behaviorHints || {}),
-          bingeGroup: `pstream-plugin:${sourceId}`
+          bingeGroup: `${this.id}:${sourceId}`
         }
       };
     });
@@ -287,7 +306,7 @@ export class PStreamPluginAdapter extends PluginProviderAdapter {
 
   getSelectedSourceIds(request) {
     const selections = request.streamOptions?.pluginProviderSelections;
-    const raw = selections?.[this.id] || selections?.pstream || selections?.['p-stream'];
+    const raw = selections?.[this.id] || selections?.pstream || selections?.['p-stream'] || selections?.['pstream-plugin'];
     return (Array.isArray(raw) ? raw : [])
       .map((entry) => normalizeSourceId(entry))
       .filter(Boolean);
@@ -322,7 +341,7 @@ export class PStreamPluginAdapter extends PluginProviderAdapter {
       headers,
       behaviorHints: {
         ...(headers ? { proxyHeaders: { request: headers } } : {}),
-        bingeGroup: `pstream-plugin:${sourceId}:${embedId || 'direct'}`
+        bingeGroup: `${this.id}:${sourceId}:${embedId || 'direct'}`
       }
     };
 
@@ -330,7 +349,7 @@ export class PStreamPluginAdapter extends PluginProviderAdapter {
       return [{
         ...common,
         url: stream.playlist,
-        name: `P-Stream ${sourceLabel} HLS`,
+        name: `${this.pluginName} ${sourceLabel} HLS`,
         title: `${sourceLabel} HLS`,
         quality: 'Unknown'
       }];
@@ -345,7 +364,7 @@ export class PStreamPluginAdapter extends PluginProviderAdapter {
       .map(([quality, file]) => ({
         ...common,
         url: file.url,
-        name: `P-Stream ${sourceLabel} ${mapQuality(quality)}`.trim(),
+        name: `${this.pluginName} ${sourceLabel} ${mapQuality(quality)}`.trim(),
         title: sourceLabel,
         quality: mapQuality(quality),
         behaviorHints: {
@@ -444,7 +463,7 @@ export class PStreamPluginAdapter extends PluginProviderAdapter {
         signal,
         headers: {
           accept: 'application/json',
-          'user-agent': 'NebulaStreams/1.0 (+pstream-plugin)'
+          'user-agent': `NebulaStreams/1.0 (+${this.id})`
         }
       });
       if (!response.ok) return null;
