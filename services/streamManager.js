@@ -382,6 +382,22 @@ const HIGH_VALUE_CACHE_PROVIDERS = new Set(['4khdhub', 'scrapling-4khdhub', '4kh
 const HIGH_VALUE_CACHE_PATTERN = /\b(4khdhub|hdhub|hubcloud|hub cloud)\b/iu;
 const LAST_GOOD_PRIMARY_PROVIDERS = new Set(['4khdhub', 'scrapling 4khdhub', '4khdhub tv', 'hdhub4u', 'uhdmovies']);
 const LAST_GOOD_SECONDARY_PROVIDERS = new Set(['vidsrc', 'vixsrc', 'vidlink', 'moviebox', 'cinestream', 'streamflix']);
+const STANDALONE_FAST_PASS_PROVIDER_ORDER = Object.freeze([
+  'moviebox',
+  'vidlink',
+  'videasy',
+  'cinestream',
+  'showbox',
+  'vixsrc',
+  'streamflix',
+  'streamflix_eng',
+  'netmirror',
+  'vidsrc',
+  'multivid',
+  'playimdb',
+  'playimdb_v2',
+  'fmovies'
+]);
 const TORBOX_DEFAULT_PROVIDER_ORDER = Object.freeze([
   'torrent-scraper',
   'streamrip-plugin',
@@ -4409,8 +4425,8 @@ export class StreamManager {
       config.STREMIO_FAST_MAX_WAIT_MS + 5_000
     );
     const overallTimeoutMs = isAioStreamsClient
-      ? Math.max(baseOverallTimeoutMs, 28_500)
-      : baseOverallTimeoutMs;
+      ? Math.max(baseOverallTimeoutMs, 28_000)
+      : Math.min(baseOverallTimeoutMs, isShortDeadlineClient ? 11_500 : 13_500);
     const requestAbortController = new AbortController();
     allowHighFanoutAbortSignal(requestAbortController.signal);
     const setResponseHeader = (name, value) => {
@@ -4418,10 +4434,6 @@ export class StreamManager {
         res.setHeader(name, value);
       }
     };
-    res.locals.nebulaStremioKeepaliveStartTimer = setTimeout(() => {
-      this.startStremioResponseKeepalive(res);
-    }, 3_500);
-    res.locals.nebulaStremioKeepaliveStartTimer.unref?.();
     const abortActiveSearch = (message) => {
       if (!requestAbortController.signal.aborted) {
         requestAbortController.abort(createHttpError(499, message));
@@ -4537,7 +4549,7 @@ export class StreamManager {
       const routeSoftDeadlineMs = Math.max(5_000, Math.min(
         overallTimeoutMs - 500,
         isAioStreamsClient
-          ? 27_000
+          ? 27_500
           : isShortDeadlineClient && hasOnlyNuvioProviders
             ? 8_500
             : isShortDeadlineClient && hasExplicitProviderConfig
@@ -4652,6 +4664,60 @@ export class StreamManager {
         clearTimeout(overallTimeout);
         this.sendStremioStreamsResponse(res, cachedResult.streams);
         return;
+      }
+
+      const standaloneFastPassProviders = (() => {
+        if (isAioStreamsClient || bypassStremioResultCache) {
+          return null;
+        }
+
+        const requestedSet = requestedProviders.length > 0
+          ? new Set(requestedProviders.map((providerId) => String(providerId || '').toLowerCase()))
+          : null;
+        const selected = STANDALONE_FAST_PASS_PROVIDER_ORDER.filter((providerId) =>
+          !requestedSet || requestedSet.has(providerId)
+        );
+
+        if (selected.length < 2) {
+          return null;
+        }
+
+        return selected;
+      })();
+
+      if (standaloneFastPassProviders) {
+        this.scheduleStremioBackgroundRefresh(buildInput);
+        const standaloneFastPassController = new AbortController();
+        const standaloneFastPassSignals = [requestAbortController.signal, standaloneFastPassController.signal].filter(Boolean);
+        const standaloneFastPassSignal = standaloneFastPassSignals.length > 1 && AbortSignal.any
+          ? AbortSignal.any(standaloneFastPassSignals)
+          : standaloneFastPassController.signal;
+        const standaloneTimeoutSentinel = { timedOut: true };
+        const standaloneStreams = await withTimeoutFallback(
+          this.buildStremioStreams({
+            ...buildInput,
+            requestedProviders: standaloneFastPassProviders,
+            signal: standaloneFastPassSignal,
+            cacheResult: false
+          }),
+          Math.max(5_000, Math.min(routeSoftDeadlineMs, 8_500)),
+          standaloneTimeoutSentinel
+        );
+        standaloneFastPassController.abort(createHttpError(499, 'Standalone fast-pass finished'));
+
+        if (standaloneStreams !== standaloneTimeoutSentinel && Array.isArray(standaloneStreams) && standaloneStreams.length > 0) {
+          setResponseHeader('X-NebulaStreams-Mode', 'standalone-fast-pass');
+          clearTimeout(overallTimeout);
+          this.sendStremioStreamsResponse(res, standaloneStreams);
+          return;
+        }
+
+        logger.warn('standalone fast-pass returned no streams before client deadline', {
+          tmdbId,
+          mediaType: parsed.mediaType,
+          providerCount: standaloneFastPassProviders.length,
+          timedOut: standaloneStreams === standaloneTimeoutSentinel
+        });
       }
 
       let stremioStreams;
