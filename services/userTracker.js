@@ -10,7 +10,7 @@ const { copyFile, mkdir, readFile, rename, rm, writeFile } = fsPromises;
 const FLUSH_DELAY_MS = 5000;
 const USERS_FILE = path.join(config.CACHE_DIR, 'analytics', 'users.json');
 const USERS_BACKUP_FILE = `${USERS_FILE}.bak`;
-const USERS_TEMP_FILE = `${USERS_FILE}.tmp`;
+const USERS_TEMP_FILE = `${USERS_FILE}.${process.pid}.tmp`;
 const BOT_USER_AGENT_PATTERN = /\b(bot|crawler|spider|validator|preview|headless|curl|wget|python-requests|go-http-client|facebookexternalhit|slackbot|discordbot)\b/i;
 
 const nowIso = () => new Date().toISOString();

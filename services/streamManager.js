@@ -10,6 +10,9 @@ import { enhanceMagnet, extractInfoHash, isVideoFile } from '../utils/magnet.js'
 import { logger } from '../utils/logger.js';
 import { RogPlayAdapter } from '../providers/rogplay/RogPlayAdapter.js';
 import { GermanIptvLiveAdapter } from '../src/adapters/GermanIptvLiveAdapter.js';
+import { FamelackLiveAdapter } from '../src/adapters/FamelackLiveAdapter.js';
+import { XtreamCodesAdapter, hasXtreamCredentials } from '../src/adapters/XtreamCodesAdapter.js';
+import { StalkerPortalAdapter, hasStalkerCredentials } from '../src/adapters/StalkerPortalAdapter.js';
 
 const { mkdir, readFile, readdir, rename, rm, writeFile } = fsPromises;
 
@@ -340,7 +343,17 @@ const DEFAULT_STREAM_OPTIONS = Object.freeze({
 const DEFAULT_PRIVATE_PROVIDER_SETTINGS = Object.freeze({
   febboxUiCookie: null,
   showboxOssGroup: null,
-  torboxApiKey: null
+  torboxApiKey: null,
+  xtreamServerUrl: null,
+  xtreamUsername: null,
+  xtreamPassword: null,
+  stalkerPortalUrl: null,
+  stalkerMacAddress: null,
+  stalkerStbType: null,
+  stalkerSerialNumber: null,
+  stalkerDeviceId: null,
+  stalkerDeviceId2: null,
+  famelackLiveEnabled: false
 });
 const PRIVATE_CONFIG_VERSION = 1;
 const PRIVATE_PROVIDER_COOKIE_MAX_LENGTH = 4096;
@@ -1916,13 +1929,41 @@ const getConfiguredProxyUrlForStream = (stream, customProxyUrl = null) => {
 const normalizePrivateProviderSettings = (value) => ({
   febboxUiCookie: normalizePrivateCookie(value?.febboxUiCookie),
   showboxOssGroup: normalizePrivateCookie(value?.showboxOssGroup),
-  torboxApiKey: normalizePrivateCookie(value?.torboxApiKey)
+  torboxApiKey: normalizePrivateCookie(value?.torboxApiKey),
+  xtreamServerUrl: normalizePrivateCookie(value?.xtreamServerUrl),
+  xtreamUsername: normalizePrivateCookie(value?.xtreamUsername),
+  xtreamPassword: normalizePrivateCookie(value?.xtreamPassword),
+  stalkerPortalUrl: normalizePrivateCookie(value?.stalkerPortalUrl),
+  stalkerMacAddress: normalizePrivateCookie(value?.stalkerMacAddress),
+  stalkerStbType: normalizePrivateCookie(value?.stalkerStbType),
+  stalkerSerialNumber: normalizePrivateCookie(value?.stalkerSerialNumber),
+  stalkerDeviceId: normalizePrivateCookie(value?.stalkerDeviceId),
+  stalkerDeviceId2: normalizePrivateCookie(value?.stalkerDeviceId2),
+  famelackLiveEnabled: Boolean(value?.famelackLiveEnabled)
 });
 
 const getPrivateProviderSettingsHash = (privateProviderSettings) => {
   const normalized = normalizePrivateProviderSettings(privateProviderSettings);
 
-  if (!normalized.febboxUiCookie && !normalized.showboxOssGroup && !normalized.torboxApiKey) {
+  if (
+    !normalized.febboxUiCookie &&
+    !normalized.showboxOssGroup &&
+    !normalized.torboxApiKey &&
+    !hasXtreamCredentials({
+      serverUrl: normalized.xtreamServerUrl,
+      username: normalized.xtreamUsername,
+      password: normalized.xtreamPassword
+    }) &&
+    !hasStalkerCredentials({
+      portalUrl: normalized.stalkerPortalUrl,
+      macAddress: normalized.stalkerMacAddress,
+      stbType: normalized.stalkerStbType,
+      serialNumber: normalized.stalkerSerialNumber,
+      deviceId: normalized.stalkerDeviceId,
+      deviceId2: normalized.stalkerDeviceId2
+    }) &&
+    !normalized.famelackLiveEnabled
+  ) {
     return null;
   }
 
@@ -3217,6 +3258,7 @@ export class StreamManager {
     this.stremioResultInFlight = new Map();
     this.stremioBackgroundRefreshes = new Set();
     this.stremioBackgroundRefreshQueue = [];
+    this.stremioDelayedRefreshTimers = new Map();
     this.activeStremioBackgroundRefreshes = 0;
     this.stremioBackgroundRefreshWakeTimer = null;
     this.stremioResultCacheDir = cacheConfig.STREMIO_RESULT_CACHE_DIR;
@@ -3238,6 +3280,9 @@ export class StreamManager {
     this.popularStreamPrewarmLastResultCount = 0;
     this.rogPlayAdapter = new RogPlayAdapter({ logger });
     this.germanIptvLiveAdapter = new GermanIptvLiveAdapter({ logger });
+    this.famelackLiveAdapter = new FamelackLiveAdapter({ logger });
+    this.xtreamCodesAdapter = new XtreamCodesAdapter({ logger });
+    this.stalkerPortalAdapter = new StalkerPortalAdapter({ logger });
   }
 
   async initialize() {
@@ -3270,6 +3315,10 @@ export class StreamManager {
 
     this.stremioBackgroundRefreshQueue = [];
     this.stremioBackgroundRefreshes.clear();
+    for (const timer of this.stremioDelayedRefreshTimers.values()) {
+      clearTimeout(timer.timeout);
+    }
+    this.stremioDelayedRefreshTimers.clear();
     for (const request of this.stremioResultInFlight.values()) {
       request?.controller?.abort?.(createHttpError(499, 'Stream manager closing'));
     }
@@ -3291,6 +3340,7 @@ export class StreamManager {
       stremioBackgroundRefreshActive: this.activeStremioBackgroundRefreshes,
       stremioBackgroundRefreshQueued: this.stremioBackgroundRefreshQueue.length,
       stremioBackgroundRefreshTracked: this.stremioBackgroundRefreshes.size,
+      stremioDelayedRefreshTimers: this.stremioDelayedRefreshTimers.size,
       maxStremioBackgroundRefreshQueue: config.STREMIO_BACKGROUND_REFRESH_QUEUE_MAX,
       redisStreamResultCache: this.redisStreamResultCache.getStats(),
       hubCloudCacheEntries: this.hubCloudCache.size,
@@ -3315,6 +3365,10 @@ export class StreamManager {
     this.loadSheddingReason = reason || 'memory-pressure';
     this.stremioBackgroundRefreshQueue = [];
     this.stremioBackgroundRefreshes.clear();
+    for (const timer of this.stremioDelayedRefreshTimers.values()) {
+      clearTimeout(timer.timeout);
+    }
+    this.stremioDelayedRefreshTimers.clear();
   }
 
   isLoadShedding() {
@@ -3741,6 +3795,27 @@ export class StreamManager {
     };
   }
 
+  getRequestedXtreamCredentials(req) {
+    const settings = this.getRequestedPrivateProviderSettings(req);
+    return {
+      serverUrl: settings.xtreamServerUrl,
+      username: settings.xtreamUsername,
+      password: settings.xtreamPassword
+    };
+  }
+
+  getRequestedStalkerCredentials(req) {
+    const settings = this.getRequestedPrivateProviderSettings(req);
+    return {
+      portalUrl: settings.stalkerPortalUrl,
+      macAddress: settings.stalkerMacAddress,
+      stbType: settings.stalkerStbType,
+      serialNumber: settings.stalkerSerialNumber,
+      deviceId: settings.stalkerDeviceId,
+      deviceId2: settings.stalkerDeviceId2
+    };
+  }
+
   async createPrivateConfig(payload) {
     const normalized = this.normalizePrivateConfigRecord(payload);
 
@@ -3761,7 +3836,7 @@ export class StreamManager {
       .slice(0, 24);
 
     await this.ensurePrivateConfigDir();
-    await writeFile(this.getPrivateConfigPath(configId), JSON.stringify(normalized));
+    await writeFile(this.getPrivateConfigPath(configId), JSON.stringify(normalized), { mode: 0o600 });
     this.privateConfigStore.set(configId, normalized);
 
     return {
@@ -4329,23 +4404,89 @@ export class StreamManager {
     const baseUrl = getStremioRequestBaseUrl(req);
     const addonPresentation = this.getAddonPresentation(req);
     const contentSelection = normalizeContentSelection(addonPresentation.streamOptions?.contentSelection);
+    const xtreamCredentials = this.getRequestedXtreamCredentials(req);
+    const xtreamEnabled = hasXtreamCredentials(xtreamCredentials);
+    const stalkerCredentials = this.getRequestedStalkerCredentials(req);
+    const stalkerEnabled = hasStalkerCredentials(stalkerCredentials);
+    const famelackEnabled = Boolean(this.getRequestedPrivateProviderSettings(req).famelackLiveEnabled);
+    const xtreamCatalogDefinitions = xtreamEnabled
+      ? await Promise.all([
+        this.xtreamCodesAdapter.getCategories(xtreamCredentials, 'live', AbortSignal.timeout(8_000)).catch(() => []),
+        this.xtreamCodesAdapter.getCategories(xtreamCredentials, 'vod', AbortSignal.timeout(8_000)).catch(() => []),
+        this.xtreamCodesAdapter.getCategories(xtreamCredentials, 'series', AbortSignal.timeout(8_000)).catch(() => [])
+      ]).then(([live, vod, series]) =>
+        this.xtreamCodesAdapter.getCompactCatalogDefinitions({ live, vod, series }, 40)
+      ).catch((error) => {
+        logger.warn('xtream compact manifest catalog load failed', {
+          error: error?.message || String(error)
+        });
+        return this.xtreamCodesAdapter.getCompactCatalogDefinitions();
+      })
+      : [];
+    const stalkerCatalogDefinitions = stalkerEnabled
+      ? await this.stalkerPortalAdapter.getCategories(stalkerCredentials, AbortSignal.timeout(8_000)).then((categories) =>
+        this.stalkerPortalAdapter.getCompactCatalogDefinitions(categories, 40)
+      ).catch((error) => {
+        logger.warn('stalker compact manifest catalog load failed', {
+          error: error?.message || String(error)
+        });
+        return this.stalkerPortalAdapter.getCompactCatalogDefinitions();
+      })
+      : [];
+    const famelackCatalogDefinitions = famelackEnabled
+      ? await this.famelackLiveAdapter.getTopCountries(40, AbortSignal.timeout(8_000)).then((countries) =>
+        this.famelackLiveAdapter.getLiveCatalogDefinitions(countries)
+      ).catch((error) => {
+        logger.warn('famelack compact manifest catalog load failed', {
+          error: error?.message || String(error)
+        });
+        return this.famelackLiveAdapter.getLiveCatalogDefinitions();
+      })
+      : [];
     const manifestTypes = contentSelection === 'movie'
       ? ['movie']
       : contentSelection === 'series'
         ? ['series']
-        : (config.INCLUDE_LIVE_CATALOGS ? ['movie', 'series', 'tv'] : ['movie', 'series']);
-    const liveCatalogs = config.INCLUDE_LIVE_CATALOGS && contentSelection === 'default' ? [
-      ...this.rogPlayAdapter.getLiveCatalogDefinitions(),
-      ...this.germanIptvLiveAdapter.getLiveCatalogDefinitions()
-    ].map((catalog) => ({
-      type: 'tv',
-      id: catalog.id,
-      name: catalog.name,
-      extra: [
-        { name: 'skip', isRequired: false },
-        { name: 'search', isRequired: false }
-      ]
-    })) : [];
+        : ((xtreamEnabled || stalkerEnabled || famelackEnabled) ? ['movie', 'series', 'tv'] : ['movie', 'series']);
+    const xtreamCatalogs = xtreamCatalogDefinitions
+      .filter((catalog) => contentSelection === 'default' || catalog.type === contentSelection)
+      .map((catalog) => ({
+        type: catalog.type,
+        id: catalog.id,
+        name: catalog.name,
+        extra: [
+          { name: 'skip', isRequired: false },
+          { name: 'search', isRequired: false }
+        ]
+      }));
+    const stalkerCatalogs = stalkerCatalogDefinitions
+      .filter((catalog) => contentSelection === 'default' || catalog.type === contentSelection)
+      .map((catalog) => ({
+        type: catalog.type,
+        id: catalog.id,
+        name: catalog.name,
+        extra: [
+          { name: 'skip', isRequired: false },
+          { name: 'search', isRequired: false }
+        ]
+      }));
+    const famelackCatalogs = famelackCatalogDefinitions
+      .filter((catalog) => contentSelection === 'default' || catalog.type === contentSelection)
+      .map((catalog) => ({
+        type: 'tv',
+        id: catalog.id,
+        name: catalog.name,
+        extra: [
+          { name: 'skip', isRequired: false },
+          { name: 'search', isRequired: false }
+        ]
+      }));
+    const catalogResources = [
+      ...(xtreamEnabled ? ['xtream:'] : []),
+      ...(stalkerEnabled ? ['stalker:'] : []),
+      ...(famelackEnabled ? ['famelack:'] : [])
+    ];
+    const allCatalogs = [...xtreamCatalogs, ...stalkerCatalogs, ...famelackCatalogs];
 
     res.json({
       id: addonPresentation.addonId,
@@ -4354,24 +4495,24 @@ export class StreamManager {
       description: addonPresentation.description,
       resources: [
         'stream',
-        ...(config.INCLUDE_LIVE_CATALOGS ? [
+        ...(catalogResources.length > 0 ? [
           {
             name: 'catalog',
-            types: ['tv'],
-            idPrefixes: ['rogplay:', 'cs-german:']
+            types: [...new Set(allCatalogs.map((catalog) => catalog.type))],
+            idPrefixes: catalogResources
           },
           {
             name: 'meta',
-            types: ['tv'],
-            idPrefixes: ['rogplay:', 'cs-german:']
+            types: [...new Set(allCatalogs.map((catalog) => catalog.type))],
+            idPrefixes: catalogResources
           }
         ] : [])
       ],
       types: manifestTypes,
-      idPrefixes: config.INCLUDE_LIVE_CATALOGS
-        ? ['tt', 'tmdb:', 'rogplay:', 'cs-german:']
+      idPrefixes: catalogResources.length > 0
+        ? ['tt', 'tmdb:', ...catalogResources]
         : ['tt', 'tmdb:'],
-      catalogs: liveCatalogs,
+      catalogs: allCatalogs,
       behaviorHints: {
         configurable: addonPresentation.configurable,
         configurationRequired: false,
@@ -4410,6 +4551,79 @@ export class StreamManager {
         logger.warn('german iptv live stream lookup failed', {
           id: req.params.id,
           error
+        });
+        this.sendStremioStreamsResponse(res, []);
+      }
+      return;
+    }
+
+    if (this.isFamelackLiveStreamRequest(req.params.type, req.params.id)) {
+      try {
+        const famelackEnabled = Boolean(this.getRequestedPrivateProviderSettings(req).famelackLiveEnabled);
+        if (!famelackEnabled || !req.params.privateConfigId) {
+          this.sendStremioStreamsResponse(res, []);
+          return;
+        }
+
+        const streams = await this.famelackLiveAdapter.getLiveStreams(req.params.id, req.signal || null);
+        this.sendStremioStreamsResponse(res, streams);
+      } catch (error) {
+        logger.warn('famelack live stream lookup failed', {
+          id: req.params.id,
+          error: error?.message || String(error)
+        });
+        this.sendStremioStreamsResponse(res, []);
+      }
+      return;
+    }
+
+    if (this.isXtreamStreamRequest(req.params.type, req.params.id)) {
+      try {
+        const xtreamCredentials = this.getRequestedXtreamCredentials(req);
+        if (!hasXtreamCredentials(xtreamCredentials) || !req.params.privateConfigId) {
+          this.sendStremioStreamsResponse(res, []);
+          return;
+        }
+
+        const streams = await this.xtreamCodesAdapter.getStreams({
+          credentials: xtreamCredentials,
+          id: req.params.id,
+          baseUrl: getStremioRequestBaseUrl(req),
+          privateConfigId: req.params.privateConfigId
+        });
+        this.sendStremioStreamsResponse(res, streams);
+      } catch (error) {
+        logger.warn('xtream stream lookup failed', {
+          id: req.params.id,
+          type: req.params.type,
+          error: error?.message || String(error)
+        });
+        this.sendStremioStreamsResponse(res, []);
+      }
+      return;
+    }
+
+    if (this.isStalkerStreamRequest(req.params.type, req.params.id)) {
+      try {
+        const stalkerCredentials = this.getRequestedStalkerCredentials(req);
+        if (!hasStalkerCredentials(stalkerCredentials) || !req.params.privateConfigId) {
+          this.sendStremioStreamsResponse(res, []);
+          return;
+        }
+
+        const streams = await this.stalkerPortalAdapter.getStreams({
+          credentials: stalkerCredentials,
+          id: req.params.id,
+          baseUrl: getStremioRequestBaseUrl(req),
+          privateConfigId: req.params.privateConfigId,
+          signal: req.signal || null
+        });
+        this.sendStremioStreamsResponse(res, streams);
+      } catch (error) {
+        logger.warn('stalker stream lookup failed', {
+          id: req.params.id,
+          type: req.params.type,
+          error: error?.message || String(error)
         });
         this.sendStremioStreamsResponse(res, []);
       }
@@ -4686,26 +4900,19 @@ export class StreamManager {
       })();
 
       if (standaloneFastPassProviders) {
-        this.scheduleStremioBackgroundRefresh(buildInput);
-        const standaloneFastPassController = new AbortController();
-        const standaloneFastPassSignals = [requestAbortController.signal, standaloneFastPassController.signal].filter(Boolean);
-        const standaloneFastPassSignal = standaloneFastPassSignals.length > 1 && AbortSignal.any
-          ? AbortSignal.any(standaloneFastPassSignals)
-          : standaloneFastPassController.signal;
         const standaloneTimeoutSentinel = { timedOut: true };
         const standaloneStreams = await withTimeoutFallback(
           this.buildStremioStreams({
             ...buildInput,
             requestedProviders: standaloneFastPassProviders,
-            signal: standaloneFastPassSignal,
             cacheResult: false
           }),
           Math.max(5_000, Math.min(routeSoftDeadlineMs, 8_500)),
           standaloneTimeoutSentinel
         );
-        standaloneFastPassController.abort(createHttpError(499, 'Standalone fast-pass finished'));
 
         if (standaloneStreams !== standaloneTimeoutSentinel && Array.isArray(standaloneStreams) && standaloneStreams.length > 0) {
+          this.scheduleStremioBackgroundRefresh(buildInput);
           setResponseHeader('X-NebulaStreams-Mode', 'standalone-fast-pass');
           clearTimeout(overallTimeout);
           this.sendStremioStreamsResponse(res, standaloneStreams);
@@ -4873,6 +5080,29 @@ export class StreamManager {
     this.stremioBackgroundRefreshes.add(input.resultCacheKey);
     this.stremioBackgroundRefreshQueue.push(backgroundInput);
     this.runStremioBackgroundRefreshQueue();
+  }
+
+  scheduleDelayedStremioBackgroundRefresh(input, delayMs = 8_000) {
+    const resultCacheKey = input?.resultCacheKey;
+    if (!resultCacheKey) {
+      return;
+    }
+
+    const runAt = Date.now() + Math.max(250, Number(delayMs) || 0);
+    const existing = this.stremioDelayedRefreshTimers.get(resultCacheKey);
+    if (existing && existing.runAt <= runAt) {
+      return;
+    }
+    if (existing) {
+      clearTimeout(existing.timeout);
+    }
+
+    const timeout = setTimeout(() => {
+      this.stremioDelayedRefreshTimers.delete(resultCacheKey);
+      this.scheduleStremioBackgroundRefresh(input);
+    }, Math.max(250, runAt - Date.now()));
+    timeout.unref?.();
+    this.stremioDelayedRefreshTimers.set(resultCacheKey, { timeout, runAt });
   }
 
   runStremioBackgroundRefreshQueue() {
@@ -5150,21 +5380,7 @@ export class StreamManager {
           tmdbId,
           privateProviderSettings
         };
-        const refreshDelay = setTimeout(() => {
-          this.scheduleStremioBackgroundRefresh(refreshInput);
-        }, 8_000);
-        refreshDelay.unref?.();
-
-        if (parsed.mediaType === 'series') {
-          const hubRefreshDelay = setTimeout(() => {
-            this.scheduleStremioBackgroundRefresh(refreshInput);
-          }, 24_000);
-          hubRefreshDelay.unref?.();
-          const slowHubRefreshDelay = setTimeout(() => {
-            this.scheduleStremioBackgroundRefresh(refreshInput);
-          }, 34_000);
-          slowHubRefreshDelay.unref?.();
-        }
+        this.scheduleDelayedStremioBackgroundRefresh(refreshInput, 8_000);
       }
 
       if (cacheResult && shouldCacheEmptyFastResult(result) && !streamOptions.torboxOnlyStreams) {
@@ -5410,21 +5626,7 @@ export class StreamManager {
         privateProviderSettings
       };
 
-      const refreshDelay = setTimeout(() => {
-        this.scheduleStremioBackgroundRefresh(refreshInput);
-      }, 8_000);
-      refreshDelay.unref?.();
-
-      if (parsed.mediaType === 'series') {
-        const hubRefreshDelay = setTimeout(() => {
-          this.scheduleStremioBackgroundRefresh(refreshInput);
-        }, 24_000);
-        hubRefreshDelay.unref?.();
-        const slowHubRefreshDelay = setTimeout(() => {
-          this.scheduleStremioBackgroundRefresh(refreshInput);
-        }, 34_000);
-        slowHubRefreshDelay.unref?.();
-      }
+      this.scheduleDelayedStremioBackgroundRefresh(refreshInput, 8_000);
     }
 
     return stremioStreams;
@@ -5811,6 +6013,283 @@ export class StreamManager {
     }
   }
 
+  async handleValidateIptvConfig(req, res, next) {
+    try {
+      const settings = normalizePrivateProviderSettings(req.body?.privateProviderSettings || req.body || {});
+      const xtreamCredentials = {
+        serverUrl: settings.xtreamServerUrl,
+        username: settings.xtreamUsername,
+        password: settings.xtreamPassword
+      };
+      const stalkerCredentials = {
+        portalUrl: settings.stalkerPortalUrl,
+        macAddress: settings.stalkerMacAddress,
+        stbType: settings.stalkerStbType,
+        serialNumber: settings.stalkerSerialNumber,
+        deviceId: settings.stalkerDeviceId,
+        deviceId2: settings.stalkerDeviceId2
+      };
+      const result = {
+        xtream: { configured: hasXtreamCredentials(xtreamCredentials), valid: false, message: 'Not configured' },
+        stalker: { configured: hasStalkerCredentials(stalkerCredentials), valid: false, message: 'Not configured' }
+      };
+
+      if (result.xtream.configured) {
+        try {
+          await this.xtreamCodesAdapter.authenticate(xtreamCredentials, AbortSignal.timeout(10_000));
+          const [live, vod, series] = await Promise.all([
+            this.xtreamCodesAdapter.getCategories(xtreamCredentials, 'live', AbortSignal.timeout(10_000)).catch(() => []),
+            this.xtreamCodesAdapter.getCategories(xtreamCredentials, 'vod', AbortSignal.timeout(10_000)).catch(() => []),
+            this.xtreamCodesAdapter.getCategories(xtreamCredentials, 'series', AbortSignal.timeout(10_000)).catch(() => [])
+          ]);
+          result.xtream = {
+            configured: true,
+            valid: true,
+            message: 'Valid',
+            categories: {
+              live: live.length,
+              vod: vod.length,
+              series: series.length
+            }
+          };
+        } catch (error) {
+          result.xtream = {
+            configured: true,
+            valid: false,
+            message: error?.message || 'Xtream validation failed'
+          };
+        }
+      }
+
+      if (result.stalker.configured) {
+        try {
+          await this.stalkerPortalAdapter.authenticate(stalkerCredentials, AbortSignal.timeout(12_000));
+          const categories = await this.stalkerPortalAdapter.getCategories(stalkerCredentials, AbortSignal.timeout(12_000));
+          result.stalker = {
+            configured: true,
+            valid: true,
+            message: 'Valid',
+            categories: {
+              live: categories.length
+            }
+          };
+        } catch (error) {
+          result.stalker = {
+            configured: true,
+            valid: false,
+            message: error?.message || 'Stalker validation failed'
+          };
+        }
+      }
+
+      res
+        .setHeader('Cache-Control', 'no-store')
+        .json(result);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async handleXtreamStream(req, res, next) {
+    try {
+      const credentials = this.getRequestedXtreamCredentials(req);
+      if (!hasXtreamCredentials(credentials)) {
+        throw createHttpError(404, 'Xtream config not found');
+      }
+
+      const kind = String(req.params.kind || '').trim().toLowerCase();
+      if (!['live', 'movie', 'series'].includes(kind)) {
+        throw createHttpError(400, 'Invalid Xtream stream kind');
+      }
+
+      const upstreamUrl = this.xtreamCodesAdapter.getUpstreamStreamUrl(
+        credentials,
+        kind,
+        req.params.streamId,
+        req.params.extension || (kind === 'live' ? 'm3u8' : 'mp4')
+      );
+
+      res
+        .status(302)
+        .setHeader('Cache-Control', 'no-store')
+        .setHeader('Location', upstreamUrl)
+        .end();
+    } catch (error) {
+      logger.warn('xtream playback redirect failed', {
+        kind: req.params.kind,
+        streamId: req.params.streamId,
+        error: error?.message || String(error)
+      });
+      next(error);
+    }
+  }
+
+  async handleStalkerStream(req, res, next) {
+    try {
+      const credentials = this.getRequestedStalkerCredentials(req);
+      if (!hasStalkerCredentials(credentials)) {
+        throw createHttpError(404, 'Stalker config not found');
+      }
+
+      if (String(req.method || 'GET').toUpperCase() === 'HEAD') {
+        res
+          .status(200)
+          .setHeader('Cache-Control', 'no-store')
+          .setHeader('Content-Type', 'video/mp2t')
+          .setHeader('Accept-Ranges', 'none')
+          .end();
+        return;
+      }
+
+      const upstreamUrls = await this.stalkerPortalAdapter.createLinkCandidates(
+        credentials,
+        req.params.channelId,
+        req.signal || null
+      );
+
+      await this.proxyStalkerUpstream({
+        req,
+        res,
+        credentials,
+        channelId: req.params.channelId,
+        upstreamUrls,
+        fallbackToRedirect: true
+      });
+    } catch (error) {
+      logger.warn('stalker playback redirect failed', {
+        channelId: req.params.channelId,
+        error: error?.message || String(error)
+      });
+      next(error);
+    }
+  }
+
+  async handleStalkerProxyStream(req, res, next) {
+    try {
+      const credentials = this.getRequestedStalkerCredentials(req);
+      if (!hasStalkerCredentials(credentials)) {
+        throw createHttpError(404, 'Stalker config not found');
+      }
+
+      const upstreamUrl = Buffer.from(String(req.query.url || ''), 'base64url').toString('utf8');
+      if (!/^https?:\/\//iu.test(upstreamUrl)) {
+        throw createHttpError(400, 'Invalid Stalker proxy URL');
+      }
+
+      await this.proxyStalkerUpstream({
+        req,
+        res,
+        credentials,
+        channelId: req.params.channelId,
+        upstreamUrls: [upstreamUrl]
+      });
+    } catch (error) {
+      logger.warn('stalker playback proxy failed', {
+        channelId: req.params.channelId,
+        error: error?.message || String(error)
+      });
+      next(error);
+    }
+  }
+
+  async proxyStalkerUpstream({ req, res, credentials, channelId, upstreamUrls, fallbackToRedirect = false }) {
+    const headers = await this.stalkerPortalAdapter.getPlaybackHeaders(credentials, req.signal || null);
+    const requestHeaders = {
+      ...headers,
+      ...(req.headers.range ? { Range: req.headers.range } : {})
+    };
+    let response = null;
+    let selectedUrl = '';
+    let fallbackUrl = '';
+    let lastError = null;
+
+    for (const upstreamUrl of Array.isArray(upstreamUrls) ? upstreamUrls : []) {
+      fallbackUrl = upstreamUrl;
+      try {
+        const candidateResponse = await fetch(upstreamUrl, {
+          headers: requestHeaders,
+          redirect: 'follow',
+          signal: req.signal || null
+        });
+        if (candidateResponse.ok) {
+          response = candidateResponse;
+          selectedUrl = upstreamUrl;
+          break;
+        }
+        lastError = createHttpError(candidateResponse.status, `Stalker upstream HTTP ${candidateResponse.status}`);
+        await candidateResponse.body?.cancel?.().catch?.(() => {});
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    if (!response) {
+      if (fallbackToRedirect && fallbackUrl && !res.headersSent) {
+        logger.warn('stalker proxy failed; falling back to direct upstream redirect', {
+          channelId,
+          error: lastError?.message || String(lastError || 'unknown')
+        });
+        res
+          .status(302)
+          .setHeader('Cache-Control', 'no-store')
+          .setHeader('Location', fallbackUrl)
+          .end();
+        return;
+      }
+      throw lastError || createHttpError(502, 'Stalker upstream unavailable');
+    }
+
+    if (!response.ok) {
+      throw createHttpError(response.status, `Stalker upstream HTTP ${response.status}`);
+    }
+
+    const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+    const finalUrl = response.url || selectedUrl;
+    const isPlaylist = contentType.includes('mpegurl') || contentType.includes('m3u8') || /\.m3u8(?:$|[?#])/iu.test(finalUrl);
+
+    if (isPlaylist) {
+      const text = await response.text();
+      const baseUrl = `${req.protocol}://${req.get('host')}`;
+      res
+        .status(200)
+        .setHeader('Cache-Control', 'no-store')
+        .setHeader('Content-Type', 'application/vnd.apple.mpegurl')
+        .send(this.rewriteStalkerPlaylist(text, finalUrl, baseUrl, req.params.privateConfigId, channelId));
+      return;
+    }
+
+    res.status(response.status);
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Content-Type', response.headers.get('content-type') || 'video/mp2t');
+    const contentLength = response.headers.get('content-length');
+    if (contentLength) res.setHeader('Content-Length', contentLength);
+    const contentRange = response.headers.get('content-range');
+    if (contentRange) res.setHeader('Content-Range', contentRange);
+    const acceptRanges = response.headers.get('accept-ranges');
+    if (acceptRanges) res.setHeader('Accept-Ranges', acceptRanges);
+
+    await pipeline(response.body, res);
+  }
+
+  rewriteStalkerPlaylist(text, playlistUrl, baseUrl, privateConfigId, channelId) {
+    return String(text || '').split(/\r?\n/u).map((line) => {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) {
+        return line;
+      }
+
+      let absoluteUrl;
+      try {
+        absoluteUrl = new URL(trimmed, playlistUrl).toString();
+      } catch {
+        return line;
+      }
+
+      const encodedUrl = Buffer.from(absoluteUrl).toString('base64url');
+      return `${String(baseUrl || '').replace(/\/+$/u, '')}/private/${encodeURIComponent(privateConfigId)}/stalker/proxy/${encodeURIComponent(String(channelId))}?url=${encodedUrl}`;
+    }).join('\n');
+  }
+
   async handleProviderStreams(req, res, next) {
     try {
       const baseUrl = `${req.protocol}://${req.get('host')}`;
@@ -5917,6 +6396,101 @@ export class StreamManager {
       const type = String(req.params.type || '').trim().toLowerCase();
       const catalogId = String(req.params.id || '').trim();
 
+      if (catalogId.startsWith('xtream-')) {
+        const credentials = this.getRequestedXtreamCredentials(req);
+        if (!hasXtreamCredentials(credentials)) {
+          res.json({ metas: [] });
+          return;
+        }
+
+        const catalogType = catalogId.startsWith('xtream-live-')
+          ? 'tv'
+          : catalogId.startsWith('xtream-vod-')
+            ? 'movie'
+            : catalogId.startsWith('xtream-series-')
+              ? 'series'
+              : null;
+
+        if (!catalogType || type !== catalogType) {
+          res.json({ metas: [] });
+          return;
+        }
+
+        const search = String(req.query.search || req.params.search || '').trim();
+        const skip = Number.parseInt(req.query.skip || '0', 10);
+        const metas = await this.xtreamCodesAdapter.getCatalog({
+          credentials,
+          catalogId,
+          search,
+          skip: Number.isInteger(skip) && skip > 0 ? skip : 0,
+          signal: req.signal || null
+        });
+
+        res
+          .setHeader('Cache-Control', 'private, max-age=120')
+          .json({ metas });
+        return;
+      }
+
+      if (catalogId.startsWith('stalker-live-')) {
+        const credentials = this.getRequestedStalkerCredentials(req);
+        if (!hasStalkerCredentials(credentials) || type !== 'tv') {
+          res.json({ metas: [] });
+          return;
+        }
+
+        const search = String(req.query.search || req.params.search || '').trim();
+        const skip = Number.parseInt(req.query.skip || '0', 10);
+        const metas = await this.stalkerPortalAdapter.getCatalog({
+          credentials,
+          catalogId,
+          search,
+          skip: Number.isInteger(skip) && skip > 0 ? skip : 0,
+          signal: req.signal || null
+        });
+
+        res
+          .setHeader('Cache-Control', 'private, max-age=120')
+          .json({ metas });
+        return;
+      }
+
+      if (catalogId.startsWith('famelack-live-')) {
+        const famelackEnabled = Boolean(this.getRequestedPrivateProviderSettings(req).famelackLiveEnabled);
+        if (!famelackEnabled || type !== 'tv') {
+          res.json({ metas: [] });
+          return;
+        }
+
+        const countries = await this.famelackLiveAdapter.getTopCountries(40, req.signal || null);
+        const catalog = this.famelackLiveAdapter.getLiveCatalogDefinitions(countries)
+          .find((definition) => definition.id === catalogId);
+        if (!catalog) {
+          res.json({ metas: [] });
+          return;
+        }
+
+        const search = String(req.query.search || req.params.search || '').trim();
+        if (search && search.length < 3) {
+          res
+            .setHeader('Cache-Control', 'public, max-age=30')
+            .json({ metas: [] });
+          return;
+        }
+        const skip = Number.parseInt(req.query.skip || '0', 10);
+        const metas = await this.famelackLiveAdapter.getLiveCatalog({
+          catalog,
+          search,
+          skip: Number.isInteger(skip) && skip > 0 ? skip : 0,
+          signal: req.signal || null
+        });
+
+        res
+          .setHeader('Cache-Control', 'public, max-age=120')
+          .json({ metas });
+        return;
+      }
+
       if (type !== 'tv' || (!catalogId.startsWith('rogplay-live-') && !catalogId.startsWith('cs-german-live-'))) {
         res.json({ metas: [] });
         return;
@@ -5975,6 +6549,54 @@ export class StreamManager {
       const type = String(req.params.type || '').trim().toLowerCase();
       const id = String(req.params.id || '').trim();
 
+      if (id.startsWith('xtream:')) {
+        const credentials = this.getRequestedXtreamCredentials(req);
+        if (!hasXtreamCredentials(credentials)) {
+          res.json({ meta: null });
+          return;
+        }
+
+        const expectedType = this.xtreamCodesAdapter.inferTypeFromXtreamId(id);
+        if (type !== expectedType) {
+          res.json({ meta: null });
+          return;
+        }
+
+        const meta = await this.xtreamCodesAdapter.getMeta(credentials, id, req.signal || null);
+        res
+          .setHeader('Cache-Control', 'private, max-age=120')
+          .json({ meta });
+        return;
+      }
+
+      if (id.startsWith('stalker:')) {
+        const credentials = this.getRequestedStalkerCredentials(req);
+        if (!hasStalkerCredentials(credentials) || type !== 'tv') {
+          res.json({ meta: null });
+          return;
+        }
+
+        const meta = await this.stalkerPortalAdapter.getMeta(credentials, id, req.signal || null);
+        res
+          .setHeader('Cache-Control', 'private, max-age=120')
+          .json({ meta });
+        return;
+      }
+
+      if (id.startsWith('famelack:')) {
+        const famelackEnabled = Boolean(this.getRequestedPrivateProviderSettings(req).famelackLiveEnabled);
+        if (!famelackEnabled || type !== 'tv') {
+          res.json({ meta: null });
+          return;
+        }
+
+        const meta = await this.famelackLiveAdapter.getLiveMeta(id, req.signal || null);
+        res
+          .setHeader('Cache-Control', 'public, max-age=120')
+          .json({ meta });
+        return;
+      }
+
       if (type !== 'tv' || (!id.startsWith('rogplay:') && !id.startsWith('cs-german:'))) {
         res.json({ meta: null });
         return;
@@ -5999,6 +6621,33 @@ export class StreamManager {
     const normalizedType = String(type || '').trim().toLowerCase();
     return (normalizedType === 'tv' || normalizedType === 'live' || normalizedType === 'channel')
       && String(id || '').startsWith('cs-german:');
+  }
+
+  isFamelackLiveStreamRequest(type, id) {
+    const normalizedType = String(type || '').trim().toLowerCase();
+    return (normalizedType === 'tv' || normalizedType === 'live' || normalizedType === 'channel')
+      && String(id || '').startsWith('famelack:');
+  }
+
+  isXtreamStreamRequest(type, id) {
+    const normalizedType = String(type || '').trim().toLowerCase();
+    const value = String(id || '').trim();
+    if (!value.startsWith('xtream:')) {
+      return false;
+    }
+    if (value.startsWith('xtream:live:')) {
+      return normalizedType === 'tv' || normalizedType === 'live' || normalizedType === 'channel';
+    }
+    if (value.startsWith('xtream:vod:')) {
+      return normalizedType === 'movie';
+    }
+    return value.startsWith('xtream:episode:') && normalizedType === 'series';
+  }
+
+  isStalkerStreamRequest(type, id) {
+    const normalizedType = String(type || '').trim().toLowerCase();
+    return (normalizedType === 'tv' || normalizedType === 'live' || normalizedType === 'channel')
+      && String(id || '').startsWith('stalker:live:');
   }
 
   async handleUnifiedStream(req, res, next) {

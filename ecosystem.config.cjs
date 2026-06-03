@@ -3,8 +3,8 @@ module.exports = {
     {
       name: 'nebulastreams',
       script: 'index.js',
-      instances: 1,
-      exec_mode: 'fork',
+      instances: 2,
+      exec_mode: 'cluster',
       time: true,
       max_memory_restart: '900M',
       env: {
@@ -12,8 +12,8 @@ module.exports = {
         PORT: '3000',
         PUBLIC_BASE_URL: 'https://nebula.work.gd',
         MEMORY_GUARD_ENABLED: 'true',
-        MEMORY_GUARD_PRESSURE_PERCENT: '45',
-        MEMORY_GUARD_CRITICAL_PERCENT: '60',
+        MEMORY_GUARD_PRESSURE_PERCENT: '72',
+        MEMORY_GUARD_CRITICAL_PERCENT: '84',
         MEMORY_GUARD_RESTART_PERCENT: '95',
         PROVIDER_GLOBAL_MAX_INFLIGHT: '16',
         PROVIDER_MAX_CONCURRENCY: '4',
@@ -35,6 +35,9 @@ module.exports = {
         STREMIO_BACKGROUND_REFRESH_QUEUE_MAX: '100',
         STREMIO_BACKGROUND_REFRESH_MAX_INFLIGHT_SEARCHES: '20',
         STREMIO_BACKGROUND_REFRESH_MAX_PROVIDER_EXECUTIONS: '8',
+        NUVIO_MAX_PLUGIN_EXECUTIONS: '0',
+        NUVIO_PLUGIN_CONCURRENCY: '6',
+        NUVIO_2_PLUGIN_CONCURRENCY: '8',
         STREAM_RESULT_EXTERNAL_CACHE_ENABLED: 'false',
         INCLUDE_LIVE_CATALOGS: 'false',
         VERBOSE_INFO_LOGS: 'false'

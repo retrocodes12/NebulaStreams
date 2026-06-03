@@ -382,7 +382,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <script defer src="https://cloud.umami.is/script.js" data-website-id="d2608775-1bee-4fbe-899f-aaa451b37ed8"></script>
+    <script defer src="https://cloud.umami.is/script.js" data-website-id="ed6ff4d3-b737-4392-ab00-8cc7c98c45ec"></script>
     <style>
       :root {
         color-scheme: dark;
@@ -2270,11 +2270,14 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
           <button type="button" class="nav-item" data-section-target="torbox-section">
             <span class="nav-index">08</span><span class="nav-label">TorBox</span>
           </button>
+          <button type="button" class="nav-item" data-section-target="xtream-section">
+            <span class="nav-index">09</span><span class="nav-label">IPTV</span>
+          </button>
           <button type="button" class="nav-item" data-section-target="support-section">
-            <span class="nav-index">09</span><span class="nav-label">Support</span>
+            <span class="nav-index">10</span><span class="nav-label">Support</span>
           </button>
           <button type="button" class="nav-item" data-section-target="notes-section">
-            <span class="nav-index">10</span><span class="nav-label">Notes</span>
+            <span class="nav-index">11</span><span class="nav-label">Notes</span>
           </button>
         </aside>
 
@@ -2702,6 +2705,97 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
             </div>
           </section>
 
+          <!-- XTREAM -->
+          <section class="card torbox-card" id="xtream-section">
+            <div class="card-inner">
+              <div class="torbox-head">
+                <div>
+                  <h3 class="card-title">Xtream Codes IPTV</h3>
+                  <p class="card-desc">Add private IPTV live TV, VOD, series, categories, and EPG.</p>
+                </div>
+                <label class="switch" aria-label="Enable Xtream Codes IPTV">
+                  <input type="checkbox" id="xtream-enabled">
+                  <span></span>
+                </label>
+              </div>
+
+              <div class="field">
+                <label class="field-label" for="xtream-server-url">Server URL</label>
+                <input id="xtream-server-url" class="field-input" type="url" placeholder="https://example.com:8080" spellcheck="false" autocomplete="off">
+              </div>
+
+              <div class="field-grid">
+                <div class="field">
+                  <label class="field-label" for="xtream-username">Username</label>
+                  <input id="xtream-username" class="field-input" type="text" placeholder="IPTV username" spellcheck="false" autocomplete="off">
+                </div>
+                <div class="field">
+                  <label class="field-label" for="xtream-password">Password</label>
+                  <input id="xtream-password" class="field-input" type="password" placeholder="IPTV password" spellcheck="false" autocomplete="off">
+                </div>
+              </div>
+              <p id="xtream-validation-status" class="torbox-help" style="min-height:18px;margin-top:-4px;"></p>
+
+              <div class="torbox-help">
+                Credentials are stored only in the private manifest config and are not placed in the public install URL.
+              </div>
+
+              <div class="field-grid">
+                <div class="field">
+                  <label class="field-label" for="stalker-portal-url">Stalker Portal URL</label>
+                  <input id="stalker-portal-url" class="field-input" type="url" placeholder="http://example.com/c/" spellcheck="false" autocomplete="off">
+                </div>
+                <div class="field">
+                  <label class="field-label" for="stalker-mac-address">Stalker MAC Address</label>
+                  <input id="stalker-mac-address" class="field-input" type="password" placeholder="00:1A:79:00:00:00" spellcheck="false" autocomplete="off">
+                </div>
+              </div>
+
+              <div class="field-grid">
+                <div class="field">
+                  <label class="field-label" for="stalker-stb-type">STB Type</label>
+                  <select id="stalker-stb-type" class="field-input">
+                    <option value="MAG254" selected>MAG254</option>
+                    <option value="MAG250">MAG250</option>
+                    <option value="MAG256">MAG256</option>
+                    <option value="MAG270">MAG270</option>
+                    <option value="MAG322">MAG322</option>
+                    <option value="MAG324">MAG324</option>
+                    <option value="MAG349">MAG349</option>
+                    <option value="MAG351">MAG351</option>
+                    <option value="MAG420">MAG420</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label class="field-label" for="stalker-serial-number">Serial Number</label>
+                  <input id="stalker-serial-number" class="field-input" type="text" placeholder="Optional MAG serial" spellcheck="false" autocomplete="off">
+                </div>
+              </div>
+
+              <div class="field-grid">
+                <div class="field">
+                  <label class="field-label" for="stalker-device-id">Device ID</label>
+                  <input id="stalker-device-id" class="field-input" type="text" placeholder="Optional device_id" spellcheck="false" autocomplete="off">
+                </div>
+                <div class="field">
+                  <label class="field-label" for="stalker-device-id2">Device ID 2</label>
+                  <input id="stalker-device-id2" class="field-input" type="text" placeholder="Optional device_id2" spellcheck="false" autocomplete="off">
+                </div>
+              </div>
+
+              <label class="torbox-toggle-row">
+                <span>
+                  <strong>Famelack Public Live TV</strong>
+                  <em>Add public worldwide live TV catalogs from Famelack data.</em>
+                </span>
+                <span class="switch switch-small">
+                  <input type="checkbox" id="famelack-live-enabled">
+                  <span></span>
+                </span>
+              </label>
+            </div>
+          </section>
+
           <footer class="simple-footer">
             <a class="simple-support-button" href="${simpleKoFiUrl}" target="_blank" rel="noopener">
               <span>☕</span>
@@ -2844,6 +2938,18 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
       const torboxApiKey = $('torbox-api-key');
       const torboxOnlyStreams = $('torbox-only-streams');
       const torboxUsenet = $('torbox-usenet');
+      const xtreamEnabled = $('xtream-enabled');
+      const xtreamServerUrl = $('xtream-server-url');
+      const xtreamUsername = $('xtream-username');
+      const xtreamPassword = $('xtream-password');
+      const xtreamValidationStatus = $('xtream-validation-status');
+      const stalkerPortalUrl = $('stalker-portal-url');
+      const stalkerMacAddress = $('stalker-mac-address');
+      const stalkerStbType = $('stalker-stb-type');
+      const stalkerSerialNumber = $('stalker-serial-number');
+      const stalkerDeviceId = $('stalker-device-id');
+      const stalkerDeviceId2 = $('stalker-device-id2');
+      const famelackLiveEnabled = $('famelack-live-enabled');
       const dedupeMode = $('dedupe-mode');
       const formatterStyle = $('formatter-style');
       const overviewProviderCount = $('overview-provider-count');
@@ -2919,6 +3025,13 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
           .map(([adapterId, selection]) => [adapterId, Array.from(selection || [])])
           .filter(([, selection]) => selection.length > 0));
 
+      const hasXtreamConfig = () =>
+        Boolean(xtreamEnabled.checked && xtreamServerUrl.value.trim() && xtreamUsername.value.trim() && xtreamPassword.value.trim());
+      const hasStalkerConfig = () =>
+        Boolean(xtreamEnabled.checked && stalkerPortalUrl.value.trim() && stalkerMacAddress.value.trim());
+      const hasFamelackLiveConfig = () =>
+        Boolean(famelackLiveEnabled.checked);
+
       const isDefaultSimpleConfig = () => {
         if (configMode !== 'simple') return false;
 
@@ -2949,7 +3062,10 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
           && !customProxyUrl.value.trim()
           && !hasAdapterProviderSelections()
           && !febboxUiCookie.value.trim()
-          && !(torboxEnabled.checked && torboxApiKey.value.trim());
+          && !(torboxEnabled.checked && torboxApiKey.value.trim())
+          && !hasXtreamConfig()
+          && !hasStalkerConfig()
+          && !hasFamelackLiveConfig();
       };
 
       const syncSimpleQualityPriority = () => {
@@ -3111,10 +3227,96 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
           },
           privateProviderSettings: {
             febboxUiCookie: febboxUiCookie.value.trim(),
-            torboxApiKey: torboxEnabled.checked ? torboxApiKey.value.trim() : ''
+            torboxApiKey: torboxEnabled.checked ? torboxApiKey.value.trim() : '',
+            xtreamServerUrl: xtreamEnabled.checked ? xtreamServerUrl.value.trim() : '',
+            xtreamUsername: xtreamEnabled.checked ? xtreamUsername.value.trim() : '',
+            xtreamPassword: xtreamEnabled.checked ? xtreamPassword.value.trim() : '',
+            stalkerPortalUrl: xtreamEnabled.checked ? stalkerPortalUrl.value.trim() : '',
+            stalkerMacAddress: xtreamEnabled.checked ? stalkerMacAddress.value.trim() : '',
+            stalkerStbType: xtreamEnabled.checked ? stalkerStbType.value.trim() : '',
+            stalkerSerialNumber: xtreamEnabled.checked ? stalkerSerialNumber.value.trim() : '',
+            stalkerDeviceId: xtreamEnabled.checked ? stalkerDeviceId.value.trim() : '',
+            stalkerDeviceId2: xtreamEnabled.checked ? stalkerDeviceId2.value.trim() : '',
+            famelackLiveEnabled: famelackLiveEnabled.checked
           },
           profileCode: activePresetId && presetDefinitions[activePresetId]?.code ? presetDefinitions[activePresetId].code.toLowerCase() : null
         };
+      };
+
+      let iptvValidationNonce = 0;
+      let iptvValidationTimer = null;
+      let lastXtreamValidationValid = false;
+      let lastXtreamValidationKey = '';
+
+      const getXtreamValidationKey = () =>
+        [xtreamServerUrl.value.trim(), xtreamUsername.value.trim(), xtreamPassword.value.trim()].join('|');
+
+      const setXtreamValidationStatus = (text, color) => {
+        if (!xtreamValidationStatus) return;
+        xtreamValidationStatus.textContent = text;
+        xtreamValidationStatus.style.color = color || '#94a3b8';
+      };
+
+      const validateIptvCredentials = async ({ quiet = false } = {}) => {
+        if (!hasXtreamConfig() && !hasStalkerConfig()) {
+          lastXtreamValidationValid = false;
+          lastXtreamValidationKey = '';
+          setXtreamValidationStatus('', '#94a3b8');
+          return true;
+        }
+
+        const validationKey = getXtreamValidationKey();
+        const nonce = ++iptvValidationNonce;
+        if (hasXtreamConfig() && !quiet) {
+          setXtreamValidationStatus('Checking Xtream credentials...', '#94a3b8');
+        }
+
+        try {
+          const response = await fetch(origin + '/configure/validate-iptv', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(buildPrivateConfigPayload())
+          });
+          if (!response.ok) throw new Error('Validation failed');
+          const result = await response.json();
+          if (nonce !== iptvValidationNonce) return false;
+
+          if (hasXtreamConfig()) {
+            const xtreamResult = result?.xtream || {};
+            lastXtreamValidationValid = Boolean(xtreamResult.valid);
+            lastXtreamValidationKey = validationKey;
+            if (xtreamResult.valid) {
+              const counts = xtreamResult.categories || {};
+              setXtreamValidationStatus('Xtream valid - live ' + (counts.live || 0) + ', movies ' + (counts.vod || 0) + ', series ' + (counts.series || 0), '#22c55e');
+            } else {
+              setXtreamValidationStatus('Xtream invalid - ' + (xtreamResult.message || 'check credentials'), '#ef4444');
+            }
+          }
+
+          return !hasXtreamConfig() || Boolean(result?.xtream?.valid);
+        } catch (error) {
+          if (nonce !== iptvValidationNonce) return false;
+          lastXtreamValidationValid = false;
+          lastXtreamValidationKey = validationKey;
+          if (hasXtreamConfig()) {
+            setXtreamValidationStatus('Xtream validation failed', '#ef4444');
+          }
+          return false;
+        }
+      };
+
+      const scheduleIptvValidation = () => {
+        clearTimeout(iptvValidationTimer);
+        if (!hasXtreamConfig()) {
+          lastXtreamValidationValid = false;
+          lastXtreamValidationKey = '';
+          setXtreamValidationStatus('', '#94a3b8');
+          return;
+        }
+        setXtreamValidationStatus('Waiting for credentials...', '#94a3b8');
+        iptvValidationTimer = setTimeout(() => {
+          validateIptvCredentials().catch(() => {});
+        }, 700);
       };
 
       const getAdapterProviderGroupSelection = (group) => {
@@ -3191,8 +3393,11 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
       const resolveManifestPath = async () => {
         const cookie = febboxUiCookie.value.trim();
         const torbox = torboxEnabled.checked ? torboxApiKey.value.trim() : '';
+        const xtream = hasXtreamConfig();
+        const stalker = hasStalkerConfig();
+        const famelack = hasFamelackLiveConfig();
         const proxy = customProxyUrl.value.trim();
-        if (!cookie && !torbox && !proxy && !hasAdapterProviderSelections()) return buildManifestPath();
+        if (!cookie && !torbox && !xtream && !stalker && !famelack && !proxy && !hasAdapterProviderSelections()) return buildManifestPath();
         const r = await fetch(origin + '/configure/private-config', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -3252,7 +3457,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         updateProviderSummary();
         const nonce = ++manifestResolveNonce;
         const fb = buildManifestPath();
-        manifestUrl.textContent = (febboxUiCookie.value.trim() || (torboxEnabled.checked && torboxApiKey.value.trim()) || customProxyUrl.value.trim() || hasAdapterProviderSelections()) ? 'Preparing private manifest...' : origin + fb;
+        manifestUrl.textContent = (febboxUiCookie.value.trim() || (torboxEnabled.checked && torboxApiKey.value.trim()) || hasXtreamConfig() || hasStalkerConfig() || customProxyUrl.value.trim() || hasAdapterProviderSelections()) ? 'Preparing private manifest...' : origin + fb;
         try {
           const resolved = await resolveManifestPath();
           if (nonce !== manifestResolveNonce) return;
@@ -3360,17 +3565,34 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         updateManifest();
       });
 
-      [webReadyOnly, hideHeavyFormats, preferHdr, preferH264, preferSmallerFiles, preferDirectHosts, torboxEnabled, torboxOnlyStreams, torboxUsenet, preferredAudioLanguage, maxSizeGb, dedupeMode, formatterStyle].forEach((el) => {
-        el.addEventListener('change', () => { markPresetAsCustom(); updateManifest(); });
+      [webReadyOnly, hideHeavyFormats, preferHdr, preferH264, preferSmallerFiles, preferDirectHosts, torboxEnabled, torboxOnlyStreams, torboxUsenet, xtreamEnabled, stalkerStbType, famelackLiveEnabled, preferredAudioLanguage, maxSizeGb, dedupeMode, formatterStyle].forEach((el) => {
+        el.addEventListener('change', () => {
+          markPresetAsCustom();
+          if (el === xtreamEnabled || el === stalkerStbType) scheduleIptvValidation();
+          updateManifest();
+        });
       });
-      [blockedHosts, customProxyUrl, febboxUiCookie, torboxApiKey].forEach((el) => {
-        el.addEventListener('input', () => { markPresetAsCustom(); updateManifest(); });
+      [blockedHosts, customProxyUrl, febboxUiCookie, torboxApiKey, xtreamServerUrl, xtreamUsername, xtreamPassword, stalkerPortalUrl, stalkerMacAddress, stalkerSerialNumber, stalkerDeviceId, stalkerDeviceId2].forEach((el) => {
+        el.addEventListener('input', () => {
+          markPresetAsCustom();
+          if ([xtreamServerUrl, xtreamUsername, xtreamPassword, stalkerPortalUrl, stalkerMacAddress, stalkerSerialNumber, stalkerDeviceId, stalkerDeviceId2].includes(el)) {
+            scheduleIptvValidation();
+          }
+          updateManifest();
+        });
       });
 
       presetButtons.forEach((b) => b.addEventListener('click', () => applyPreset(b.dataset.presetId)));
 
       installButton.addEventListener('click', async () => {
         try {
+          if (hasXtreamConfig() && (!lastXtreamValidationValid || lastXtreamValidationKey !== getXtreamValidationKey())) {
+            const valid = await validateIptvCredentials();
+            if (!valid) {
+              showFlash('Xtream credentials are invalid.', true);
+              return;
+            }
+          }
           const mp = await resolveManifestPath();
           window.location.href = 'stremio://addon-install?addon=' + encodeURIComponent(origin + mp);
         } catch (e) { showFlash('Install URL could not be prepared.', true); }
@@ -3401,7 +3623,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         navItems.forEach((it) => it.classList.toggle('is-active', it.dataset.sectionTarget === id));
       }, { rootMargin: '-18% 0px -55% 0px', threshold: [0.1, 0.35, 0.6] });
 
-      ['overview-section','simple-section','presets-section','providers-section','adapter-providers-section','sorting-section','filters-section','ranking-section','torbox-section','support-section','notes-section']
+      ['overview-section','simple-section','presets-section','providers-section','adapter-providers-section','sorting-section','filters-section','ranking-section','torbox-section','xtream-section','support-section','notes-section']
         .map((id) => document.getElementById(id))
         .filter(Boolean)
         .forEach((s) => observer.observe(s));
@@ -3856,6 +4078,7 @@ const renderDonatePage = ({ baseUrl }) => {
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>NebulaStreams Donate</title>
+    <script defer src="https://cloud.umami.is/script.js" data-website-id="ed6ff4d3-b737-4392-ab00-8cc7c98c45ec"></script>
     <style>
       :root {
         color-scheme: dark;
@@ -4315,8 +4538,10 @@ const isStremioManifestPath = (pathName) =>
 const isBotProtectionIgnoredPath = (pathName) =>
   pathName === '/health'
   || pathName === '/configure/private-config'
+  || pathName === '/configure/validate-iptv'
   || pathName.startsWith('/admin')
   || pathName.startsWith('/assets/')
+  || /^\/private\/[^/]+\/(?:stalker|xtream)\//u.test(pathName)
   || pathName === '/favicon.ico'
   || isStremioManifestPath(pathName);
 
@@ -4369,6 +4594,7 @@ const isExpensiveBotProtectionPath = (pathName) =>
   || pathName === '/http-stream'
   || pathName === '/stream/http'
   || pathName === '/stream/torrent'
+  || /^\/private\/[^/]+\/(?:stalker|xtream)\//u.test(pathName)
   || pathName.startsWith('/stream/')
   || pathName.startsWith('/stremio/stream/')
   || (pathName.includes('/catalog/') && pathName.includes('/search='))
@@ -4983,6 +5209,10 @@ const bootstrap = async () => {
         return false;
       }
 
+      if (/^\/private\/[^/]+\/(?:stalker|xtream)\//u.test(req.path)) {
+        return false;
+      }
+
       return req.path === '/'
         || req.path === '/configure'
         || req.path.startsWith('/preview/')
@@ -5181,6 +5411,7 @@ const bootstrap = async () => {
   app.get('/manifest.json', streamManager.handleStremioManifest.bind(streamManager));
   app.get('/stremio/manifest.json', streamManager.handleStremioManifest.bind(streamManager));
   app.post('/configure/private-config', streamManager.handleCreatePrivateConfig.bind(streamManager));
+  app.post('/configure/validate-iptv', streamManager.handleValidateIptvConfig.bind(streamManager));
   app.get('/configured/:providerConfig', streamManager.handleStremioManifest.bind(streamManager));
   app.get('/configured/:providerConfig/manifest.json', streamManager.handleStremioManifest.bind(streamManager));
   app.get('/configured/:providerConfig/stremio/manifest.json', streamManager.handleStremioManifest.bind(streamManager));
@@ -5202,6 +5433,9 @@ const bootstrap = async () => {
   app.get('/meta/:type/:id.json', streamManager.handleStremioMeta.bind(streamManager));
   app.get('/stremio/meta/:type/:id.json', streamManager.handleStremioMeta.bind(streamManager));
   app.get('/rogplay/live/:id/playlist.m3u8', streamManager.handleRogPlayLivePlaylist.bind(streamManager));
+  app.get('/private/:privateConfigId/xtream/:kind/:streamId.:extension', streamManager.handleXtreamStream.bind(streamManager));
+  app.get('/private/:privateConfigId/stalker/live/:channelId.:extension', streamManager.handleStalkerStream.bind(streamManager));
+  app.get('/private/:privateConfigId/stalker/proxy/:channelId', streamManager.handleStalkerProxyStream.bind(streamManager));
   app.get('/preview/:type/:id.json', streamManager.handleStremioPreview.bind(streamManager));
   app.get('/stremio/preview/:type/:id.json', streamManager.handleStremioPreview.bind(streamManager));
   app.get('/private/:privateConfigId/stream/:type/:id.json', streamManager.handleStremioStreams.bind(streamManager));
