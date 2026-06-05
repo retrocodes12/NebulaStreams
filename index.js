@@ -51,6 +51,14 @@ const escapeHtml = (value) =>
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#39;');
 
+const PROJECT_SUPPORTERS = [
+  'Devon Durham'
+];
+
+const renderSupporterPills = (supporters = PROJECT_SUPPORTERS) => supporters
+  .map((supporter) => `<span class="supporter-pill">${escapeHtml(supporter)}</span>`)
+  .join('');
+
 const ADMIN_COOKIE_NAME = 'nebulastreams_admin';
 const ADMIN_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const CPU_SAMPLE_WINDOW_MS = 200;
@@ -1444,6 +1452,55 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         font-size: 14px;
       }
 
+      .supporters-card {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+        padding: 18px;
+        border-radius: var(--radius-md);
+        border: 1px solid var(--border);
+        background: rgba(255,255,255,0.035);
+      }
+
+      .supporters-title {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin: 0;
+        color: var(--text-dim);
+        font-size: 12px;
+        font-weight: 800;
+        letter-spacing: 0.12em;
+        text-align: center;
+        text-transform: uppercase;
+      }
+
+      .supporters-star {
+        color: var(--warning);
+        letter-spacing: 0;
+      }
+
+      .supporter-list {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 8px;
+      }
+
+      .supporter-pill {
+        display: inline-flex;
+        align-items: center;
+        min-height: 28px;
+        padding: 5px 12px;
+        border-radius: 8px;
+        border: 1px solid rgba(52, 211, 153, 0.35);
+        background: rgba(52, 211, 153, 0.12);
+        color: #36f4b4;
+        font-size: 12px;
+        font-weight: 700;
+      }
+
       .support-actions {
         display: flex;
         flex-wrap: wrap;
@@ -2324,6 +2381,13 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
               </div>
             </div>
           </section>
+
+          <div class="supporters-card" aria-label="Special thanks to supporters">
+            <p class="supporters-title"><span class="supporters-star" aria-hidden="true">★</span> Special thanks to our supporters</p>
+            <div class="supporter-list">
+              ${renderSupporterPills()}
+            </div>
+          </div>
 
           <!-- PRESETS -->
           <section class="card simple-settings" id="simple-section">
@@ -4174,6 +4238,51 @@ const renderDonatePage = ({ baseUrl }) => {
         margin: 0;
         color: #dbe4ff;
       }
+      .supporters-card {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+        margin-top: 18px;
+        padding: 18px;
+        border-radius: 20px;
+        border: 1px solid rgba(255,255,255,0.08);
+        background: rgba(12, 14, 22, 0.45);
+      }
+      .supporters-title {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin: 0;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 800;
+        letter-spacing: 0.12em;
+        text-align: center;
+        text-transform: uppercase;
+      }
+      .supporters-star {
+        color: #fbbf24;
+        letter-spacing: 0;
+      }
+      .supporter-list {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 8px;
+      }
+      .supporter-pill {
+        display: inline-flex;
+        align-items: center;
+        min-height: 30px;
+        padding: 5px 12px;
+        border-radius: 8px;
+        border: 1px solid rgba(52, 211, 153, 0.35);
+        background: rgba(52, 211, 153, 0.12);
+        color: #36f4b4;
+        font-size: 12px;
+        font-weight: 700;
+      }
       .button, .copy-button {
         appearance: none;
         display: inline-flex;
@@ -4274,6 +4383,12 @@ const renderDonatePage = ({ baseUrl }) => {
 
           <div class="blurb">
             <p>If NebulaStreams is useful to you, your support helps cover hosting, testing, and new provider work. Every contribution keeps the project more reliable.</p>
+          </div>
+          <div class="supporters-card" aria-label="Special thanks to supporters">
+            <p class="supporters-title"><span class="supporters-star" aria-hidden="true">★</span> Special thanks to our supporters</p>
+            <div class="supporter-list">
+              ${renderSupporterPills()}
+            </div>
           </div>
           ${primarySection ? `<div class="support-grid">${primarySection}</div>` : ''}
 
