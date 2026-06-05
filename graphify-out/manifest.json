@@ -1,0 +1,1047 @@
+{
+  "/home/sohil/NebulaStreams/.codex/hooks.json": {
+    "mtime": 1780559660.266145,
+    "ast_hash": "105a66e58dc63e419ee6861ef44bdbe2",
+    "semantic_hash": "105a66e58dc63e419ee6861ef44bdbe2"
+  },
+  "/home/sohil/NebulaStreams/.omx/metrics.json": {
+    "mtime": 1780560681.9241605,
+    "ast_hash": "3f6c7a1a1dbe7823d8b8e609b2188aec",
+    "semantic_hash": "3f6c7a1a1dbe7823d8b8e609b2188aec"
+  },
+  "/home/sohil/NebulaStreams/.omx/state/hud-state.json": {
+    "mtime": 1780560681.9721632,
+    "ast_hash": "01440f64ac0ffe13aaaeb153f1c4cfd1",
+    "semantic_hash": "01440f64ac0ffe13aaaeb153f1c4cfd1"
+  },
+  "/home/sohil/NebulaStreams/.omx/state/notify-hook-state.json": {
+    "mtime": 1780560681.91616,
+    "ast_hash": "05f4d32b5f88f9d2f53cdade1b434254",
+    "semantic_hash": "05f4d32b5f88f9d2f53cdade1b434254"
+  },
+  "/home/sohil/NebulaStreams/.omx/state/team-leader-nudge.json": {
+    "mtime": 1780560682.0271661,
+    "ast_hash": "34dfcf00a869fbd821fdf5112259f8aa",
+    "semantic_hash": "34dfcf00a869fbd821fdf5112259f8aa"
+  },
+  "/home/sohil/NebulaStreams/.omx/state/tmux-hook-state.json": {
+    "mtime": 1780560682.0211658,
+    "ast_hash": "f78b0e873a608e01879d5dace807f86a",
+    "semantic_hash": "f78b0e873a608e01879d5dace807f86a"
+  },
+  "/home/sohil/NebulaStreams/.vscode/settings.json": {
+    "mtime": 1778074542.5909874,
+    "ast_hash": "c17804be63246797532678fbf159a6dd",
+    "semantic_hash": "c17804be63246797532678fbf159a6dd"
+  },
+  "/home/sohil/NebulaStreams/config.js": {
+    "mtime": 1780505452.9552038,
+    "ast_hash": "6b9e84ca3fbd7df3d9dedf88041114cc",
+    "semantic_hash": "6b9e84ca3fbd7df3d9dedf88041114cc"
+  },
+  "/home/sohil/NebulaStreams/hdhub_out.json": {
+    "mtime": 1777795523.613808,
+    "ast_hash": "fbcaf9325c3408b0b2e8adf603eef02b",
+    "semantic_hash": "fbcaf9325c3408b0b2e8adf603eef02b"
+  },
+  "/home/sohil/NebulaStreams/index.js": {
+    "mtime": 1780505452.9902048,
+    "ast_hash": "ccce61ac026a7ce8f3e60da010b3a27c",
+    "semantic_hash": "ccce61ac026a7ce8f3e60da010b3a27c"
+  },
+  "/home/sohil/NebulaStreams/out.json": {
+    "mtime": 1777795523.618808,
+    "ast_hash": "ea4568c3cb78bafea493d5a24e291d7c",
+    "semantic_hash": "ea4568c3cb78bafea493d5a24e291d7c"
+  },
+  "/home/sohil/NebulaStreams/package.json": {
+    "mtime": 1780505452.9902048,
+    "ast_hash": "38bf32d1ad8e40cf534b79a389185f51",
+    "semantic_hash": "38bf32d1ad8e40cf534b79a389185f51"
+  },
+  "/home/sohil/NebulaStreams/providers/rogplay/RogPlayAdapter.js": {
+    "mtime": 1779688854.264518,
+    "ast_hash": "28c52980454c6a8cc27559f8165155b5",
+    "semantic_hash": "28c52980454c6a8cc27559f8165155b5"
+  },
+  "/home/sohil/NebulaStreams/scratch.js": {
+    "mtime": 1777795523.618808,
+    "ast_hash": "dfa532290682e4895a58395dd904a9a4",
+    "semantic_hash": "dfa532290682e4895a58395dd904a9a4"
+  },
+  "/home/sohil/NebulaStreams/scripts/keepAliveRender.js": {
+    "mtime": 1777385925.266707,
+    "ast_hash": "c5d47736443abc33a694cd02f8d70ed4",
+    "semantic_hash": "c5d47736443abc33a694cd02f8d70ed4"
+  },
+  "/home/sohil/NebulaStreams/scripts/providerSanityCheck.js": {
+    "mtime": 1780035137.3267682,
+    "ast_hash": "e8cca1d42c7f2d21f3e7a970b70d8d4d",
+    "semantic_hash": "e8cca1d42c7f2d21f3e7a970b70d8d4d"
+  },
+  "/home/sohil/NebulaStreams/scripts/stabilityHarness.js": {
+    "mtime": 1780035137.327768,
+    "ast_hash": "d80ee4a5c7c6c9d38a8e88439490b953",
+    "semantic_hash": "d80ee4a5c7c6c9d38a8e88439490b953"
+  },
+  "/home/sohil/NebulaStreams/scripts/stalkerAdapterTest.js": {
+    "mtime": 1780505452.9912047,
+    "ast_hash": "52fdc8dc8ff0511cd198d93264c09e03",
+    "semantic_hash": "52fdc8dc8ff0511cd198d93264c09e03"
+  },
+  "/home/sohil/NebulaStreams/scripts/xtreamAdapterTest.js": {
+    "mtime": 1780505452.9912047,
+    "ast_hash": "90e0698eb94a031d34e9cbf6ba6de718",
+    "semantic_hash": "90e0698eb94a031d34e9cbf6ba6de718"
+  },
+  "/home/sohil/NebulaStreams/services/cacheManager.js": {
+    "mtime": 1780035137.328768,
+    "ast_hash": "0f6d94975c34606247aca3cd3998f354",
+    "semantic_hash": "0f6d94975c34606247aca3cd3998f354"
+  },
+  "/home/sohil/NebulaStreams/services/httpProxy.js": {
+    "mtime": 1780035137.328768,
+    "ast_hash": "262ec75ee1fd29282a78a0334c5f2b02",
+    "semantic_hash": "262ec75ee1fd29282a78a0334c5f2b02"
+  },
+  "/home/sohil/NebulaStreams/services/imdbResolver.js": {
+    "mtime": 1777892078.5761979,
+    "ast_hash": "970213740c75abce3651bf4fd4f51274",
+    "semantic_hash": "970213740c75abce3651bf4fd4f51274"
+  },
+  "/home/sohil/NebulaStreams/services/providerService.js": {
+    "mtime": 1780035137.3327682,
+    "ast_hash": "30bde37aa93ae38c971f18dacc6afe9a",
+    "semantic_hash": "30bde37aa93ae38c971f18dacc6afe9a"
+  },
+  "/home/sohil/NebulaStreams/services/reverseProxy.js": {
+    "mtime": 1777795523.6388085,
+    "ast_hash": "10c52dbe308a2a650601472951b54272",
+    "semantic_hash": "10c52dbe308a2a650601472951b54272"
+  },
+  "/home/sohil/NebulaStreams/services/scrapling_service/server.py": {
+    "mtime": 1779688854.270518,
+    "ast_hash": "ea15e523e014ddddf67083e1ad70082b",
+    "semantic_hash": "ea15e523e014ddddf67083e1ad70082b"
+  },
+  "/home/sohil/NebulaStreams/services/sourceRegistry.js": {
+    "mtime": 1777385925.269707,
+    "ast_hash": "5f0ead861f99134f77f4bff0537291b4",
+    "semantic_hash": "5f0ead861f99134f77f4bff0537291b4"
+  },
+  "/home/sohil/NebulaStreams/services/streamManager.js": {
+    "mtime": 1780505452.9962049,
+    "ast_hash": "bac39452aadca85f732dd46768ee171b",
+    "semantic_hash": "bac39452aadca85f732dd46768ee171b"
+  },
+  "/home/sohil/NebulaStreams/services/torrentEngine.js": {
+    "mtime": 1777385925.271707,
+    "ast_hash": "2041ac5e6cb4d55780e5350012cd5264",
+    "semantic_hash": "2041ac5e6cb4d55780e5350012cd5264"
+  },
+  "/home/sohil/NebulaStreams/services/userTracker.js": {
+    "mtime": 1780505453.0232058,
+    "ast_hash": "d846f3fda407915fa1135e825c8c27ef",
+    "semantic_hash": "d846f3fda407915fa1135e825c8c27ef"
+  },
+  "/home/sohil/NebulaStreams/src/adapters/CloudstreamPhisherAdapter.js": {
+    "mtime": 1780035137.3937693,
+    "ast_hash": "5826d18d63beeffa93eedbb750481021",
+    "semantic_hash": "5826d18d63beeffa93eedbb750481021"
+  },
+  "/home/sohil/NebulaStreams/src/adapters/CloudstreamRepoAdapter.js": {
+    "mtime": 1780035137.3947694,
+    "ast_hash": "99bd1eb12866645b16eedb1c2fa45d5e",
+    "semantic_hash": "99bd1eb12866645b16eedb1c2fa45d5e"
+  },
+  "/home/sohil/NebulaStreams/src/adapters/FamelackLiveAdapter.js": {
+    "mtime": 1780505453.0412061,
+    "ast_hash": "d37af0c2bcb005458256e4637ecef8a6",
+    "semantic_hash": "d37af0c2bcb005458256e4637ecef8a6"
+  },
+  "/home/sohil/NebulaStreams/src/adapters/GermanIptvLiveAdapter.js": {
+    "mtime": 1779688854.2765183,
+    "ast_hash": "7edfbf1686605c08e47ca5853327812c",
+    "semantic_hash": "7edfbf1686605c08e47ca5853327812c"
+  },
+  "/home/sohil/NebulaStreams/src/adapters/NuvioPluginAdapter.js": {
+    "mtime": 1780505453.0562065,
+    "ast_hash": "0d6807de6ba5e909be172d23c55200c4",
+    "semantic_hash": "0d6807de6ba5e909be172d23c55200c4"
+  },
+  "/home/sohil/NebulaStreams/src/adapters/PStreamPluginAdapter.js": {
+    "mtime": 1780035137.3967693,
+    "ast_hash": "b97f5e4c080fcf369acf0cdc25b95cf9",
+    "semantic_hash": "b97f5e4c080fcf369acf0cdc25b95cf9"
+  },
+  "/home/sohil/NebulaStreams/src/adapters/PluginProviderAdapter.js": {
+    "mtime": 1779688854.2765183,
+    "ast_hash": "e4d124ac6f243587a546122c03a8388f",
+    "semantic_hash": "e4d124ac6f243587a546122c03a8388f"
+  },
+  "/home/sohil/NebulaStreams/src/adapters/R2PluginAdapter.js": {
+    "mtime": 1780035137.3967693,
+    "ast_hash": "46d26d6a711eb2b3fe5bca1dfe9d840c",
+    "semantic_hash": "46d26d6a711eb2b3fe5bca1dfe9d840c"
+  },
+  "/home/sohil/NebulaStreams/src/adapters/R3PluginAdapter.js": {
+    "mtime": 1779688854.2775183,
+    "ast_hash": "a7d56520f3ba39a3da26089accca3368",
+    "semantic_hash": "a7d56520f3ba39a3da26089accca3368"
+  },
+  "/home/sohil/NebulaStreams/src/adapters/R4AsianDramaMoviesAdapter.js": {
+    "mtime": 1780035137.3977695,
+    "ast_hash": "393b9d700916ea46aead75768f8f4ba0",
+    "semantic_hash": "393b9d700916ea46aead75768f8f4ba0"
+  },
+  "/home/sohil/NebulaStreams/src/adapters/R5PluginAdapter.js": {
+    "mtime": 1780035137.3977695,
+    "ast_hash": "f407bd90290599e535a6b84a53b52bb5",
+    "semantic_hash": "f407bd90290599e535a6b84a53b52bb5"
+  },
+  "/home/sohil/NebulaStreams/src/adapters/ScraplingServiceAdapter.js": {
+    "mtime": 1780035137.3987694,
+    "ast_hash": "17314ba5ab6ad9283bac0bf7e226c3f3",
+    "semantic_hash": "17314ba5ab6ad9283bac0bf7e226c3f3"
+  },
+  "/home/sohil/NebulaStreams/src/adapters/StalkerPortalAdapter.js": {
+    "mtime": 1780505453.0572066,
+    "ast_hash": "ee086584636ec7292f2f67582329a40c",
+    "semantic_hash": "ee086584636ec7292f2f67582329a40c"
+  },
+  "/home/sohil/NebulaStreams/src/adapters/StreamripPluginAdapter.js": {
+    "mtime": 1780035137.3987694,
+    "ast_hash": "8b4b3405562620eeec01bc6cfdfd6847",
+    "semantic_hash": "8b4b3405562620eeec01bc6cfdfd6847"
+  },
+  "/home/sohil/NebulaStreams/src/adapters/XtreamCodesAdapter.js": {
+    "mtime": 1780505453.0582066,
+    "ast_hash": "f90efd47064f1ba4010c208119c0bad5",
+    "semantic_hash": "f90efd47064f1ba4010c208119c0bad5"
+  },
+  "/home/sohil/NebulaStreams/src/normalizers/pluginStreamNormalizer.js": {
+    "mtime": 1779688854.2785184,
+    "ast_hash": "1be7c18fed860b777dd8004486872aac",
+    "semantic_hash": "1be7c18fed860b777dd8004486872aac"
+  },
+  "/home/sohil/NebulaStreams/src/providers/unifiedProviderInterface.js": {
+    "mtime": 1779688854.2785184,
+    "ast_hash": "99b0f215b3f3544e8df8211e3356d9ef",
+    "semantic_hash": "99b0f215b3f3544e8df8211e3356d9ef"
+  },
+  "/home/sohil/NebulaStreams/src/registry/pluginProviderRegistry.js": {
+    "mtime": 1780035137.3997693,
+    "ast_hash": "9bb7d6bc860891e8ebf8f825f3a61749",
+    "semantic_hash": "9bb7d6bc860891e8ebf8f825f3a61749"
+  },
+  "/home/sohil/NebulaStreams/src/utils/timeout.js": {
+    "mtime": 1780035137.3997693,
+    "ast_hash": "2c4357150a9e131c8c55680efdb7ce1d",
+    "semantic_hash": "2c4357150a9e131c8c55680efdb7ce1d"
+  },
+  "/home/sohil/NebulaStreams/start.sh": {
+    "mtime": 1780505971.7734861,
+    "ast_hash": "007c2baef12e5021095f03cf22988538",
+    "semantic_hash": "007c2baef12e5021095f03cf22988538"
+  },
+  "/home/sohil/NebulaStreams/utils/logger.js": {
+    "mtime": 1780035137.4007695,
+    "ast_hash": "5320d1f3d524fb27d11784e02bf6801a",
+    "semantic_hash": "5320d1f3d524fb27d11784e02bf6801a"
+  },
+  "/home/sohil/NebulaStreams/utils/magnet.js": {
+    "mtime": 1777385925.272707,
+    "ast_hash": "44ccaa2cd05554d25ca3a41623c3e5d8",
+    "semantic_hash": "44ccaa2cd05554d25ca3a41623c3e5d8"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/build.js": {
+    "mtime": 1777795523.6408086,
+    "ast_hash": "1a44dcc20701633b6ca23757b8caf91a",
+    "semantic_hash": "1a44dcc20701633b6ca23757b8caf91a"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/manifest.json": {
+    "mtime": 1777795523.6788096,
+    "ast_hash": "7ab02f9ee7e70742e00c9d58f3731b84",
+    "semantic_hash": "7ab02f9ee7e70742e00c9d58f3731b84"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/package.json": {
+    "mtime": 1777795523.7048101,
+    "ast_hash": "8d8ee8249e45434f810d060586d008af",
+    "semantic_hash": "8d8ee8249e45434f810d060586d008af"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/4khdhub.js": {
+    "mtime": 1779688854.2805185,
+    "ast_hash": "69ea25bcf6e60643272fb80b0201a42c",
+    "semantic_hash": "69ea25bcf6e60643272fb80b0201a42c"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/4khdhub_tv.js": {
+    "mtime": 1778179447.5980172,
+    "ast_hash": "db0b0abc9a48dfcad6b6ea711a64bf77",
+    "semantic_hash": "db0b0abc9a48dfcad6b6ea711a64bf77"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/_csGroupRunner.js": {
+    "mtime": 1779688854.2805185,
+    "ast_hash": "91a89fe04daf685a04ae572b4958c905",
+    "semantic_hash": "91a89fe04daf685a04ae572b4958c905"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/_csProviderUtils.js": {
+    "mtime": 1779688854.2805185,
+    "ast_hash": "519f9a43f00778e3c996d21f536f1e4b",
+    "semantic_hash": "519f9a43f00778e3c996d21f536f1e4b"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/_nuvioFrenchProviderRunner.js": {
+    "mtime": 1779688854.2805185,
+    "ast_hash": "bb565487c75fa61e06609adc3f42889b",
+    "semantic_hash": "bb565487c75fa61e06609adc3f42889b"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/allmovieland.js": {
+    "mtime": 1778259953.7259157,
+    "ast_hash": "f7165a7b016394ddd5227fcc0ced1615",
+    "semantic_hash": "f7165a7b016394ddd5227fcc0ced1615"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/allwish.js": {
+    "mtime": 1778259953.7459161,
+    "ast_hash": "d1af9f41565cad6acb081bfdb24bbbc2",
+    "semantic_hash": "d1af9f41565cad6acb081bfdb24bbbc2"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/allyoucanwatch.js": {
+    "mtime": 1778160579.1382291,
+    "ast_hash": "c9b85f823f70a75a6b414427e0a97f43",
+    "semantic_hash": "c9b85f823f70a75a6b414427e0a97f43"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/anime-nexus.js": {
+    "mtime": 1779688854.2815185,
+    "ast_hash": "37a686b23faca10b379778d5bc89bc9f",
+    "semantic_hash": "37a686b23faca10b379778d5bc89bc9f"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/anime-sama.js": {
+    "mtime": 1778259953.7539163,
+    "ast_hash": "11c1bcd6bc56164f908e017cecbe7a1f",
+    "semantic_hash": "11c1bcd6bc56164f908e017cecbe7a1f"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/animekai.js": {
+    "mtime": 1778259953.7689166,
+    "ast_hash": "cfda2e9f7346cc8e52b87bd47d673251",
+    "semantic_hash": "cfda2e9f7346cc8e52b87bd47d673251"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/animepahe.js": {
+    "mtime": 1778259953.7779167,
+    "ast_hash": "cf53c83cf1f752f1d39242143f8ff52b",
+    "semantic_hash": "cf53c83cf1f752f1d39242143f8ff52b"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/animesalt.js": {
+    "mtime": 1778259953.786917,
+    "ast_hash": "62774e94669874c7b3d3c22f43caaf3f",
+    "semantic_hash": "62774e94669874c7b3d3c22f43caaf3f"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/animeworld.js": {
+    "mtime": 1778259953.795917,
+    "ast_hash": "58603d0a4dae519f12d8936a3739d5c7",
+    "semantic_hash": "58603d0a4dae519f12d8936a3739d5c7"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/arabic-animecloud.js": {
+    "mtime": 1777795523.733811,
+    "ast_hash": "1636fb692b31d20c69778535f36ad36c",
+    "semantic_hash": "1636fb692b31d20c69778535f36ad36c"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/arabic-cineby.js": {
+    "mtime": 1777795523.7348108,
+    "ast_hash": "5b88b0fb2bcf46e2a58acc8ab8278c61",
+    "semantic_hash": "5b88b0fb2bcf46e2a58acc8ab8278c61"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/arabic-faselhd.js": {
+    "mtime": 1777795523.7348108,
+    "ast_hash": "ad6463e6e30bb2552fc58425723b6bf4",
+    "semantic_hash": "ad6463e6e30bb2552fc58425723b6bf4"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/arabic-kirmzi.js": {
+    "mtime": 1777795523.7348108,
+    "ast_hash": "c4c044d91ffbb8a1a3d9588d27755990",
+    "semantic_hash": "c4c044d91ffbb8a1a3d9588d27755990"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/arabic-witanime.js": {
+    "mtime": 1777795523.7348108,
+    "ast_hash": "8a4a6169d2e660c310350447be5184b8",
+    "semantic_hash": "8a4a6169d2e660c310350447be5184b8"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/brazucaplay.js": {
+    "mtime": 1778259953.801917,
+    "ast_hash": "0b50dc3f9c05474aeaa301787312ff8d",
+    "semantic_hash": "0b50dc3f9c05474aeaa301787312ff8d"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/castle.js": {
+    "mtime": 1778259953.8089173,
+    "ast_hash": "58ce1bf181ac799eedb9548f88b656b3",
+    "semantic_hash": "58ce1bf181ac799eedb9548f88b656b3"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/cinemacity.js": {
+    "mtime": 1778259953.8159175,
+    "ast_hash": "aba6b59ebaf0e09ca5d97089d36688b8",
+    "semantic_hash": "aba6b59ebaf0e09ca5d97089d36688b8"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/cinestream.js": {
+    "mtime": 1778262720.875521,
+    "ast_hash": "69f710009c0268d17eddce3b109e089c",
+    "semantic_hash": "69f710009c0268d17eddce3b109e089c"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/cs-anime-kd.js": {
+    "mtime": 1779688854.2815185,
+    "ast_hash": "f59d8c5718afd4d3fa6be5a23474aba4",
+    "semantic_hash": "f59d8c5718afd4d3fa6be5a23474aba4"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/cs-arabic.js": {
+    "mtime": 1779688854.2815185,
+    "ast_hash": "33b1dd6532016c14a280ba579e234556",
+    "semantic_hash": "33b1dd6532016c14a280ba579e234556"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/cs-brazilian.js": {
+    "mtime": 1779688854.2815185,
+    "ast_hash": "cfa496a974c7879c35d75d456dfcd213",
+    "semantic_hash": "cfa496a974c7879c35d75d456dfcd213"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/cs-einthusan.js": {
+    "mtime": 1779688854.2815185,
+    "ast_hash": "332a1e583b15b61615411c8317b95b2f",
+    "semantic_hash": "332a1e583b15b61615411c8317b95b2f"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/cs-german.js": {
+    "mtime": 1779688854.2815185,
+    "ast_hash": "eac84b923179fc8f8cbbff175e16bcd4",
+    "semantic_hash": "eac84b923179fc8f8cbbff175e16bcd4"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/cs-indian.js": {
+    "mtime": 1779688854.2815185,
+    "ast_hash": "c2e777b99d3ba9220678e69dcda3103a",
+    "semantic_hash": "c2e777b99d3ba9220678e69dcda3103a"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/dahmermovies-4k.js": {
+    "mtime": 1778259953.8669183,
+    "ast_hash": "0f12eb34f14c3f3d3cdd8c7f65710a14",
+    "semantic_hash": "0f12eb34f14c3f3d3cdd8c7f65710a14"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/dahmermovies.js": {
+    "mtime": 1778259953.8739185,
+    "ast_hash": "296a4950bf5cbaacdce71d3cf33e3ead",
+    "semantic_hash": "296a4950bf5cbaacdce71d3cf33e3ead"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/diziyou.js": {
+    "mtime": 1777795523.779812,
+    "ast_hash": "95e9cde924f608efba95c9dcb70f805a",
+    "semantic_hash": "95e9cde924f608efba95c9dcb70f805a"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/dooflix.js": {
+    "mtime": 1778259953.8839188,
+    "ast_hash": "6d28811619c356526022c35543aee55a",
+    "semantic_hash": "6d28811619c356526022c35543aee55a"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/einschalten.js": {
+    "mtime": 1777795523.780812,
+    "ast_hash": "e2535deba74bd51c18040b4fc80c94a4",
+    "semantic_hash": "e2535deba74bd51c18040b4fc80c94a4"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/embed69.js": {
+    "mtime": 1778259953.8899188,
+    "ast_hash": "eb310662b70923075d65010ea4ae87da",
+    "semantic_hash": "eb310662b70923075d65010ea4ae87da"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/filmpalast.js": {
+    "mtime": 1777795523.782812,
+    "ast_hash": "4755df1cf5e33237bfea3171f05c96c3",
+    "semantic_hash": "4755df1cf5e33237bfea3171f05c96c3"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/flixindia.js": {
+    "mtime": 1778259953.896919,
+    "ast_hash": "c2926a9f837152c89582dd6325f40209",
+    "semantic_hash": "c2926a9f837152c89582dd6325f40209"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/fmovies.js": {
+    "mtime": 1778259953.902919,
+    "ast_hash": "57f814a40247e18a83a928bc176fabbb",
+    "semantic_hash": "57f814a40247e18a83a928bc176fabbb"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/fr-anime-sama.js": {
+    "mtime": 1779688854.2825184,
+    "ast_hash": "02a155b24d42c1bc1d2a8648866aaeaf",
+    "semantic_hash": "02a155b24d42c1bc1d2a8648866aaeaf"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/fr-animesite.js": {
+    "mtime": 1779688854.2825184,
+    "ast_hash": "1efd793b3652939f408d7219f78c2ebe",
+    "semantic_hash": "1efd793b3652939f408d7219f78c2ebe"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/fr-animesultra.js": {
+    "mtime": 1779688854.2825184,
+    "ast_hash": "1118ff92684f522d4c9aa857eacd9eaf",
+    "semantic_hash": "1118ff92684f522d4c9aa857eacd9eaf"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/fr-animevostfr.js": {
+    "mtime": 1779688854.2825184,
+    "ast_hash": "45c7089864ed309276d0445678c73bf4",
+    "semantic_hash": "45c7089864ed309276d0445678c73bf4"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/fr-animoflix.js": {
+    "mtime": 1779688854.2825184,
+    "ast_hash": "2d78f087d2631cfa4829ec44449a5a5f",
+    "semantic_hash": "2d78f087d2631cfa4829ec44449a5a5f"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/fr-dulourd.js": {
+    "mtime": 1779688854.2825184,
+    "ast_hash": "2f34603502ce69fb8fb248edfd1d460a",
+    "semantic_hash": "2f34603502ce69fb8fb248edfd1d460a"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/fr-french-anime.js": {
+    "mtime": 1779688854.2825184,
+    "ast_hash": "e388ae26390c63f8a2c4928487d4f9a5",
+    "semantic_hash": "e388ae26390c63f8a2c4928487d4f9a5"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/fr-frenchstream.js": {
+    "mtime": 1779688854.2825184,
+    "ast_hash": "8f4d1783e254a6fa55b29d2cb2bba493",
+    "semantic_hash": "8f4d1783e254a6fa55b29d2cb2bba493"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/fr-jetanimes.js": {
+    "mtime": 1779688854.2825184,
+    "ast_hash": "98aecca9c7e7041b1b9851614bf29d31",
+    "semantic_hash": "98aecca9c7e7041b1b9851614bf29d31"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/fr-movix.js": {
+    "mtime": 1779688854.2835186,
+    "ast_hash": "64aa9d1a3471d04e1a924f5b97e38b7f",
+    "semantic_hash": "64aa9d1a3471d04e1a924f5b97e38b7f"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/fr-mugiwarastream.js": {
+    "mtime": 1779688854.2835186,
+    "ast_hash": "096460450b5fafe1bb035de2bebb84d5",
+    "semantic_hash": "096460450b5fafe1bb035de2bebb84d5"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/fr-sekai.js": {
+    "mtime": 1779688854.2835186,
+    "ast_hash": "3fc0e57d007c7e61ce9813a34eef1bc6",
+    "semantic_hash": "3fc0e57d007c7e61ce9813a34eef1bc6"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/fr-voiranime.js": {
+    "mtime": 1779688854.2835186,
+    "ast_hash": "364fa380b6cc87cc5c414e24f163f223",
+    "semantic_hash": "364fa380b6cc87cc5c414e24f163f223"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/fr-vostfree.js": {
+    "mtime": 1779688854.2835186,
+    "ast_hash": "7833551d81dd5502c030424fc8b3dd1f",
+    "semantic_hash": "7833551d81dd5502c030424fc8b3dd1f"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/frembed.js": {
+    "mtime": 1777795523.786812,
+    "ast_hash": "b808c8284b7a273664aaf8a09aca1d1f",
+    "semantic_hash": "b808c8284b7a273664aaf8a09aca1d1f"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/gramcinema.js": {
+    "mtime": 1778259953.9099193,
+    "ast_hash": "47a5507b2cb1db94e014354d8cd2cee2",
+    "semantic_hash": "47a5507b2cb1db94e014354d8cd2cee2"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/hdhub4u.js": {
+    "mtime": 1778243521.6404262,
+    "ast_hash": "34507ef015bc741f21c496879f7d457e",
+    "semantic_hash": "34507ef015bc741f21c496879f7d457e"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/hdmovie2.js": {
+    "mtime": 1778259953.9199195,
+    "ast_hash": "92efbfc8f9188ba1097183efe8705983",
+    "semantic_hash": "92efbfc8f9188ba1097183efe8705983"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/hindmoviez.js": {
+    "mtime": 1778259953.9259195,
+    "ast_hash": "64bf5cf10af3ac4e05b2748cb513282a",
+    "semantic_hash": "64bf5cf10af3ac4e05b2748cb513282a"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/isaidub.js": {
+    "mtime": 1778259953.9339197,
+    "ast_hash": "93be2ebca578970bd4eaf65f840d19a0",
+    "semantic_hash": "93be2ebca578970bd4eaf65f840d19a0"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/it-animesaturn.js": {
+    "mtime": 1777795523.7898123,
+    "ast_hash": "03175e065d04acd960a91799979f0908",
+    "semantic_hash": "03175e065d04acd960a91799979f0908"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/it-animeunity.js": {
+    "mtime": 1777795523.7898123,
+    "ast_hash": "b277fbf887420654499edf29c7a1dc45",
+    "semantic_hash": "b277fbf887420654499edf29c7a1dc45"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/it-animeworld.js": {
+    "mtime": 1777795523.7898123,
+    "ast_hash": "fc9f182207178cae1308d252de735cf5",
+    "semantic_hash": "fc9f182207178cae1308d252de735cf5"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/it-cc.js": {
+    "mtime": 1777795523.7898123,
+    "ast_hash": "2ce38a89c741d0a2e27e230085595f73",
+    "semantic_hash": "2ce38a89c741d0a2e27e230085595f73"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/it-guardahd.js": {
+    "mtime": 1777795523.7898123,
+    "ast_hash": "5ba9a4cd64c5aafa2341e94f6579007f",
+    "semantic_hash": "5ba9a4cd64c5aafa2341e94f6579007f"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/it-guardaserie.js": {
+    "mtime": 1777795523.7908123,
+    "ast_hash": "1b0ad5ac18061f1a0ad3b9f851c477bd",
+    "semantic_hash": "1b0ad5ac18061f1a0ad3b9f851c477bd"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/it-guardoserie.js": {
+    "mtime": 1777795523.7908123,
+    "ast_hash": "4f0d487aef4d121b2694ffe5cab57594",
+    "semantic_hash": "4f0d487aef4d121b2694ffe5cab57594"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/it-streamingcommunity.js": {
+    "mtime": 1777795523.7908123,
+    "ast_hash": "b2d36eb99956aec2111204185bd3239a",
+    "semantic_hash": "b2d36eb99956aec2111204185bd3239a"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/kisskh.js": {
+    "mtime": 1778265151.9592304,
+    "ast_hash": "2b94cdb2eec19803e2f77f7f1a926c65",
+    "semantic_hash": "2b94cdb2eec19803e2f77f7f1a926c65"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/lamovie.js": {
+    "mtime": 1778259953.996921,
+    "ast_hash": "1ef3449f1206518c6aedad7a5e82b14e",
+    "semantic_hash": "1ef3449f1206518c6aedad7a5e82b14e"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/latino-cinecalidad.js": {
+    "mtime": 1777795523.7918122,
+    "ast_hash": "434ceb252c937d93ac3401152471d898",
+    "semantic_hash": "434ceb252c937d93ac3401152471d898"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/latino-embed69.js": {
+    "mtime": 1777795523.7918122,
+    "ast_hash": "2b162abfbfee1f3443e1c249e2ca8981",
+    "semantic_hash": "2b162abfbfee1f3443e1c249e2ca8981"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/latino-lamovie.js": {
+    "mtime": 1777795523.7918122,
+    "ast_hash": "fadcb502dbd1ecd55c938f8c0c57e984",
+    "semantic_hash": "fadcb502dbd1ecd55c938f8c0c57e984"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/latino-seriesmetro.js": {
+    "mtime": 1777795523.7928123,
+    "ast_hash": "36e79c68cc106e6cafc97fe94b255c58",
+    "semantic_hash": "36e79c68cc106e6cafc97fe94b255c58"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/latino-xupalace.js": {
+    "mtime": 1777795523.7928123,
+    "ast_hash": "047a18327eff0625c737aadc761bfa78",
+    "semantic_hash": "047a18327eff0625c737aadc761bfa78"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/movieblast.js": {
+    "mtime": 1778259954.003921,
+    "ast_hash": "7ca88373e3a885aa7fdd7512598772c5",
+    "semantic_hash": "7ca88373e3a885aa7fdd7512598772c5"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/moviebox.js": {
+    "mtime": 1778259954.0109212,
+    "ast_hash": "d8d9695f2b275ae621aff71d54040aa7",
+    "semantic_hash": "d8d9695f2b275ae621aff71d54040aa7"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/moviesmod.js": {
+    "mtime": 1778259954.0179214,
+    "ast_hash": "03fac341e8c917910c136844733e6482",
+    "semantic_hash": "03fac341e8c917910c136844733e6482"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/movix.js": {
+    "mtime": 1778259954.0239215,
+    "ast_hash": "8c5b4084c05634d6e176db0672a9d737",
+    "semantic_hash": "8c5b4084c05634d6e176db0672a9d737"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/multivid.js": {
+    "mtime": 1778259954.0309217,
+    "ast_hash": "e27d154596e9b5cb70108e202a0475f5",
+    "semantic_hash": "e27d154596e9b5cb70108e202a0475f5"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/nakios.js": {
+    "mtime": 1778259954.037922,
+    "ast_hash": "124442bc4826b4c0282f1e61b6baaaa3",
+    "semantic_hash": "124442bc4826b4c0282f1e61b6baaaa3"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/netmirror.js": {
+    "mtime": 1778259954.0449219,
+    "ast_hash": "bde7171d4bd3dbbb6d9d3024b1c68708",
+    "semantic_hash": "bde7171d4bd3dbbb6d9d3024b1c68708"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/onetouchtv.js": {
+    "mtime": 1778260605.0402753,
+    "ast_hash": "52ca709f794c5125549ce3a9772f5a57",
+    "semantic_hash": "52ca709f794c5125549ce3a9772f5a57"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/onlykdrama.js": {
+    "mtime": 1778259954.0569222,
+    "ast_hash": "94c07ad261c79469d7ff8c289848a83b",
+    "semantic_hash": "94c07ad261c79469d7ff8c289848a83b"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/playimdb.js": {
+    "mtime": 1778259954.0649223,
+    "ast_hash": "1b915959bafce89cb64088510e97e18e",
+    "semantic_hash": "1b915959bafce89cb64088510e97e18e"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/playimdb_v2.js": {
+    "mtime": 1778259954.0709224,
+    "ast_hash": "79850605c7247f0abc19eca6f814f3ba",
+    "semantic_hash": "79850605c7247f0abc19eca6f814f3ba"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/purstream.js": {
+    "mtime": 1778259954.0769227,
+    "ast_hash": "58ec44b93af61f1bdbee71060cf5848e",
+    "semantic_hash": "58ec44b93af61f1bdbee71060cf5848e"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/rectv-tr.js": {
+    "mtime": 1777795523.8318133,
+    "ast_hash": "3a3f5ba8f92a9d06637f6ef772bc0aad",
+    "semantic_hash": "3a3f5ba8f92a9d06637f6ef772bc0aad"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/rgshows.js": {
+    "mtime": 1778259954.0859227,
+    "ast_hash": "6b4ddcf2c378ea2dcf65857ef615c089",
+    "semantic_hash": "6b4ddcf2c378ea2dcf65857ef615c089"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/showbox.js": {
+    "mtime": 1778260169.269383,
+    "ast_hash": "12924be7dc0ff5346e9a39c0aa8378b4",
+    "semantic_hash": "12924be7dc0ff5346e9a39c0aa8378b4"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/streamflix.js": {
+    "mtime": 1779688854.297519,
+    "ast_hash": "2d92fd6e17c3f70569c0d13ebfe155a5",
+    "semantic_hash": "2d92fd6e17c3f70569c0d13ebfe155a5"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/streamflix_eng.js": {
+    "mtime": 1777795523.8358133,
+    "ast_hash": "dd3084c9b15235c7a239e131021bac0b",
+    "semantic_hash": "dd3084c9b15235c7a239e131021bac0b"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/test.js": {
+    "mtime": 1777795523.8358133,
+    "ast_hash": "c7154dfe7828ad79f0af34be8a1ad57a",
+    "semantic_hash": "c7154dfe7828ad79f0af34be8a1ad57a"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/test2.js": {
+    "mtime": 1777795523.8358133,
+    "ast_hash": "b7945e171a8c3277a1abff26c2babd3a",
+    "semantic_hash": "b7945e171a8c3277a1abff26c2babd3a"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/toflix.js": {
+    "mtime": 1778259954.1309237,
+    "ast_hash": "7d323cd26a67ffc7a3d882a0ada66e09",
+    "semantic_hash": "7d323cd26a67ffc7a3d882a0ada66e09"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/turkish-m3u.js": {
+    "mtime": 1777795523.8548138,
+    "ast_hash": "9e43ef0d4208fb53fe84235bff7f7040",
+    "semantic_hash": "9e43ef0d4208fb53fe84235bff7f7040"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/uhdmovies.js": {
+    "mtime": 1778259954.149924,
+    "ast_hash": "53066e45f7a2649a4a7fc38e935acb5d",
+    "semantic_hash": "53066e45f7a2649a4a7fc38e935acb5d"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/videasy.js": {
+    "mtime": 1778259954.1549242,
+    "ast_hash": "b7d6fdbf18eed5da6e078908443f5725",
+    "semantic_hash": "b7d6fdbf18eed5da6e078908443f5725"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/vidlink.js": {
+    "mtime": 1779688854.3125193,
+    "ast_hash": "7705f841c541bbc98c4857f510b292b9",
+    "semantic_hash": "7705f841c541bbc98c4857f510b292b9"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/vidmody-tr.js": {
+    "mtime": 1777795523.8578138,
+    "ast_hash": "dcf2f3828410681e36fa0cc2d7e63b11",
+    "semantic_hash": "dcf2f3828410681e36fa0cc2d7e63b11"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/vidsrc.js": {
+    "mtime": 1778259954.1829247,
+    "ast_hash": "a6156a1a65ffd6e8dc17060e5cf80d13",
+    "semantic_hash": "a6156a1a65ffd6e8dc17060e5cf80d13"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/vidzee.js": {
+    "mtime": 1777795523.8828144,
+    "ast_hash": "fd7e7b860c402fee0377a1f1fecab3f5",
+    "semantic_hash": "fd7e7b860c402fee0377a1f1fecab3f5"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/providers/vixsrc.js": {
+    "mtime": 1778259954.1899247,
+    "ast_hash": "1408f83f5bcc196192a12d137a399751",
+    "semantic_hash": "1408f83f5bcc196192a12d137a399751"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/src/allmovieland/constants.js": {
+    "mtime": 1777795523.8848145,
+    "ast_hash": "5b4353b4e394164100ca12cf3cf33201",
+    "semantic_hash": "5b4353b4e394164100ca12cf3cf33201"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/src/allmovieland/index.js": {
+    "mtime": 1777795523.8848145,
+    "ast_hash": "51823e83a2b5a340cb5719bd2746f969",
+    "semantic_hash": "51823e83a2b5a340cb5719bd2746f969"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/src/allmovieland/utils.js": {
+    "mtime": 1777795523.8848145,
+    "ast_hash": "69b8de9ad8a7b5dcb4dab47604244627",
+    "semantic_hash": "69b8de9ad8a7b5dcb4dab47604244627"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/src/anime-sama/extractor.js": {
+    "mtime": 1777795523.8858147,
+    "ast_hash": "2d8b71b221cccabd86a0532c5b5c03b3",
+    "semantic_hash": "2d8b71b221cccabd86a0532c5b5c03b3"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/src/anime-sama/http.js": {
+    "mtime": 1777795523.8858147,
+    "ast_hash": "99536a98e3062602fcdb734972f45bda",
+    "semantic_hash": "99536a98e3062602fcdb734972f45bda"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/src/anime-sama/index.js": {
+    "mtime": 1777795523.8858147,
+    "ast_hash": "c500747ab0668238df77a416a507f2fb",
+    "semantic_hash": "c500747ab0668238df77a416a507f2fb"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/src/cinestream/index.js": {
+    "mtime": 1778161118.4470477,
+    "ast_hash": "49f77f4b1558435772efe417ca63cbcb",
+    "semantic_hash": "49f77f4b1558435772efe417ca63cbcb"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/src/hdhub4u/constants.js": {
+    "mtime": 1778223369.715092,
+    "ast_hash": "9430af9edbdffeaf2b4db430b9228c93",
+    "semantic_hash": "9430af9edbdffeaf2b4db430b9228c93"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/src/hdhub4u/extractors.js": {
+    "mtime": 1778179411.8578382,
+    "ast_hash": "530ac31884dad3bfdab28fcf6f91372a",
+    "semantic_hash": "530ac31884dad3bfdab28fcf6f91372a"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/src/hdhub4u/index.js": {
+    "mtime": 1778178189.9354568,
+    "ast_hash": "dc40d094e1b701838a34e771d8ed0a68",
+    "semantic_hash": "dc40d094e1b701838a34e771d8ed0a68"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/src/hdhub4u/utils.js": {
+    "mtime": 1778223426.5561876,
+    "ast_hash": "f5ca7b12e7d44166a4784c025ecf1676",
+    "semantic_hash": "f5ca7b12e7d44166a4784c025ecf1676"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/src/isaidub/index.js": {
+    "mtime": 1777795523.8888147,
+    "ast_hash": "08faf70ba1fcdd06ea506e8742f12227",
+    "semantic_hash": "08faf70ba1fcdd06ea506e8742f12227"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/src/providers/dramafull.js": {
+    "mtime": 1777795523.8898146,
+    "ast_hash": "c23e12813fa27699c4487ada0272516e",
+    "semantic_hash": "c23e12813fa27699c4487ada0272516e"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/src/providers/hianime.js": {
+    "mtime": 1777795523.8898146,
+    "ast_hash": "7e0ce82bdd65c8cf8a715860696a9ff8",
+    "semantic_hash": "7e0ce82bdd65c8cf8a715860696a9ff8"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/src/providers/movies4u.js": {
+    "mtime": 1777795523.8908148,
+    "ast_hash": "f668d41ad457402d93e333486ed6e67c",
+    "semantic_hash": "f668d41ad457402d93e333486ed6e67c"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/src/providers/movies4u/index.js": {
+    "mtime": 1777795523.8918147,
+    "ast_hash": "57ccd97ccd9c0bb12b484e0faa9d5930",
+    "semantic_hash": "57ccd97ccd9c0bb12b484e0faa9d5930"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/src/providers/moviesdrive.js": {
+    "mtime": 1777795523.8928149,
+    "ast_hash": "99117d07acc6166c89e0fa8d8af54c1d",
+    "semantic_hash": "99117d07acc6166c89e0fa8d8af54c1d"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/update_manifest_script.js": {
+    "mtime": 1777795523.8938148,
+    "ast_hash": "6db8af18a62b9e40d537db93c5c5993e",
+    "semantic_hash": "6db8af18a62b9e40d537db93c5c5993e"
+  },
+  "/home/sohil/NebulaStreams/vendor/Torrent-Scraping/API/TorrentScraper.py": {
+    "mtime": 1777385925.3657098,
+    "ast_hash": "4dd17cbb2196c26367ac065eb3da0873",
+    "semantic_hash": "4dd17cbb2196c26367ac065eb3da0873"
+  },
+  "/home/sohil/NebulaStreams/vendor/Torrent-Scraping/API/torrent_server.py": {
+    "mtime": 1777385925.36671,
+    "ast_hash": "3fa6a46ddcb1c0ed9d65587fbc85a59e",
+    "semantic_hash": "3fa6a46ddcb1c0ed9d65587fbc85a59e"
+  },
+  "/home/sohil/NebulaStreams/vendor/pstream-providers/index.d.ts": {
+    "mtime": 1780035137.4017694,
+    "ast_hash": "0fed3fffa5689e16c87f152c282447ba",
+    "semantic_hash": "0fed3fffa5689e16c87f152c282447ba"
+  },
+  "/home/sohil/NebulaStreams/vendor/pstream-providers/index.js": {
+    "mtime": 1780035137.4067695,
+    "ast_hash": "0b9aa1f3147b7fe34e85059ca9609482",
+    "semantic_hash": "0b9aa1f3147b7fe34e85059ca9609482"
+  },
+  "/home/sohil/NebulaStreams/.codex/skills/graphify/SKILL.md": {
+    "mtime": 1780559660.2471445,
+    "ast_hash": "7869351527b616553075b86f6148b0dc",
+    "semantic_hash": "7869351527b616553075b86f6148b0dc"
+  },
+  "/home/sohil/NebulaStreams/.codex/skills/graphify/references/add-watch.md": {
+    "mtime": 1780559269.566583,
+    "ast_hash": "0df0589623217ca38a12bdcabfb42f4c",
+    "semantic_hash": "0df0589623217ca38a12bdcabfb42f4c"
+  },
+  "/home/sohil/NebulaStreams/.codex/skills/graphify/references/exports.md": {
+    "mtime": 1780559269.5675828,
+    "ast_hash": "7fb1a81aca17a462db70684a324fcfb0",
+    "semantic_hash": "7fb1a81aca17a462db70684a324fcfb0"
+  },
+  "/home/sohil/NebulaStreams/.codex/skills/graphify/references/extraction-spec.md": {
+    "mtime": 1780559269.5675828,
+    "ast_hash": "a86a7321597b23cc2b22e011b3dc6e1d",
+    "semantic_hash": "a86a7321597b23cc2b22e011b3dc6e1d"
+  },
+  "/home/sohil/NebulaStreams/.codex/skills/graphify/references/github-and-merge.md": {
+    "mtime": 1780559269.568583,
+    "ast_hash": "cde13df085e4c492aeb7ba298a996d0d",
+    "semantic_hash": "cde13df085e4c492aeb7ba298a996d0d"
+  },
+  "/home/sohil/NebulaStreams/.codex/skills/graphify/references/hooks.md": {
+    "mtime": 1780559269.568583,
+    "ast_hash": "3f545db6ce646650bb9de588f5512a27",
+    "semantic_hash": "3f545db6ce646650bb9de588f5512a27"
+  },
+  "/home/sohil/NebulaStreams/.codex/skills/graphify/references/query.md": {
+    "mtime": 1780559269.5975838,
+    "ast_hash": "c2a8e798674a81b02aa9975f43023819",
+    "semantic_hash": "c2a8e798674a81b02aa9975f43023819"
+  },
+  "/home/sohil/NebulaStreams/.codex/skills/graphify/references/transcribe.md": {
+    "mtime": 1780559269.5985837,
+    "ast_hash": "70f6aa30d6211f3a2c7e9fc45479f50c",
+    "semantic_hash": "70f6aa30d6211f3a2c7e9fc45479f50c"
+  },
+  "/home/sohil/NebulaStreams/.codex/skills/graphify/references/update.md": {
+    "mtime": 1780559269.5985837,
+    "ast_hash": "735932eaa4f0c8fef9566c538ae3e5f8",
+    "semantic_hash": "735932eaa4f0c8fef9566c538ae3e5f8"
+  },
+  "/home/sohil/NebulaStreams/AGENTS.md": {
+    "mtime": 1780559863.5165074,
+    "ast_hash": "4971623d9890625144497e8d52a21748",
+    "semantic_hash": "4971623d9890625144497e8d52a21748"
+  },
+  "/home/sohil/NebulaStreams/AGENT_HANDOFF.md": {
+    "mtime": 1778306852.1959705,
+    "ast_hash": "04d87317467416e69d109f88be4b8f01",
+    "semantic_hash": "04d87317467416e69d109f88be4b8f01"
+  },
+  "/home/sohil/NebulaStreams/AI.md": {
+    "mtime": 1777795523.612808,
+    "ast_hash": "1a7189084e364f5d49e6a26852b16864",
+    "semantic_hash": "1a7189084e364f5d49e6a26852b16864"
+  },
+  "/home/sohil/NebulaStreams/FUTURE_MAINTENANCE.md": {
+    "mtime": 1780035137.272767,
+    "ast_hash": "250200cfae268776c2098bccfc46dbc8",
+    "semantic_hash": "250200cfae268776c2098bccfc46dbc8"
+  },
+  "/home/sohil/NebulaStreams/KNOWN_EDGE_CASES.md": {
+    "mtime": 1780035137.2737672,
+    "ast_hash": "43ef46d08175fca9cc60561baafccc7f",
+    "semantic_hash": "43ef46d08175fca9cc60561baafccc7f"
+  },
+  "/home/sohil/NebulaStreams/PERFORMANCE_REPORT.md": {
+    "mtime": 1780035137.2737672,
+    "ast_hash": "e9032a407a30db55aff0d1cd2bb8ac8b",
+    "semantic_hash": "e9032a407a30db55aff0d1cd2bb8ac8b"
+  },
+  "/home/sohil/NebulaStreams/README.md": {
+    "mtime": 1780505973.4175313,
+    "ast_hash": "9c8344c30e1ab9b3d5822fe56aa5f1b3",
+    "semantic_hash": "9c8344c30e1ab9b3d5822fe56aa5f1b3"
+  },
+  "/home/sohil/NebulaStreams/STABILITY_REPORT.md": {
+    "mtime": 1780035137.2747672,
+    "ast_hash": "b02a773891261ad2b35ae19f2a547a9c",
+    "semantic_hash": "b02a773891261ad2b35ae19f2a547a9c"
+  },
+  "/home/sohil/NebulaStreams/docs/STALKER_PORTAL.md": {
+    "mtime": 1780505452.956204,
+    "ast_hash": "89a6684dee8455346e9ded42f1af1f90",
+    "semantic_hash": "89a6684dee8455346e9ded42f1af1f90"
+  },
+  "/home/sohil/NebulaStreams/docs/XTREAM_CODES.md": {
+    "mtime": 1780505452.9572039,
+    "ast_hash": "cc165ce17c02ebca038983d0858d1186",
+    "semantic_hash": "cc165ce17c02ebca038983d0858d1186"
+  },
+  "/home/sohil/NebulaStreams/docs/rogplay-integration.md": {
+    "mtime": 1779688854.2175167,
+    "ast_hash": "0ce8c1a9eb85fef8eac191731c61d016",
+    "semantic_hash": "0ce8c1a9eb85fef8eac191731c61d016"
+  },
+  "/home/sohil/NebulaStreams/render.yaml": {
+    "mtime": 1778264492.1168725,
+    "ast_hash": "ef07b2ecec4f93a91e0e6a24442b262a",
+    "semantic_hash": "ef07b2ecec4f93a91e0e6a24442b262a"
+  },
+  "/home/sohil/NebulaStreams/services/scrapling_service/requirements.txt": {
+    "mtime": 1779688854.270518,
+    "ast_hash": "bc190cc512283a64a77bf5a72f40c3bb",
+    "semantic_hash": "bc190cc512283a64a77bf5a72f40c3bb"
+  },
+  "/home/sohil/NebulaStreams/src/ARCHITECTURE.md": {
+    "mtime": 1779688854.2745183,
+    "ast_hash": "63511398703a54d576a9421e8e69cf03",
+    "semantic_hash": "63511398703a54d576a9421e8e69cf03"
+  },
+  "/home/sohil/NebulaStreams/src/README.md": {
+    "mtime": 1779688854.2745183,
+    "ast_hash": "97c8582785e25dff6106028f1087dead",
+    "semantic_hash": "97c8582785e25dff6106028f1087dead"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/.github/workflows/node.js.yml": {
+    "mtime": 1777795523.6398087,
+    "ast_hash": "b564ee2791289918eb874e36b4a40484",
+    "semantic_hash": "b564ee2791289918eb874e36b4a40484"
+  },
+  "/home/sohil/NebulaStreams/vendor/HTTP/README.md": {
+    "mtime": 1777795523.6398087,
+    "ast_hash": "bdc6092958c12a6ccd589c5675d442fe",
+    "semantic_hash": "bdc6092958c12a6ccd589c5675d442fe"
+  },
+  "/home/sohil/NebulaStreams/vendor/Torrent-Scraping/API/blocklist.txt": {
+    "mtime": 1777385925.36671,
+    "ast_hash": "5546662e9daa547c25f6db7be5c91ed0",
+    "semantic_hash": "5546662e9daa547c25f6db7be5c91ed0"
+  },
+  "/home/sohil/NebulaStreams/vendor/Torrent-Scraping/API/blocklist_bkp.txt": {
+    "mtime": 1777385925.36671,
+    "ast_hash": "db2f2afacccb02ad31411add560c7416",
+    "semantic_hash": "db2f2afacccb02ad31411add560c7416"
+  },
+  "/home/sohil/NebulaStreams/vendor/Torrent-Scraping/README.md": {
+    "mtime": 1777385925.36671,
+    "ast_hash": "891f6d31a326e96708002acba2f3b22e",
+    "semantic_hash": "891f6d31a326e96708002acba2f3b22e"
+  },
+  "/home/sohil/NebulaStreams/assets/WhatsApp Image 2026-04-25 at 12.16.53 AM.jpeg": {
+    "mtime": 1777385925.2557065,
+    "ast_hash": "fdbd29eff3d2e31d40b05278386db58d",
+    "semantic_hash": "fdbd29eff3d2e31d40b05278386db58d"
+  },
+  "/home/sohil/NebulaStreams/assets/nebulastreams-icon.jpg": {
+    "mtime": 1777385925.2557065,
+    "ast_hash": "6c19ea467c312fe95a72e99cbafafefa",
+    "semantic_hash": "6c19ea467c312fe95a72e99cbafafefa"
+  },
+  "/home/sohil/NebulaStreams/assets/nebulastreams-logo.jpeg": {
+    "mtime": 1777385925.2567067,
+    "ast_hash": "34ac87d9133641a5131bef3be3ac30c8",
+    "semantic_hash": "34ac87d9133641a5131bef3be3ac30c8"
+  }
+}

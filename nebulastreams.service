@@ -19,6 +19,7 @@ Environment=HUBCLOUD_MEMORY_CACHE_MAX_MB=1
 Environment=STREMIO_MAX_INFLIGHT_SEARCHES=35
 Environment=MAX_ACTIVE_STREAMS=6
 Environment=PROVIDER_GLOBAL_MAX_INFLIGHT=6
+EnvironmentFile=-/home/sohil/NebulaStreams/.env
 ExecStart=/home/sohil/NebulaStreams/start.sh
 Restart=always
 RestartSec=5

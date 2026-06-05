@@ -1,22 +1,6 @@
-<div align="center">
-
-<img src="./assets/WhatsApp Image 2026-04-25 at 12.16.53 AM.jpeg" alt="NebulaStreams logo" width="220" />
-
-# 📺 NebulaStreams
+# NebulaStreams
 
 Lightweight scraper-backed streaming backend for Stremio.
-
-[![live addon](https://img.shields.io/badge/live-nebula.work.gd-4f46e5)](https://nebula.work.gd/manifest.json)
-[![configure](https://img.shields.io/badge/configure-nebula.work.gd%2Fconfigure-0ea5e9)](https://nebula.work.gd/configure)
-[![node](https://img.shields.io/badge/node-%3E%3D20-339933)](https://nodejs.org/)
-[![platform](https://img.shields.io/badge/platform-Render%20ready-46e3b7)](#render-deployment)
-[![playback](https://img.shields.io/badge/playback-HTTP%20%2B%20Torrent-green)](#)
-[![cache](https://img.shields.io/badge/cache-disk%20backed-6f42c1)](#)
-[![runtime](https://img.shields.io/badge/runtime-low--end%20friendly-success)](#)
-
-[Features](#features) • [Live Addon](https://nebula.work.gd/manifest.json) • [Configure](https://nebula.work.gd/configure) • [Render Deployment](#render-deployment) • [Local Development](#local-development)
-
-</div>
 
 ## Features
 
@@ -26,22 +10,88 @@ Lightweight scraper-backed streaming backend for Stremio.
 - Native Stremio torrent entries via `infoHash`
 - Disk-backed provider and metadata cache
 
-## Render Deployment
+## VPS Deployment
 
-This repo includes [render.yaml](/home/sohil/hybrid-stream-server/render.yaml) for a Render Blueprint deployment.
+This repo is intended to run on a VPS under a user-level systemd service. The app listens on `PORT` and should be exposed through your HTTPS reverse proxy or tunnel.
 
-1. Push this repo to GitHub.
-2. In Render, create a new Blueprint and select this repository.
-3. Render will create a Node web service using the settings in `render.yaml`.
-4. After the first deploy, your install URL will be:
-   `https://<your-service>.onrender.com/manifest.json`
-5. The provider/quality configure page will be:
-   `https://<your-service>.onrender.com/configure`
+### 1. Prepare `.env`
 
-Important:
-- Render free web services spin down after idle time, so the first request after sleeping will cold start.
-- The addon now returns direct HTTP URLs and native Stremio torrent entries, so Render is mostly serving manifests and scraping providers, not relaying the media stream itself.
-- Render's filesystem is ephemeral, so the cache resets on redeploy/restart.
+```bash
+cp .env.example .env
+nano .env
+```
+
+Set at least:
+
+- `PUBLIC_BASE_URL`: public HTTPS base URL, for example `https://your-domain.example`
+- `ADMIN_PASSWORD`: long unique admin password
+- `STREAM_SOURCE_TOKEN_SECRET`: long random signing secret
+- `PORT`: local listen port, default `3000`
+
+Do not commit `.env`. It may contain admin credentials, Redis URLs, or other secrets.
+
+### 2. Install and start
+
+```bash
+git pull
+npm ci
+chmod +x start.sh
+mkdir -p ~/.config/systemd/user
+cp nebulastreams.service ~/.config/systemd/user/nebulastreams.service
+systemctl --user daemon-reload
+systemctl --user enable nebulastreams
+systemctl --user restart nebulastreams
+systemctl --user status nebulastreams
+```
+
+If your repo path is not `/home/sohil/NebulaStreams`, edit `WorkingDirectory`, `Environment=HOME`, `EnvironmentFile`, and `ExecStart` in `~/.config/systemd/user/nebulastreams.service`.
+
+To keep user services running after logout:
+
+```bash
+loginctl enable-linger "$USER"
+```
+
+### 3. Check logs and health
+
+```bash
+journalctl --user -u nebulastreams -f
+curl http://127.0.0.1:3000/health
+curl http://127.0.0.1:3000/manifest.json
+```
+
+Expected local checks:
+
+- `/health` returns JSON with service status.
+- `/manifest.json` returns the Stremio addon manifest.
+
+## Configuration
+
+Important environment variables are listed in `.env.example`.
+
+Production safety notes:
+
+- `ADMIN_PASSWORD` defaults in code for compatibility with existing installs. Override it in `.env` on any public VPS.
+- `STREAM_SOURCE_TOKEN_SECRET` signs private stream URLs. Set a unique value before public use.
+- `TMDB_API_KEY` has a built-in fallback for current behavior. Use your own key if you operate the service long term.
+- Torbox user API keys are entered through private Stremio configuration URLs. Do not put user Torbox keys in `.env`, systemd units, logs, or committed files.
+
+## Torbox Behavior
+
+Torbox is optional. Without a Torbox API key, NebulaStreams keeps returning the normal available streams.
+
+When a user enables Torbox in `/configure`:
+
+- the key is embedded in that user's private manifest/stream URLs;
+- Torbox-only mode filters to streams that can be sent through Torbox;
+- failed Torbox availability or resolve calls are logged and the request falls back according to current stream logic;
+- Torbox credentials must not be shared publicly because the private manifest URL contains access material.
+
+Troubleshooting:
+
+- Recreate the private install URL if a Torbox key changes.
+- Check `journalctl --user -u nebulastreams -f` for Torbox warnings.
+- Test normal `/manifest.json` first to separate service health from Torbox account/API issues.
 
 ## Local Development
 
@@ -51,6 +101,62 @@ npm start
 ```
 
 Local endpoints:
+
 - `http://127.0.0.1:3000/manifest.json`
 - `http://127.0.0.1:3000/configure`
 - `http://127.0.0.1:3000/health`
+
+## Verification
+
+Before or after a VPS update:
+
+```bash
+npm run check:syntax
+npm start
+curl http://127.0.0.1:3000/health
+curl http://127.0.0.1:3000/manifest.json
+```
+
+If running under systemd, use:
+
+```bash
+systemctl --user restart nebulastreams
+systemctl --user status nebulastreams
+journalctl --user -u nebulastreams -f
+```
+
+## Rollback
+
+Fast rollback to the previous git commit:
+
+```bash
+git log --oneline -5
+git checkout <previous-commit>
+npm ci
+chmod +x start.sh
+systemctl --user daemon-reload
+systemctl --user restart nebulastreams
+systemctl --user status nebulastreams
+curl http://127.0.0.1:3000/health
+curl http://127.0.0.1:3000/manifest.json
+```
+
+Rollback without changing git checkout:
+
+```bash
+git status --short
+git diff
+git restore README.md .gitignore .env.example start.sh nebulastreams.service
+npm ci
+systemctl --user restart nebulastreams
+```
+
+Only restore changed files you intend to discard. Keep your server `.env` file.
+
+## Troubleshooting
+
+- Service will not start: run `journalctl --user -u nebulastreams -n 100 --no-pager`.
+- Port already used: change `PORT` in `.env` and restart.
+- Public URL wrong in Stremio: fix `PUBLIC_BASE_URL`, restart, then reinstall manifest.
+- Cache disk growth: inspect `CACHE_DIR` and tune `MAX_CACHE_SIZE_GB`.
+- Missing Python helper dependencies: set `SCRAPLING_SERVICE_AUTOSTART=false` if you do not use the local Scrapling helper.

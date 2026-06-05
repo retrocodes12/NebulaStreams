@@ -1,5 +1,8 @@
 node_modules/
 cache/
+.env
+.env.*
+!.env.example
 .agents/
 skills-lock.json
 services/scrapling_service/.venv/
