@@ -324,7 +324,7 @@ export class StalkerPortalAdapter {
   async requestPayload(credentials, type, action, extra = {}, { ttlMs = CACHE_TTL_MS, signal = null, refreshToken = false } = {}) {
     const normalized = normalizeCredentials(credentials);
     const cacheKey = `${this.getCredentialKey(normalized)}:${type}:${action}:${JSON.stringify(extra || {})}`;
-    const cached = this.cache.get(cacheKey);
+    const cached = ttlMs > 0 ? this.cache.get(cacheKey) : null;
     if (cached && cached.expiresAt > Date.now()) {
       return cached.value;
     }
@@ -333,20 +333,24 @@ export class StalkerPortalAdapter {
     try {
       const envelope = await this.requestEnvelope(normalized, type, action, extra, { token, signal });
       const value = getEnvelopePayload(envelope);
-      this.cache.set(cacheKey, {
-        value,
-        expiresAt: Date.now() + ttlMs
-      });
+      if (ttlMs > 0) {
+        this.cache.set(cacheKey, {
+          value,
+          expiresAt: Date.now() + ttlMs
+        });
+      }
       return value;
     } catch (error) {
       if (/token|auth|handshake|forbidden|authorization/iu.test(error?.message || '')) {
         token = await this.getToken(normalized, { forceRefresh: true, signal });
         const envelope = await this.requestEnvelope(normalized, type, action, extra, { token, signal });
         const value = getEnvelopePayload(envelope);
-        this.cache.set(cacheKey, {
-          value,
-          expiresAt: Date.now() + ttlMs
-        });
+        if (ttlMs > 0) {
+          this.cache.set(cacheKey, {
+            value,
+            expiresAt: Date.now() + ttlMs
+          });
+        }
         return value;
       }
       throw error;
@@ -627,7 +631,9 @@ export class StalkerPortalAdapter {
           disable_ad: 0,
           download: 0
         }, {
-          ttlMs: 20_000,
+          // Playback links are often one-use or extremely short-lived.
+          // Do not reuse them across Stremio retries/players.
+          ttlMs: 0,
           signal,
           refreshToken: false
         });

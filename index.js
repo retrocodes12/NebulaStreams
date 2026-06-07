@@ -16,6 +16,8 @@ import { SourceRegistry } from './services/sourceRegistry.js';
 import { StreamManager, HttpError } from './services/streamManager.js';
 import { TorrentEngineService } from './services/torrentEngine.js';
 import { UserTrackerService } from './services/userTracker.js';
+import { SupporterService } from './services/supporterService.js';
+import { EmailService } from './services/emailService.js';
 import { logger } from './utils/logger.js';
 
 const getHeapUsagePercent = () => {
@@ -60,6 +62,7 @@ const renderSupporterPills = (supporters = PROJECT_SUPPORTERS) => supporters
   .join('');
 
 const ADMIN_COOKIE_NAME = 'nebulastreams_admin';
+const SUPPORTER_COOKIE_NAME = 'nebulastreams_supporter';
 const ADMIN_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const CPU_SAMPLE_WINDOW_MS = 200;
 const { readFile } = fsPromises;
@@ -68,6 +71,30 @@ const sleep = (delayMs) => new Promise((resolve) => {
   const timer = setTimeout(resolve, delayMs);
   timer.unref?.();
 });
+
+const maskEmailAddress = (email) => {
+  const [user, domain] = String(email || '').trim().toLowerCase().split('@');
+  if (!user || !domain) return '';
+  return `${user.slice(0, 2) || '*'}***@${domain.slice(0, 1)}***`;
+};
+
+const parseKofiWebhookPayload = (body = {}) => {
+  if (typeof body.data === 'string') {
+    return JSON.parse(body.data);
+  }
+  if (typeof body.data === 'object' && body.data) {
+    return body.data;
+  }
+  return body;
+};
+
+const getKofiTransactionId = (payload = {}) =>
+  String(payload.kofi_transaction_id || payload.message_id || payload.transaction_id || '').trim();
+
+const getKofiAmount = (payload = {}) => {
+  const parsed = Number.parseFloat(String(payload.amount || payload.amount_gross || '0'));
+  return Number.isFinite(parsed) ? parsed : 0;
+};
 
 const createUptimeKumaProxy = ({ targetBaseUrl, mountPath = '/status' }) => {
   const target = new URL(targetBaseUrl);
@@ -362,9 +389,24 @@ const renderProviderStatusRows = (providers = []) => providers.map((provider) =>
           </tr>`;
 }).join('');
 
+const renderSupporterRows = (codes = []) => codes.map((code) => `
+          <tr>
+            <td><strong>${escapeHtml(code.label || 'Supporter')}</strong><span class="provider-id">${escapeHtml(code.hashPrefix)}</span></td>
+            <td><span class="status-pill status-${code.status === 'active' && !code.expired ? 'ok' : 'failing'}">${escapeHtml(code.expired ? 'expired' : code.status)}</span></td>
+            <td>${escapeHtml(code.tier || 'supporter')}</td>
+            <td>${escapeHtml(code.expiresAt || '-')}</td>
+            <td>${escapeHtml(code.lastUsedAt || 'never')}</td>
+            <td>
+              <form method="post" action="/admin/supporters/revoke" style="margin:0">
+                <input type="hidden" name="hash" value="${escapeHtml(code.hash)}">
+                <button type="submit">Revoke</button>
+              </form>
+            </td>
+          </tr>`).join('');
+
 const getPublicBaseUrl = (req) => config.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`;
 
-const renderConfigurePage = ({ baseUrl, providers }) => {
+const renderConfigurePage = ({ baseUrl, providers, supporterStats = {}, userStats = {} }) => {
   const providerIds = providers.map((provider) => provider.id);
   const providerHints = providers
     .slice(0, 12)
@@ -2106,7 +2148,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
 
       .mode-switch {
         display: grid;
-        grid-template-columns: 1fr 1fr;
+        grid-template-columns: repeat(3, 1fr);
         gap: 6px;
         margin-top: 10px;
         padding: 5px;
@@ -2137,6 +2179,29 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
 
       body[data-config-mode="simple"] .advanced-only {
         display: none;
+      }
+
+      body[data-config-mode="support"] .workspace > :not(#support-section),
+      body[data-config-mode="support"] .sidebar,
+      body[data-config-mode="support"] .hero,
+      body[data-config-mode="support"] .simple-footer {
+        display: none;
+      }
+
+      body[data-config-mode="support"] .layout {
+        display: block;
+      }
+
+      body[data-config-mode="support"] #support-section {
+        display: block;
+      }
+
+      .support-only {
+        display: none;
+      }
+
+      body[data-config-mode="support"] .support-only {
+        display: block;
       }
 
       .simple-quality-grid,
@@ -2185,6 +2250,57 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         color: #fff;
         font-weight: 800;
         text-decoration: none;
+      }
+
+      .support-hero-grid,
+      .tier-grid,
+      .supporter-wall-grid,
+      .faq-grid {
+        display: grid;
+        gap: 14px;
+      }
+
+      .support-hero-grid {
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        margin: 18px 0;
+      }
+
+      .tier-grid {
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        margin-top: 16px;
+      }
+
+      .tier-card,
+      .support-stat-card,
+      .faq-card,
+      .wall-card {
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        background: var(--surface);
+        padding: 18px;
+      }
+
+      .tier-card.featured {
+        border-color: rgba(34, 211, 238, 0.45);
+        box-shadow: 0 18px 50px rgba(34, 211, 238, 0.12);
+      }
+
+      .tier-price {
+        font-size: 28px;
+        font-weight: 800;
+        margin: 8px 0;
+      }
+
+      .tier-list {
+        margin: 14px 0;
+        padding-left: 18px;
+        color: var(--text-dim);
+      }
+
+      .supporter-wall-grid,
+      .faq-grid {
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        margin-top: 14px;
       }
 
       .simple-footer-links {
@@ -2284,6 +2400,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
       <div class="mode-switch" role="tablist" aria-label="Configuration mode">
         <button type="button" class="mode-button is-active" data-config-mode="simple">Simple</button>
         <button type="button" class="mode-button" data-config-mode="advanced">Advanced</button>
+        <button type="button" class="mode-button" data-config-mode="support">Support ❤️</button>
       </div>
 
       <!-- HERO -->
@@ -2846,6 +2963,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
                   <input id="stalker-device-id2" class="field-input" type="text" placeholder="Optional device_id2" spellcheck="false" autocomplete="off">
                 </div>
               </div>
+              <p id="stalker-validation-status" class="torbox-help" style="min-height:18px;margin-top:-4px;"></p>
 
               <label class="torbox-toggle-row">
                 <span>
@@ -2880,14 +2998,49 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
           </footer>
 
           <!-- SUPPORT -->
-          <section class="card advanced-only" id="support-section">
+          <section class="card advanced-only support-only" id="support-section">
             <div class="card-inner">
               <div class="card-header">
                 <div>
-                  <h3 class="card-title">Support NebulaStreams</h3>
-                  <p class="card-desc">The addon is free. Support keeps the backend stable and maintained.</p>
+                  <h3 class="card-title">Support NebulaStreams ❤️</h3>
+                  <p class="card-desc">NebulaStreams is free to use. Supporters help cover hosting costs and fund new features.</p>
                 </div>
                 <span class="card-badge">Support</span>
+              </div>
+
+              <div class="support-hero-grid">
+                <div class="support-stat-card"><p class="meta-label">Active users</p><p class="meta-value">${escapeHtml(String(userStats.streamUsers || userStats.totalUsers || 0))}</p></div>
+                <div class="support-stat-card"><p class="meta-label">Supporters</p><p class="meta-value">${escapeHtml(String(supporterStats.accounts || supporterStats.active || 0))}</p></div>
+                <div class="support-stat-card"><p class="meta-label">Providers</p><p class="meta-value">${escapeHtml(String(providers.length))}</p></div>
+              </div>
+
+              <div class="tier-grid">
+                <div class="tier-card">
+                  <span class="card-badge">Nebula Supporter</span>
+                  <div class="tier-price">$1/month</div>
+                  <ul class="tier-list">
+                    <li>Supporter badge</li>
+                    <li>Saved cloud profiles</li>
+                    <li>Profile sync</li>
+                    <li>Multiple config backups</li>
+                    <li>Short install URLs</li>
+                    <li>Early feature access</li>
+                    <li>Priority support</li>
+                  </ul>
+                  <a class="btn btn-primary" href="${simpleKoFiUrl}" target="_blank" rel="noopener">Become Supporter</a>
+                </div>
+                <div class="tier-card featured">
+                  <span class="card-badge">Founding Member</span>
+                  <div class="tier-price">$10 lifetime</div>
+                  <ul class="tier-list">
+                    <li>Everything in Supporter</li>
+                    <li>Lifetime founder badge</li>
+                    <li>Founder recognition wall</li>
+                    <li>Exclusive themes</li>
+                    <li>Future supporter perks included</li>
+                  </ul>
+                  <a class="btn btn-primary" href="${simpleKoFiUrl}" target="_blank" rel="noopener">Become Founder</a>
+                </div>
               </div>
 
               <div class="support-shell">
@@ -2900,6 +3053,25 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
                       ${donationPrimaryUrl ? `<a class="support-link" href="${donationPrimaryUrl}" target="_blank" rel="noopener">☕ Ko-fi</a>` : ''}
                       <a class="support-link" href="${escapeHtml(baseUrl)}/donate">More ways</a>
                     </div>
+                    <div class="field" style="margin-top:14px">
+                      <label class="field-label" for="supporter-code">Supporter Code</label>
+                      <input id="supporter-code" class="field-input" type="password" placeholder="Optional supporter code" spellcheck="false" autocomplete="off">
+                      <div id="supporter-validation-status" class="field-help">Supporter perks do not change free stream results.</div>
+                    </div>
+                    <div class="field-grid">
+                      <div class="field">
+                        <label class="field-label" for="supporter-profile-name">Cloud Profile Name</label>
+                        <input id="supporter-profile-name" class="field-input" type="text" value="Default" maxlength="48">
+                      </div>
+                      <div class="field">
+                        <label class="field-label">Profile Sync</label>
+                        <button type="button" class="btn btn-secondary" id="save-supporter-profile">Save Current Config</button>
+                      </div>
+                    </div>
+                    <div id="supporter-profile-status" class="field-help">Save provider, quality, TorBox, IPTV, adapter, and advanced settings to supporter cloud.</div>
+                    <div class="support-actions">
+                      <a class="support-link" href="${escapeHtml(baseUrl)}/dashboard">Open Dashboard</a>
+                    </div>
                   </div>
                 ` : `
                   <div class="support-card">
@@ -2909,6 +3081,14 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
                       ${donationPrimaryUrl ? `<a class="support-link" href="${donationPrimaryUrl}" target="_blank" rel="noopener">☕ Ko-fi</a>` : ''}
                       <a class="support-link" href="${escapeHtml(baseUrl)}/donate">Support</a>
                     </div>
+                    <div class="field" style="margin-top:14px">
+                      <label class="field-label" for="supporter-code">Supporter Code</label>
+                      <input id="supporter-code" class="field-input" type="password" placeholder="Optional supporter code" spellcheck="false" autocomplete="off">
+                      <div id="supporter-validation-status" class="field-help">Supporter perks do not change free stream results.</div>
+                    </div>
+                    <div class="support-actions">
+                      <a class="support-link" href="${escapeHtml(baseUrl)}/dashboard">Open Dashboard</a>
+                    </div>
                   </div>
                 `}
 
@@ -2917,6 +3097,13 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
                     <iframe class="widget-frame" src="${nowPaymentsWidgetUrl}" loading="lazy" scrolling="no" title="NOWPayments donation widget">Can't load widget</iframe>
                   </div>
                 ` : ''}
+              </div>
+
+              <div class="supporter-wall-grid">
+                <div class="faq-card"><h3>Why support?</h3><p class="card-desc">Hosting, proxy traffic, provider fixes, and uptime work cost money and time.</p></div>
+                <div class="faq-card"><h3>Do free users lose features?</h3><p class="card-desc">No. Providers, quality, stream count, and core playback stay free.</p></div>
+                <div class="faq-card"><h3>How payments work?</h3><p class="card-desc">Ko-fi sends a webhook. Nebula creates a supporter code and emails it.</p></div>
+                <div class="faq-card"><h3>Saved profiles?</h3><p class="card-desc">Supporters can sync, backup, restore, export, and use short install URLs.</p></div>
               </div>
             </div>
           </section>
@@ -2962,6 +3149,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
       let qualityPriority = [...defaultQualityPriority];
       let activePresetId = null;
       let configMode = 'simple';
+      let activeUiMode = 'simple';
       let adapterProviderGroups = [];
       const adapterProviderSelections = {};
 
@@ -3013,6 +3201,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
       const stalkerSerialNumber = $('stalker-serial-number');
       const stalkerDeviceId = $('stalker-device-id');
       const stalkerDeviceId2 = $('stalker-device-id2');
+      const stalkerValidationStatus = $('stalker-validation-status');
       const famelackLiveEnabled = $('famelack-live-enabled');
       const dedupeMode = $('dedupe-mode');
       const formatterStyle = $('formatter-style');
@@ -3021,6 +3210,11 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
       const presetButtons = Array.from(document.querySelectorAll('[data-preset-id]'));
       const donateToggle = $('donate-toggle');
       const donationWidgetPanel = $('donation-widget-panel');
+      const supporterCode = $('supporter-code');
+      const supporterValidationStatus = $('supporter-validation-status');
+      const supporterProfileName = $('supporter-profile-name');
+      const saveSupporterProfile = $('save-supporter-profile');
+      const supporterProfileStatus = $('supporter-profile-status');
       const navItems = Array.from(document.querySelectorAll('[data-section-target]'));
       let manifestResolveNonce = 0;
 
@@ -3095,6 +3289,8 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         Boolean(xtreamEnabled.checked && stalkerPortalUrl.value.trim() && stalkerMacAddress.value.trim());
       const hasFamelackLiveConfig = () =>
         Boolean(famelackLiveEnabled.checked);
+      const hasSupporterCode = () =>
+        Boolean(supporterCode?.value.trim());
 
       const isDefaultSimpleConfig = () => {
         if (configMode !== 'simple') return false;
@@ -3127,6 +3323,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
           && !hasAdapterProviderSelections()
           && !febboxUiCookie.value.trim()
           && !(torboxEnabled.checked && torboxApiKey.value.trim())
+          && !hasSupporterCode()
           && !hasXtreamConfig()
           && !hasStalkerConfig()
           && !hasFamelackLiveConfig();
@@ -3139,9 +3336,12 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
       };
 
       const setConfigMode = (mode) => {
-        configMode = mode === 'advanced' ? 'advanced' : 'simple';
-        document.body.dataset.configMode = configMode;
-        modeButtons.forEach((button) => button.classList.toggle('is-active', button.dataset.configMode === configMode));
+        activeUiMode = mode === 'support' ? 'support' : mode === 'advanced' ? 'advanced' : 'simple';
+        if (activeUiMode !== 'support') {
+          configMode = activeUiMode;
+        }
+        document.body.dataset.configMode = activeUiMode;
+        modeButtons.forEach((button) => button.classList.toggle('is-active', button.dataset.configMode === activeUiMode));
         syncSimpleQualityPriority();
         updateManifest();
       };
@@ -3303,36 +3503,163 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
             stalkerDeviceId2: xtreamEnabled.checked ? stalkerDeviceId2.value.trim() : '',
             famelackLiveEnabled: famelackLiveEnabled.checked
           },
+          supporterCode: supporterCode?.value.trim() || '',
           profileCode: activePresetId && presetDefinitions[activePresetId]?.code ? presetDefinitions[activePresetId].code.toLowerCase() : null
         };
+      };
+
+      let supporterValidationNonce = 0;
+      let supporterValidationTimer = null;
+      let lastSupporterValidationValid = false;
+      let lastSupporterValidationKey = '';
+
+      const getSupporterValidationKey = () => supporterCode?.value.trim() || '';
+      const setSupporterValidationStatus = (text, color) => {
+        if (!supporterValidationStatus) return;
+        supporterValidationStatus.textContent = text || 'Supporter perks do not change free stream results.';
+        supporterValidationStatus.style.color = color || '#94a3b8';
+      };
+
+      const validateSupporterCode = async ({ quiet = false } = {}) => {
+        if (!hasSupporterCode()) {
+          lastSupporterValidationValid = false;
+          lastSupporterValidationKey = '';
+          setSupporterValidationStatus('', '#94a3b8');
+          return true;
+        }
+        const validationKey = getSupporterValidationKey();
+        const nonce = ++supporterValidationNonce;
+        if (!quiet) setSupporterValidationStatus('Checking supporter code...', '#94a3b8');
+
+        try {
+          const response = await fetch(origin + '/configure/validate-supporter', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ supporterCode: validationKey })
+          });
+          if (!response.ok) throw new Error('Supporter validation failed');
+          const result = await response.json();
+          if (nonce !== supporterValidationNonce) return false;
+          lastSupporterValidationValid = Boolean(result?.valid);
+          lastSupporterValidationKey = validationKey;
+          if (result?.valid) {
+            const tier = result.supporter?.tier || 'supporter';
+            setSupporterValidationStatus('Supporter valid - ' + tier, '#22c55e');
+          } else {
+            setSupporterValidationStatus('Supporter invalid - ' + (result?.message || 'check code'), '#ef4444');
+          }
+          return Boolean(result?.valid);
+        } catch {
+          if (nonce !== supporterValidationNonce) return false;
+          lastSupporterValidationValid = false;
+          lastSupporterValidationKey = validationKey;
+          setSupporterValidationStatus('Supporter validation failed', '#ef4444');
+          return false;
+        }
+      };
+
+      const scheduleSupporterValidation = () => {
+        clearTimeout(supporterValidationTimer);
+        if (!hasSupporterCode()) {
+          lastSupporterValidationValid = false;
+          lastSupporterValidationKey = '';
+          setSupporterValidationStatus('', '#94a3b8');
+          updateManifest();
+          return;
+        }
+        setSupporterValidationStatus('Waiting for supporter code...', '#94a3b8');
+        supporterValidationTimer = setTimeout(() => {
+          validateSupporterCode().catch(() => {});
+        }, 700);
+        updateManifest();
+      };
+
+      const setSupporterProfileStatus = (text, color) => {
+        if (!supporterProfileStatus) return;
+        supporterProfileStatus.textContent = text;
+        supporterProfileStatus.style.color = color || '#94a3b8';
+      };
+
+      const saveSupporterProfileToCloud = async () => {
+        if (!hasSupporterCode()) {
+          setSupporterProfileStatus('Enter supporter code first.', '#ef4444');
+          return;
+        }
+        const valid = lastSupporterValidationValid && lastSupporterValidationKey === getSupporterValidationKey()
+          ? true
+          : await validateSupporterCode();
+        if (!valid) {
+          setSupporterProfileStatus('Supporter code must be valid before saving.', '#ef4444');
+          return;
+        }
+        setSupporterProfileStatus('Saving cloud profile...', '#94a3b8');
+        try {
+          const response = await fetch(origin + '/configure/supporter-profile', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              supporterCode: supporterCode.value.trim(),
+              name: supporterProfileName?.value.trim() || 'Default',
+              configJson: buildPrivateConfigPayload()
+            })
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(payload?.error || 'Profile save failed');
+          setSupporterProfileStatus('Saved. Dashboard: ' + origin + '/dashboard' + (payload.shortUrl ? ' | Short URL: ' + payload.shortUrl : ''), '#22c55e');
+        } catch (error) {
+          setSupporterProfileStatus(error?.message || 'Profile save failed', '#ef4444');
+        }
       };
 
       let iptvValidationNonce = 0;
       let iptvValidationTimer = null;
       let lastXtreamValidationValid = false;
       let lastXtreamValidationKey = '';
+      let lastStalkerValidationValid = false;
+      let lastStalkerValidationKey = '';
 
       const getXtreamValidationKey = () =>
         [xtreamServerUrl.value.trim(), xtreamUsername.value.trim(), xtreamPassword.value.trim()].join('|');
+      const getStalkerValidationKey = () =>
+        [
+          stalkerPortalUrl.value.trim(),
+          stalkerMacAddress.value.trim(),
+          stalkerStbType.value.trim(),
+          stalkerSerialNumber.value.trim(),
+          stalkerDeviceId.value.trim(),
+          stalkerDeviceId2.value.trim()
+        ].join('|');
 
       const setXtreamValidationStatus = (text, color) => {
         if (!xtreamValidationStatus) return;
         xtreamValidationStatus.textContent = text;
         xtreamValidationStatus.style.color = color || '#94a3b8';
       };
+      const setStalkerValidationStatus = (text, color) => {
+        if (!stalkerValidationStatus) return;
+        stalkerValidationStatus.textContent = text;
+        stalkerValidationStatus.style.color = color || '#94a3b8';
+      };
 
       const validateIptvCredentials = async ({ quiet = false } = {}) => {
         if (!hasXtreamConfig() && !hasStalkerConfig()) {
           lastXtreamValidationValid = false;
           lastXtreamValidationKey = '';
+          lastStalkerValidationValid = false;
+          lastStalkerValidationKey = '';
           setXtreamValidationStatus('', '#94a3b8');
+          setStalkerValidationStatus('', '#94a3b8');
           return true;
         }
 
-        const validationKey = getXtreamValidationKey();
+        const xtreamValidationKey = getXtreamValidationKey();
+        const stalkerValidationKey = getStalkerValidationKey();
         const nonce = ++iptvValidationNonce;
         if (hasXtreamConfig() && !quiet) {
           setXtreamValidationStatus('Checking Xtream credentials...', '#94a3b8');
+        }
+        if (hasStalkerConfig() && !quiet) {
+          setStalkerValidationStatus('Checking Stalker credentials...', '#94a3b8');
         }
 
         try {
@@ -3348,7 +3675,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
           if (hasXtreamConfig()) {
             const xtreamResult = result?.xtream || {};
             lastXtreamValidationValid = Boolean(xtreamResult.valid);
-            lastXtreamValidationKey = validationKey;
+            lastXtreamValidationKey = xtreamValidationKey;
             if (xtreamResult.valid) {
               const counts = xtreamResult.categories || {};
               setXtreamValidationStatus('Xtream valid - live ' + (counts.live || 0) + ', movies ' + (counts.vod || 0) + ', series ' + (counts.series || 0), '#22c55e');
@@ -3356,14 +3683,31 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
               setXtreamValidationStatus('Xtream invalid - ' + (xtreamResult.message || 'check credentials'), '#ef4444');
             }
           }
+          if (hasStalkerConfig()) {
+            const stalkerResult = result?.stalker || {};
+            lastStalkerValidationValid = Boolean(stalkerResult.valid);
+            lastStalkerValidationKey = stalkerValidationKey;
+            if (stalkerResult.valid) {
+              const count = Number(stalkerResult.categories?.live || 0);
+              setStalkerValidationStatus('Stalker valid - ' + count + ' categor' + (count === 1 ? 'y' : 'ies'), '#22c55e');
+            } else {
+              setStalkerValidationStatus('Stalker invalid - ' + (stalkerResult.message || 'check portal and MAC'), '#ef4444');
+            }
+          }
 
-          return !hasXtreamConfig() || Boolean(result?.xtream?.valid);
+          return (!hasXtreamConfig() || Boolean(result?.xtream?.valid))
+            && (!hasStalkerConfig() || Boolean(result?.stalker?.valid));
         } catch (error) {
           if (nonce !== iptvValidationNonce) return false;
           lastXtreamValidationValid = false;
-          lastXtreamValidationKey = validationKey;
+          lastXtreamValidationKey = xtreamValidationKey;
+          lastStalkerValidationValid = false;
+          lastStalkerValidationKey = stalkerValidationKey;
           if (hasXtreamConfig()) {
             setXtreamValidationStatus('Xtream validation failed', '#ef4444');
+          }
+          if (hasStalkerConfig()) {
+            setStalkerValidationStatus('Stalker validation failed', '#ef4444');
           }
           return false;
         }
@@ -3371,13 +3715,29 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
 
       const scheduleIptvValidation = () => {
         clearTimeout(iptvValidationTimer);
-        if (!hasXtreamConfig()) {
+        if (!hasXtreamConfig() && !hasStalkerConfig()) {
+          lastXtreamValidationValid = false;
+          lastXtreamValidationKey = '';
+          lastStalkerValidationValid = false;
+          lastStalkerValidationKey = '';
+          setXtreamValidationStatus('', '#94a3b8');
+          setStalkerValidationStatus('', '#94a3b8');
+          return;
+        }
+        if (hasXtreamConfig()) {
+          setXtreamValidationStatus('Waiting for credentials...', '#94a3b8');
+        } else {
           lastXtreamValidationValid = false;
           lastXtreamValidationKey = '';
           setXtreamValidationStatus('', '#94a3b8');
-          return;
         }
-        setXtreamValidationStatus('Waiting for credentials...', '#94a3b8');
+        if (hasStalkerConfig()) {
+          setStalkerValidationStatus('Waiting for credentials...', '#94a3b8');
+        } else {
+          lastStalkerValidationValid = false;
+          lastStalkerValidationKey = '';
+          setStalkerValidationStatus('', '#94a3b8');
+        }
         iptvValidationTimer = setTimeout(() => {
           validateIptvCredentials().catch(() => {});
         }, 700);
@@ -3461,7 +3821,8 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         const stalker = hasStalkerConfig();
         const famelack = hasFamelackLiveConfig();
         const proxy = customProxyUrl.value.trim();
-        if (!cookie && !torbox && !xtream && !stalker && !famelack && !proxy && !hasAdapterProviderSelections()) return buildManifestPath();
+        const supporter = hasSupporterCode();
+        if (!cookie && !torbox && !xtream && !stalker && !famelack && !proxy && !supporter && !hasAdapterProviderSelections()) return buildManifestPath();
         const r = await fetch(origin + '/configure/private-config', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -3521,7 +3882,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         updateProviderSummary();
         const nonce = ++manifestResolveNonce;
         const fb = buildManifestPath();
-        manifestUrl.textContent = (febboxUiCookie.value.trim() || (torboxEnabled.checked && torboxApiKey.value.trim()) || hasXtreamConfig() || hasStalkerConfig() || customProxyUrl.value.trim() || hasAdapterProviderSelections()) ? 'Preparing private manifest...' : origin + fb;
+        manifestUrl.textContent = (febboxUiCookie.value.trim() || (torboxEnabled.checked && torboxApiKey.value.trim()) || hasXtreamConfig() || hasStalkerConfig() || hasSupporterCode() || customProxyUrl.value.trim() || hasAdapterProviderSelections()) ? 'Preparing private manifest...' : origin + fb;
         try {
           const resolved = await resolveManifestPath();
           if (nonce !== manifestResolveNonce) return;
@@ -3536,6 +3897,11 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
       modeButtons.forEach((button) => {
         button.addEventListener('click', () => setConfigMode(button.dataset.configMode));
       });
+      if (saveSupporterProfile) {
+        saveSupporterProfile.addEventListener('click', () => {
+          saveSupporterProfileToCloud().catch(() => {});
+        });
+      }
       simpleQualityInputs.forEach((input) => {
         input.addEventListener('change', () => {
           markPresetAsCustom();
@@ -3636,11 +4002,15 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
           updateManifest();
         });
       });
-      [blockedHosts, customProxyUrl, febboxUiCookie, torboxApiKey, xtreamServerUrl, xtreamUsername, xtreamPassword, stalkerPortalUrl, stalkerMacAddress, stalkerSerialNumber, stalkerDeviceId, stalkerDeviceId2].forEach((el) => {
+      [blockedHosts, customProxyUrl, febboxUiCookie, torboxApiKey, xtreamServerUrl, xtreamUsername, xtreamPassword, stalkerPortalUrl, stalkerMacAddress, stalkerSerialNumber, stalkerDeviceId, stalkerDeviceId2, supporterCode].filter(Boolean).forEach((el) => {
         el.addEventListener('input', () => {
           markPresetAsCustom();
           if ([xtreamServerUrl, xtreamUsername, xtreamPassword, stalkerPortalUrl, stalkerMacAddress, stalkerSerialNumber, stalkerDeviceId, stalkerDeviceId2].includes(el)) {
             scheduleIptvValidation();
+          }
+          if (el === supporterCode) {
+            scheduleSupporterValidation();
+            return;
           }
           updateManifest();
         });
@@ -3650,10 +4020,21 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
 
       installButton.addEventListener('click', async () => {
         try {
-          if (hasXtreamConfig() && (!lastXtreamValidationValid || lastXtreamValidationKey !== getXtreamValidationKey())) {
+          const needsXtreamValidation = hasXtreamConfig()
+            && (!lastXtreamValidationValid || lastXtreamValidationKey !== getXtreamValidationKey());
+          const needsStalkerValidation = hasStalkerConfig()
+            && (!lastStalkerValidationValid || lastStalkerValidationKey !== getStalkerValidationKey());
+          if (needsXtreamValidation || needsStalkerValidation) {
             const valid = await validateIptvCredentials();
             if (!valid) {
-              showFlash('Xtream credentials are invalid.', true);
+              showFlash('IPTV credentials are invalid.', true);
+              return;
+            }
+          }
+          if (hasSupporterCode() && (!lastSupporterValidationValid || lastSupporterValidationKey !== getSupporterValidationKey())) {
+            const valid = await validateSupporterCode();
+            if (!valid) {
+              showFlash('Supporter code is invalid.', true);
               return;
             }
           }
@@ -3701,12 +4082,11 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
   </body>
 </html>`;
 };
-const renderAdminPage = ({ stats }) => `<!doctype html>
+const renderAdminPage = ({ stats, createdSupporterCode = '' }) => `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta http-equiv="refresh" content="10">
     <title>NebulaStreams Admin</title>
     <style>
       :root {
@@ -3760,6 +4140,17 @@ const renderAdminPage = ({ stats }) => `<!doctype html>
         color: var(--text);
         cursor: pointer;
         font: inherit;
+      }
+      input, button {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 9px 10px;
+        background: var(--panel);
+        color: var(--text);
+        font: inherit;
+      }
+      button {
+        cursor: pointer;
       }
       .grid {
         display: grid;
@@ -3948,6 +4339,44 @@ const renderAdminPage = ({ stats }) => `<!doctype html>
           <div><div class="label">Configure Requests</div><code>${escapeHtml(String(stats.users.configureRequests))}</code></div>
           <div><div class="label">Manifest Requests</div><code>${escapeHtml(String(stats.users.manifestRequests))}</code></div>
           <div><div class="label">Stream Requests</div><code>${escapeHtml(String(stats.users.streamRequests))}</code></div>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Supporters</h2>
+        ${createdSupporterCode ? `<div class="meta-grid"><div><div class="label">New Code - show once</div><code>${escapeHtml(createdSupporterCode)}</code></div></div>` : ''}
+        <form method="post" action="/admin/supporters/create" style="display:grid;gap:12px;margin:12px 0;grid-template-columns:2fr 1fr 1fr auto;align-items:end">
+          <label><span class="label">Label</span><input name="label" type="text" placeholder="Discord name / note"></label>
+          <label><span class="label">Tier</span><input name="tier" type="text" value="supporter"></label>
+          <label><span class="label">Months</span><input name="months" type="number" min="1" max="36" value="1"></label>
+          <button type="submit">Create Code</button>
+        </form>
+        <div class="meta-grid">
+          <div><div class="label">Total Codes</div><code>${escapeHtml(String(stats.supporters.total))}</code></div>
+          <div><div class="label">Active</div><code>${escapeHtml(String(stats.supporters.active))}</code></div>
+          <div><div class="label">Expired</div><code>${escapeHtml(String(stats.supporters.expired))}</code></div>
+          <div><div class="label">Revoked</div><code>${escapeHtml(String(stats.supporters.revoked))}</code></div>
+          <div><div class="label">Ko-fi Payments</div><code>${escapeHtml(String(stats.supporters.payments || 0))}</code></div>
+          <div><div class="label">Emails Sent</div><code>${escapeHtml(String(stats.supporters.paymentEmailsSent || 0))}</code></div>
+          <div><div class="label">Accounts</div><code>${escapeHtml(String(stats.supporters.accounts || 0))}</code></div>
+          <div><div class="label">Founders</div><code>${escapeHtml(String(stats.supporters.founders || 0))}</code></div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Label</th>
+                <th>Status</th>
+                <th>Tier</th>
+                <th>Expires</th>
+                <th>Last Used</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${renderSupporterRows(stats.supporters.codes)}
+            </tbody>
+          </table>
         </div>
       </section>
 
@@ -4441,6 +4870,113 @@ const renderDonatePage = ({ baseUrl }) => {
 </html>`;
 };
 
+const renderDashboardPage = ({ baseUrl, account = null, wall = [], activeSection = 'overview', errorMessage = '', successMessage = '' }) => {
+  const themes = ['nebula', 'nebula-purple', 'amoled-black', 'cyber-green', 'aurora', 'synthwave'];
+  const sectionIds = ['overview', 'profiles', 'backups', 'install', 'themes', 'analytics', 'badges', 'support'];
+  const section = sectionIds.includes(activeSection) ? activeSection : 'overview';
+  const dashboardTheme = themes.includes(account?.theme) ? account.theme : 'nebula';
+  const profiles = account ? Object.values(account.profiles || {}) : [];
+  const backups = account ? account.backups || [] : [];
+  const stats = account?.stats || {};
+  const badges = Array.isArray(account?.badges) ? account.badges : [];
+  const shortUrl = account?.username ? `${baseUrl}/u/${account.username}` : '';
+  const defaultInstallUrl = account?.username ? `${baseUrl}/u/${account.username}/manifest.json` : '';
+  const planName = account?.lifetime ? 'Nebula Founder' : 'Nebula Supporter';
+  const planStatus = account?.status || 'active';
+  const fmtDate = (value) => value ? new Date(value).toLocaleDateString('en', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Not recorded';
+  const fmtTime = (value) => value ? new Date(value).toLocaleString('en', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Never';
+  const jsonSize = (value) => `${Math.max(1, Math.ceil(JSON.stringify(value || {}).length / 1024))} KB`;
+  const nav = [
+    ['overview', 'Overview'], ['profiles', 'Profiles'], ['backups', 'Backups'], ['install', 'Install URLs'],
+    ['themes', 'Themes'], ['analytics', 'Analytics'], ['badges', 'Badges'], ['support', 'Support']
+  ];
+  const metric = (label, value) => `<div class="metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(String(value || 0))}</strong></div>`;
+  const activity = [
+    stats.lastSyncAt ? ['Profile synced', stats.lastSyncAt] : null,
+    backups[0] ? [`Backup created: ${backups[0].name}`, backups[0].createdAt] : null,
+    account?.updatedAt ? ['Settings updated', account.updatedAt] : null,
+    account?.createdAt ? ['Supporter joined', account.createdAt] : null
+  ].filter(Boolean);
+  const providerStats = Object.entries(stats.mostUsedProviders || {}).sort((a, b) => Number(b[1]) - Number(a[1])).slice(0, 6);
+  const maxProvider = Math.max(1, ...providerStats.map((entry) => Number(entry[1]) || 0));
+  const dailyStats = stats.daily && typeof stats.daily === 'object' ? stats.daily : {};
+  const today = new Date();
+  const requestDays = Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(today);
+    date.setUTCDate(today.getUTCDate() - (6 - index));
+    const key = date.toISOString().slice(0, 10);
+    const day = dailyStats[key] || {};
+    return { key, label: key.slice(5), value: Number(day.manifests || 0) + Number(day.searches || 0) };
+  });
+  const maxDailyRequests = Math.max(0, ...requestDays.map((day) => day.value));
+  const sectionTitle = nav.find((item) => item[0] === section)?.[1] || 'Overview';
+  const renderHeader = (eyebrow, title, desc = '') => `<header class="section-head"><span>${escapeHtml(eyebrow)}</span><h1>${escapeHtml(title)}</h1>${desc ? `<p>${escapeHtml(desc)}</p>` : ''}</header>`;
+  const renderOverview = () => `
+    ${renderHeader('Overview', `Welcome back, ${account?.username || account?.label || 'Supporter'}`, 'Your synced install profiles, supporter status, and recent activity.')}
+    <section class="profile-hero">
+      <div><span class="eyebrow">Current plan</span><h2>${escapeHtml(planName)}</h2><p>${escapeHtml(account?.emailMasked || 'Email private')}</p></div>
+      <dl><div><dt>Status</dt><dd class="${planStatus === 'active' ? 'ok' : 'bad'}">${escapeHtml(planStatus)}</dd></div><div><dt>Joined</dt><dd>${escapeHtml(fmtDate(account?.createdAt))}</dd></div><div><dt>Last sync</dt><dd>${escapeHtml(fmtTime(stats.lastSyncAt))}</dd></div></dl>
+    </section>
+    <section class="metrics-row">
+      ${metric('Profiles', profiles.length)}
+      ${metric('Manifest Requests', stats.manifests || 0)}
+      ${metric('Install URLs', account?.username ? Math.max(1, profiles.length) : 0)}
+      ${metric('Saved Backups', backups.length)}
+    </section>
+    <section class="panel"><div class="panel-title"><h2>Recent activity</h2><p>Latest supporter account events.</p></div><div class="timeline">${activity.length ? activity.map(([label, when]) => `<div class="event"><i></i><div><strong>${escapeHtml(label)}</strong><span>${escapeHtml(fmtTime(when))}</span></div></div>`).join('') : '<p class="empty">No activity yet.</p>'}</div></section>`;
+  const renderProfiles = () => `
+    ${renderHeader('Nebula Profile Sync', 'Profiles', 'Save, restore, rename, and manage cloud profiles.')}
+    <section class="toolbar-panel"><form method="post" action="/dashboard/profiles/create" class="inline-form"><input name="name" value="Home" placeholder="Home, Mobile, Family"><textarea name="configJson" placeholder='{"providers":[]}'></textarea><button type="submit">Create Profile</button></form></section>
+    <section class="profile-list">${profiles.length ? profiles.map((profile) => `<article class="profile-item"><div><strong>${escapeHtml(profile.name)}</strong><span>Updated ${escapeHtml(fmtTime(profile.updatedAt || profile.createdAt))}${account.defaultProfileId === profile.id ? ' · default' : ''}</span></div><div class="actions"><form method="post" action="/dashboard/profiles/default"><input type="hidden" name="profileId" value="${escapeHtml(profile.id)}"><button class="ghost" type="submit">Restore</button></form><form method="post" action="/dashboard/profiles/rename"><input type="hidden" name="profileId" value="${escapeHtml(profile.id)}"><input name="name" value="${escapeHtml(profile.name)}"><button class="ghost" type="submit">Edit</button></form>${account.username ? `<a class="ghost link" href="/u/${escapeHtml(account.username)}/${escapeHtml(profile.id)}/manifest.json">Open</a>` : ''}<form method="post" action="/dashboard/profiles/delete"><input type="hidden" name="profileId" value="${escapeHtml(profile.id)}"><button class="ghost danger" type="submit">Delete</button></form></div></article>`).join('') : '<p class="empty">No profiles saved yet. Save one from config Support tab or import JSON here.</p>'}</section>`;
+  const renderBackups = () => `
+    ${renderHeader('Backup Manager', 'Backups', 'Versioned config snapshots with restore and export actions.')}
+    <section class="toolbar-panel"><form method="post" action="/dashboard/backups/create" class="inline-form"><input name="name" value="Manual backup"><textarea name="configJson" placeholder='{"providers":[]}'></textarea><button type="submit">Create Backup</button><a class="ghost link" href="/dashboard/export.json">Export All</a></form></section>
+    <section class="table-wrap"><table><thead><tr><th>Backup Name</th><th>Date</th><th>Size</th><th></th></tr></thead><tbody>${backups.length ? backups.map((backup) => `<tr><td>${escapeHtml(backup.name)}</td><td>${escapeHtml(fmtTime(backup.createdAt))}</td><td>${escapeHtml(jsonSize(backup.configJson))}</td><td class="table-actions"><form method="post" action="/dashboard/backups/restore"><input type="hidden" name="backupId" value="${escapeHtml(backup.id)}"><button class="ghost" type="submit">Restore</button></form><a class="ghost link" href="/dashboard/backups/${escapeHtml(backup.id)}.json">Download</a><form method="post" action="/dashboard/backups/delete"><input type="hidden" name="backupId" value="${escapeHtml(backup.id)}"><button class="ghost danger" type="submit">Delete</button></form></td></tr>`).join('') : '<tr><td colspan="4" class="empty">No backups yet.</td></tr>'}</tbody></table></section>`;
+  const renderInstall = () => `
+    ${renderHeader('Install URLs', 'Short install links', 'Clean supporter links for Stremio and AIOStreams.')}
+    <section class="install-panel"><span>Primary Install URL</span><code>${escapeHtml(shortUrl || 'Set username first')}</code><div class="actions"><button class="ghost" type="button" data-copy="${escapeHtml(shortUrl)}">Copy</button>${shortUrl ? `<a class="ghost link" href="${escapeHtml(shortUrl)}">Open</a>` : ''}<form method="post" action="/dashboard/settings"><input type="hidden" name="username" value="${escapeHtml(account?.username || '')}"><input type="hidden" name="label" value="${escapeHtml(account?.label || '')}"><input type="hidden" name="theme" value="${escapeHtml(dashboardTheme)}"><input type="hidden" name="anonymousWall" value="${account?.anonymousWall ? 'true' : 'false'}"><button class="ghost" type="submit">Regenerate</button></form></div></section>
+    <section class="panel"><div class="panel-title"><h2>Secondary URLs</h2><p>Profile-specific manifest links.</p></div><div class="url-list">${defaultInstallUrl ? `<div><span>Default manifest</span><code>${escapeHtml(defaultInstallUrl)}</code></div>` : ''}${profiles.map((profile) => account.username ? `<div><span>${escapeHtml(profile.name)}</span><code>${escapeHtml(`${baseUrl}/u/${account.username}/${profile.id}/manifest.json`)}</code></div>` : '').join('') || '<p class="empty">Set username and save profiles to generate links.</p>'}</div></section>`;
+  const renderThemes = () => `
+    ${renderHeader('Theme Gallery', 'Themes', 'Apply supporter dashboard themes with live preview.')}
+    <section class="theme-grid">${themes.filter((theme) => theme !== 'nebula').map((theme) => `<form method="post" action="/dashboard/settings" class="theme-tile" data-preview="${escapeHtml(theme)}"><input type="hidden" name="username" value="${escapeHtml(account?.username || '')}"><input type="hidden" name="label" value="${escapeHtml(account?.label || '')}"><input type="hidden" name="anonymousWall" value="${account?.anonymousWall ? 'true' : 'false'}"><input type="hidden" name="theme" value="${escapeHtml(theme)}"><div class="preview"><span></span><i></i></div><strong>${escapeHtml(theme.split('-').map((part) => part[0].toUpperCase() + part.slice(1)).join(' '))}</strong><button class="ghost" type="submit">${dashboardTheme === theme ? 'Applied' : 'Apply'}</button></form>`).join('')}</section>`;
+  const renderAnalytics = () => `
+    ${renderHeader('Personal Usage Analytics', 'Analytics', 'Private supporter usage stats from your short links.')}
+    <section class="metrics-row">${metric('Manifest Requests', stats.manifests || 0)}${metric('Searches', stats.searches || 0)}${metric('Movies Opened', stats.movies || 0)}${metric('Series Opened', stats.series || 0)}</section>
+    <section class="panel"><div class="panel-title"><h2>Requests over time</h2><p>Real daily manifest/search activity from this supporter account.</p></div>${maxDailyRequests ? `<div class="chart">${requestDays.map((day) => `<span title="${escapeHtml(day.key)}: ${escapeHtml(String(day.value))}" style="height:${Math.max(6, Math.round((day.value / maxDailyRequests) * 100))}%"><em>${escapeHtml(day.label)}</em></span>`).join('')}</div>` : '<p class="empty">No request history yet. Chart appears after short URLs are used.</p>'}</section>
+    <section class="panel"><div class="panel-title"><h2>Most used providers</h2><p>Based on synced profile/provider stats.</p></div><div class="provider-bars">${providerStats.length ? providerStats.map(([name, count]) => `<div><span>${escapeHtml(name)}</span><strong>${escapeHtml(String(count))}</strong><i style="width:${Math.max(8, Math.round((Number(count) / maxProvider) * 100))}%"></i></div>`).join('') : '<p class="empty">Provider stats will appear after usage accrues.</p>'}</div></section>
+    <section class="insight">Most active day: <strong>${escapeHtml(fmtDate(account?.lastActiveAt || stats.lastSyncAt))}</strong></section>`;
+  const renderBadges = () => {
+    const allBadges = ['Nebula Founder', 'Nebula Supporter', 'Beta Tester', 'Early Adopter', '100 Requests', '1000 Requests', '1 Year Member'];
+    return `${renderHeader('Achievement System', 'Badges', 'Collected and future supporter milestones.')}<section class="badge-grid">${allBadges.map((badge) => `<div class="badge-tile ${badges.includes(badge) ? 'owned' : ''}"><span>${badges.includes(badge) ? 'Unlocked' : 'Future'}</span><strong>${escapeHtml(badge)}</strong></div>`).join('')}</section>`;
+  };
+  const renderSupport = () => `
+    ${renderHeader('Support', 'Current plan', 'Supporters keep NebulaStreams free for everyone.')}
+    <section class="support-plan"><div><span>Plan</span><strong>${escapeHtml(planName)}</strong></div><div><span>Status</span><strong class="${planStatus === 'active' ? 'ok' : 'bad'}">${escapeHtml(planStatus)}</strong></div><div><span>Renewal</span><strong>${account?.lifetime ? 'Lifetime' : escapeHtml(fmtDate(account?.expiresAt))}</strong></div></section>
+    <section class="panel"><div class="panel-title"><h2>Supporter perks</h2><p>No providers, quality, or stream count are gated.</p></div><ul class="perk-list"><li>Profile Sync</li><li>Backups</li><li>Short URLs</li><li>Themes</li><li>Early Access</li></ul></section>
+    <section class="panel"><div class="panel-title"><h2>Manage subscription</h2><p>${account?.lifetime ? 'Lifetime member. No renewal needed.' : 'Monthly supporter. Manage payment through Ko-fi.'}</p></div><a class="ghost link" href="https://ko-fi.com/nebulastreams">Open Ko-fi</a></section>
+    <section class="panel"><div class="panel-title"><h2>Supporters wall</h2><p>Optional public thanks.</p></div><div class="wall-list">${wall.length ? wall.map((entry) => `<span>${escapeHtml(entry.label)} · ${escapeHtml(entry.lifetime ? 'Founder' : entry.tier)}</span>`).join('') : '<p class="empty">Wall empty.</p>'}</div></section>`;
+  const renderSection = () => ({ overview: renderOverview, profiles: renderProfiles, backups: renderBackups, install: renderInstall, themes: renderThemes, analytics: renderAnalytics, badges: renderBadges, support: renderSupport }[section] || renderOverview)();
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>NebulaStreams - Supporter Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+      :root{color-scheme:dark;--bg:#07080d;--surface:#0d1018;--surface2:#111522;--line:rgba(255,255,255,.09);--line2:rgba(255,255,255,.14);--text:#f4f7fb;--muted:#8e98ab;--soft:#c8d0df;--accent:#22d3ee;--accent2:#6d5dfc;--ok:#35d08f;--bad:#ff6b7a;--shadow:0 24px 80px rgba(0,0,0,.38)}
+      body[data-theme="nebula-purple"]{--accent:#c084fc;--accent2:#7c3aed;--bg:#080513}body[data-theme="amoled-black"]{--accent:#38bdf8;--accent2:#334155;--bg:#000;--surface:#050505;--surface2:#0a0a0a}body[data-theme="cyber-green"]{--accent:#22c55e;--accent2:#06b6d4;--bg:#020b08}body[data-theme="aurora"]{--accent:#2dd4bf;--accent2:#a78bfa;--bg:#06111d}body[data-theme="synthwave"]{--accent:#f472b6;--accent2:#8b5cf6;--bg:#12051d}
+      *{box-sizing:border-box}body{margin:0;min-height:100vh;background:var(--bg);color:var(--text);font-family:Inter,system-ui,sans-serif}a{color:inherit;text-decoration:none}button,input,select,textarea{font:inherit}button{cursor:pointer}.shell{display:grid;grid-template-columns:264px 1fr;min-height:100vh}.side{position:sticky;top:0;height:100vh;border-right:1px solid var(--line);background:rgba(9,11,17,.78);backdrop-filter:blur(22px);padding:22px;display:flex;flex-direction:column}.brand{font-weight:800;font-size:18px;margin-bottom:26px}.nav{display:grid;gap:4px}.nav a{padding:10px 12px;border-radius:10px;color:var(--muted);font-weight:650}.nav a.active,.nav a:hover{background:rgba(255,255,255,.06);color:var(--text)}.plan{margin-top:auto;border:1px solid var(--line);border-radius:14px;padding:14px;background:rgba(255,255,255,.035)}.plan span,.section-head span,.eyebrow,.metric span,.install-panel span,.support-plan span{display:block;color:var(--muted);font-size:12px;font-weight:750;text-transform:uppercase;letter-spacing:.08em}.plan strong{display:block;margin-top:6px}.content{padding:38px 48px 56px;max-width:1180px;width:100%}.topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:28px}.topbar h2{margin:0;font-size:14px;color:var(--muted);font-weight:700}.topbar .actions{display:flex;gap:10px}.section-head{margin-bottom:28px}.section-head h1{font-size:38px;line-height:1.05;margin:8px 0 10px;letter-spacing:-.03em}.section-head p{margin:0;color:var(--muted);font-size:16px}.flash{border:1px solid var(--line2);border-radius:12px;padding:12px 14px;margin-bottom:18px;background:rgba(255,255,255,.045)}.flash.error{color:#fecaca;border-color:rgba(255,107,122,.35)}.profile-hero{border-bottom:1px solid var(--line);padding:8px 0 28px;margin-bottom:26px;display:flex;justify-content:space-between;gap:28px}.profile-hero h2{font-size:30px;margin:6px 0}.profile-hero p{color:var(--muted);margin:0}.profile-hero dl{display:grid;grid-template-columns:repeat(3,minmax(110px,1fr));gap:22px;margin:0}.profile-hero dt{color:var(--muted);font-size:12px}.profile-hero dd{margin:6px 0 0;font-weight:750}.metrics-row{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;border:1px solid var(--line);border-radius:16px;overflow:hidden;background:var(--line);margin-bottom:28px}.metric{background:var(--surface);padding:20px}.metric strong{display:block;font-size:30px;margin-top:8px}.panel,.toolbar-panel,.install-panel,.support-plan,.insight{border:1px solid var(--line);border-radius:16px;background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.025));padding:22px;margin-bottom:18px}.panel-title{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:18px}.panel-title h2{margin:0;font-size:18px}.panel-title p{margin:4px 0 0;color:var(--muted)}.timeline{display:grid;gap:0}.event{display:grid;grid-template-columns:18px 1fr;gap:12px;padding:13px 0;border-top:1px solid var(--line)}.event:first-child{border-top:0}.event i{width:9px;height:9px;margin-top:6px;border-radius:50%;background:var(--accent)}.event span,.profile-item span{display:block;color:var(--muted);margin-top:4px}.inline-form{display:grid;grid-template-columns:minmax(160px,220px) 1fr auto auto;gap:10px;align-items:start}input,textarea,select{width:100%;border:1px solid var(--line);background:#090b12;color:var(--text);border-radius:10px;padding:10px 12px}textarea{min-height:42px;font-family:JetBrains Mono,monospace;font-size:12px}.ghost,button{border:1px solid var(--line2);background:rgba(255,255,255,.045);color:var(--text);border-radius:10px;padding:9px 12px;font-weight:750}.ghost:hover,button:hover{border-color:rgba(34,211,238,.35)}.danger{color:#fecaca}.link{display:inline-flex;align-items:center}.profile-list{display:grid;gap:12px}.profile-item{border:1px solid var(--line);border-radius:16px;background:var(--surface);padding:20px;display:flex;justify-content:space-between;gap:20px;align-items:center}.actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.actions form{display:flex;gap:8px}.actions input{width:150px}.table-wrap{border:1px solid var(--line);border-radius:16px;overflow:auto;background:var(--surface)}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:15px 16px;border-bottom:1px solid var(--line)}th{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.08em}tr:last-child td{border-bottom:0}.table-actions{display:flex;gap:8px;justify-content:flex-end}.install-panel code,.url-list code{display:block;font-family:JetBrains Mono,monospace;font-size:15px;margin:10px 0 14px;color:var(--soft);word-break:break-all}.url-list{display:grid;gap:14px}.url-list div{border-top:1px solid var(--line);padding-top:14px}.theme-grid,.badge-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px}.theme-tile,.badge-tile{border:1px solid var(--line);border-radius:16px;background:var(--surface);padding:16px}.preview{height:86px;border-radius:12px;background:linear-gradient(135deg,var(--accent2),var(--accent));margin-bottom:14px;position:relative;overflow:hidden}.preview span{position:absolute;inset:14px 48px auto 14px;height:10px;background:rgba(255,255,255,.7);border-radius:8px}.preview i{position:absolute;left:14px;right:14px;bottom:14px;height:28px;background:rgba(0,0,0,.24);border-radius:8px}.theme-tile strong,.badge-tile strong{display:block;margin-bottom:12px}.chart{height:190px;display:flex;align-items:end;gap:12px;padding-bottom:22px}.chart span{flex:1;min-height:6px;border-radius:8px 8px 0 0;background:linear-gradient(180deg,var(--accent),rgba(34,211,238,.2));position:relative}.chart em{position:absolute;left:50%;bottom:-22px;transform:translateX(-50%);font-style:normal;color:var(--muted);font-size:11px}.provider-bars{display:grid;gap:14px}.provider-bars div{position:relative;padding-bottom:10px;border-bottom:1px solid var(--line)}.provider-bars strong{float:right}.provider-bars i{position:absolute;left:0;bottom:-1px;height:2px;background:var(--accent);border-radius:2px}.support-plan{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}.support-plan strong{display:block;font-size:24px;margin-top:8px}.perk-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin:0;padding:0;list-style:none}.perk-list li{border:1px solid var(--line);border-radius:12px;padding:12px;background:rgba(255,255,255,.03)}.badge-tile{min-height:130px;display:flex;flex-direction:column;justify-content:space-between}.badge-tile.owned{border-color:rgba(34,211,238,.32);box-shadow:inset 0 0 0 1px rgba(34,211,238,.12)}.badge-tile span{color:var(--muted);font-size:12px}.wall-list{display:flex;gap:8px;flex-wrap:wrap}.wall-list span{border:1px solid var(--line);border-radius:999px;padding:8px 10px;color:var(--soft)}.empty{color:var(--muted);margin:0}.ok{color:var(--ok)}.bad{color:var(--bad)}.logout{margin-top:14px}.login-wrap{min-height:100vh;display:grid;place-items:center;padding:24px}.login-box{width:min(430px,100%);border:1px solid var(--line);border-radius:20px;background:var(--surface);padding:28px;box-shadow:var(--shadow)}.login-box h1{margin:0 0 8px}.login-box p{color:var(--muted);margin:0 0 20px}.login-box form{display:grid;gap:12px}
+      @media(max-width:900px){.shell{grid-template-columns:1fr}.side{position:relative;height:auto;border-right:0;border-bottom:1px solid var(--line)}.nav{grid-template-columns:repeat(4,1fr)}.content{padding:28px 20px}.profile-hero{display:block}.profile-hero dl{margin-top:20px}.metrics-row,.support-plan{grid-template-columns:repeat(2,1fr)}.inline-form{grid-template-columns:1fr}.profile-item{display:block}.actions{margin-top:14px}.topbar{display:block}.topbar .actions{margin-top:12px}}@media(max-width:560px){.nav{grid-template-columns:repeat(2,1fr)}.section-head h1{font-size:30px}.metrics-row,.profile-hero dl,.support-plan{grid-template-columns:1fr}.table-actions{display:grid;justify-content:start}.actions form{width:100%;display:grid;grid-template-columns:1fr auto}.actions input{width:100%}}
+    </style>
+  </head>
+  <body data-theme="${escapeHtml(dashboardTheme)}">
+    ${!account ? `<main class="login-wrap"><section class="login-box"><h1>NebulaStreams Dashboard</h1><p>Login with supporter code from Ko-fi email.</p>${errorMessage ? `<div class="flash error">${escapeHtml(errorMessage)}</div>` : ''}${successMessage ? `<div class="flash">${escapeHtml(successMessage)}</div>` : ''}<form method="post" action="/supporter/login"><input name="supporterCode" type="password" autocomplete="off" placeholder="Supporter code" required><button type="submit">Open Dashboard</button></form></section></main>` : `<div class="shell"><aside class="side"><div class="brand">NebulaStreams</div><nav class="nav">${nav.map(([id, label]) => `<a class="${section === id ? 'active' : ''}" href="/dashboard?tab=${escapeHtml(id)}">${escapeHtml(label)}</a>`).join('')}</nav><div class="plan"><span>Current Plan</span><strong>${escapeHtml(planName)}</strong><form method="post" action="/supporter/logout" class="logout"><button class="ghost" type="submit">Logout</button></form></div></aside><main class="content"><div class="topbar"><h2>${escapeHtml(sectionTitle)}</h2><div class="actions"><a class="ghost link" href="${escapeHtml(baseUrl)}/configure">Configure</a><a class="ghost link" href="/dashboard/export.json">Export</a></div></div>${errorMessage ? `<div class="flash error">${escapeHtml(errorMessage)}</div>` : ''}${successMessage ? `<div class="flash">${escapeHtml(successMessage)}</div>` : ''}${renderSection()}</main></div>`}
+    <script>document.querySelectorAll('[data-copy]').forEach((btn)=>btn.addEventListener('click',async()=>{const value=btn.getAttribute('data-copy')||'';if(!value)return;await navigator.clipboard.writeText(value);btn.textContent='Copied';setTimeout(()=>btn.textContent='Copy',1400)}));document.querySelectorAll('[data-preview]').forEach((tile)=>tile.addEventListener('mouseenter',()=>document.body.dataset.theme=tile.dataset.preview));document.querySelectorAll('[data-preview]').forEach((tile)=>tile.addEventListener('mouseleave',()=>document.body.dataset.theme='${escapeHtml(dashboardTheme)}'));</script>
+  </body>
+</html>`;
+};
+
 const parseBasicAuth = (headerValue) => {
   if (!headerValue || !headerValue.startsWith('Basic ')) {
     return null;
@@ -4545,6 +5081,46 @@ const setAdminSessionCookie = (req, res) => {
 const clearAdminSessionCookie = (res) => {
   res.setHeader('Set-Cookie', `${ADMIN_COOKIE_NAME}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`);
 };
+
+const setSupporterSessionCookie = (req, res, token) => {
+  const cookieParts = [
+    `${SUPPORTER_COOKIE_NAME}=${encodeURIComponent(token)}`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Lax',
+    `Max-Age=${90 * 24 * 60 * 60}`
+  ];
+
+  if (req.secure || req.headers['x-forwarded-proto'] === 'https') {
+    cookieParts.push('Secure');
+  }
+
+  res.setHeader('Set-Cookie', cookieParts.join('; '));
+};
+
+const clearSupporterSessionCookie = (res) => {
+  res.setHeader('Set-Cookie', `${SUPPORTER_COOKIE_NAME}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`);
+};
+
+const parseDashboardJson = (value) => {
+  if (!String(value || '').trim()) {
+    return {};
+  }
+  const parsed = JSON.parse(String(value));
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Config JSON must be an object');
+  }
+  return parsed;
+};
+
+const createSupporterRecordFromAccount = (account) => account ? {
+  active: true,
+  tier: account.tier || 'supporter',
+  label: account.label || account.username || 'Supporter',
+  expiresAt: account.lifetime ? null : account.expiresAt,
+  lifetime: Boolean(account.lifetime),
+  codeHash: account.codeHash
+} : null;
 
 const getClientAddress = (req) => {
   const forwarded = req.headers?.['x-forwarded-for'];
@@ -4654,6 +5230,13 @@ const isBotProtectionIgnoredPath = (pathName) =>
   pathName === '/health'
   || pathName === '/configure/private-config'
   || pathName === '/configure/validate-iptv'
+  || pathName === '/configure/supporter-profile'
+  || pathName === '/dashboard'
+  || pathName.startsWith('/dashboard/')
+  || pathName.startsWith('/supporter/')
+  || pathName.startsWith('/u/')
+  || pathName === '/webhooks/kofi'
+  || pathName === '/webhooks/ko-fi'
   || pathName.startsWith('/admin')
   || pathName.startsWith('/assets/')
   || /^\/private\/[^/]+\/(?:stalker|xtream)\//u.test(pathName)
@@ -5274,6 +5857,13 @@ const bootstrap = async () => {
   await providerService.initialize();
   const userTracker = new UserTrackerService();
   await userTracker.initialize();
+  const supporterService = new SupporterService({
+    cacheDir: config.CACHE_DIR,
+    secret: config.SUPPORTER_CODE_SECRET,
+    logger
+  });
+  await supporterService.initialize();
+  const emailService = new EmailService({ config, logger });
   const torrentEngine = new TorrentEngineService({ cacheManager });
   const httpProxy = new HttpProxyService({ cacheManager, torrentEngine });
   const streamManager = new StreamManager({
@@ -5283,7 +5873,8 @@ const bootstrap = async () => {
     sourceRegistry,
     providerService,
     imdbResolver,
-    userTracker
+    userTracker,
+    supporterService
   });
   await streamManager.initialize();
 
@@ -5420,6 +6011,7 @@ const bootstrap = async () => {
   });
 
   const configurePageCache = new Map();
+  const adminSupporterFlashCodes = new Map();
   const renderConfigureResponse = (req, res) => {
     const baseUrl = getPublicBaseUrl(req);
     const cacheKey = baseUrl;
@@ -5429,7 +6021,9 @@ const bootstrap = async () => {
       ? cached.html
       : renderConfigurePage({
         baseUrl,
-        providers: providerService.listProviders()
+        providers: providerService.listProviders(),
+        supporterStats: supporterService.getStats(),
+        userStats: userTracker.getStats()
       });
 
     if (!cached || cached.expiresAt <= now) {
@@ -5452,6 +6046,347 @@ const bootstrap = async () => {
   app.get('/', renderConfigureResponse);
   app.get('/configure', renderConfigureResponse);
 
+  const getSupporterAccountFromRequest = async (req) => {
+    const cookies = parseCookies(req.headers.cookie);
+    return supporterService.validateSession(cookies[SUPPORTER_COOKIE_NAME]);
+  };
+
+  const redirectDashboard = (res, params = {}) => {
+    const query = new URLSearchParams(params);
+    res.redirect(302, `/dashboard${query.toString() ? `?${query.toString()}` : ''}`);
+  };
+
+  app.get('/dashboard', async (req, res, next) => {
+    try {
+      const account = await getSupporterAccountFromRequest(req);
+      res.status(200).type('html').send(renderDashboardPage({
+        baseUrl: getPublicBaseUrl(req),
+        account,
+        wall: supporterService.getWall(),
+        activeSection: typeof req.query.tab === 'string' ? req.query.tab : 'overview',
+        errorMessage: typeof req.query.error === 'string' ? req.query.error : '',
+        successMessage: typeof req.query.success === 'string' ? req.query.success : ''
+      }));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/supporter/login', async (req, res, next) => {
+    try {
+      const auth = await supporterService.authenticateCode(req.body?.supporterCode || req.body?.code || '');
+      if (!auth?.valid || !auth.account) {
+        redirectDashboard(res, { error: auth?.message || 'Invalid supporter code' });
+        return;
+      }
+      const token = await supporterService.createSession(auth.account.id);
+      setSupporterSessionCookie(req, res, token);
+      redirectDashboard(res, { success: 'Logged in' });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/supporter/logout', async (req, res, next) => {
+    try {
+      const cookies = parseCookies(req.headers.cookie);
+      await supporterService.destroySession(cookies[SUPPORTER_COOKIE_NAME]);
+      clearSupporterSessionCookie(res);
+      redirectDashboard(res, { success: 'Logged out' });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/dashboard/settings', async (req, res, next) => {
+    try {
+      const account = await getSupporterAccountFromRequest(req);
+      if (!account) {
+        redirectDashboard(res, { error: 'Login required' });
+        return;
+      }
+      await supporterService.updateAccountSettings(account.id, {
+        username: req.body?.username,
+        label: req.body?.label,
+        theme: req.body?.theme,
+        anonymousWall: req.body?.anonymousWall === 'true'
+      });
+      redirectDashboard(res, { tab: req.body?.theme ? 'themes' : 'overview', success: 'Settings saved' });
+    } catch (error) {
+      redirectDashboard(res, { tab: req.body?.theme ? 'themes' : 'overview', error: error?.message || 'Settings failed' });
+    }
+  });
+
+  app.post('/dashboard/profiles/create', async (req, res, next) => {
+    try {
+      const account = await getSupporterAccountFromRequest(req);
+      if (!account) {
+        redirectDashboard(res, { error: 'Login required' });
+        return;
+      }
+      await supporterService.saveProfile(account.id, {
+        name: req.body?.name,
+        configJson: parseDashboardJson(req.body?.configJson),
+        makeDefault: true
+      });
+      redirectDashboard(res, { tab: 'profiles', success: 'Profile saved' });
+    } catch (error) {
+      redirectDashboard(res, { tab: 'profiles', error: error?.message || 'Profile save failed' });
+    }
+  });
+
+  app.post('/dashboard/profiles/delete', async (req, res, next) => {
+    try {
+      const account = await getSupporterAccountFromRequest(req);
+      if (!account) {
+        redirectDashboard(res, { error: 'Login required' });
+        return;
+      }
+      await supporterService.deleteProfile(account.id, String(req.body?.profileId || ''));
+      redirectDashboard(res, { tab: 'profiles', success: 'Profile deleted' });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/dashboard/profiles/rename', async (req, res, next) => {
+    try {
+      const account = await getSupporterAccountFromRequest(req);
+      if (!account) {
+        redirectDashboard(res, { tab: 'profiles', error: 'Login required' });
+        return;
+      }
+      const profile = await supporterService.renameProfile(account.id, String(req.body?.profileId || ''), req.body?.name);
+      redirectDashboard(res, profile ? { tab: 'profiles', success: 'Profile renamed' } : { tab: 'profiles', error: 'Profile not found' });
+    } catch (error) {
+      redirectDashboard(res, { tab: 'profiles', error: error?.message || 'Profile rename failed' });
+    }
+  });
+
+  app.post('/dashboard/profiles/default', async (req, res, next) => {
+    try {
+      const account = await getSupporterAccountFromRequest(req);
+      if (!account) {
+        redirectDashboard(res, { error: 'Login required' });
+        return;
+      }
+      await supporterService.setDefaultProfile(account.id, String(req.body?.profileId || ''));
+      redirectDashboard(res, { tab: 'profiles', success: 'Profile restored' });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/dashboard/backups/create', async (req, res, next) => {
+    try {
+      const account = await getSupporterAccountFromRequest(req);
+      if (!account) {
+        redirectDashboard(res, { error: 'Login required' });
+        return;
+      }
+      await supporterService.createBackup(account.id, {
+        name: req.body?.name,
+        configJson: parseDashboardJson(req.body?.configJson)
+      });
+      redirectDashboard(res, { tab: 'backups', success: 'Backup saved' });
+    } catch (error) {
+      redirectDashboard(res, { tab: 'backups', error: error?.message || 'Backup failed' });
+    }
+  });
+
+  app.post('/dashboard/backups/restore', async (req, res, next) => {
+    try {
+      const account = await getSupporterAccountFromRequest(req);
+      if (!account) {
+        redirectDashboard(res, { error: 'Login required' });
+        return;
+      }
+      const restored = await supporterService.restoreBackup(account.id, String(req.body?.backupId || ''));
+      redirectDashboard(res, restored ? { tab: 'backups', success: 'Backup restored to default profile' } : { tab: 'backups', error: 'Backup not found' });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/dashboard/backups/delete', async (req, res, next) => {
+    try {
+      const account = await getSupporterAccountFromRequest(req);
+      if (!account) {
+        redirectDashboard(res, { tab: 'backups', error: 'Login required' });
+        return;
+      }
+      const deleted = await supporterService.deleteBackup(account.id, String(req.body?.backupId || ''));
+      redirectDashboard(res, deleted ? { tab: 'backups', success: 'Backup deleted' } : { tab: 'backups', error: 'Backup not found' });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/dashboard/backups/:backupId.json', async (req, res, next) => {
+    try {
+      const account = await getSupporterAccountFromRequest(req);
+      if (!account) {
+        res.status(401).json({ error: 'Login required' });
+        return;
+      }
+      const backup = await supporterService.getBackup(account.id, String(req.params.backupId || ''));
+      if (!backup) {
+        res.status(404).json({ error: 'Backup not found' });
+        return;
+      }
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('Content-Disposition', `attachment; filename="nebula-backup-${backup.id}.json"`);
+      res.json(backup);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/dashboard/delete-account', async (req, res, next) => {
+    try {
+      const account = await getSupporterAccountFromRequest(req);
+      if (!account || req.body?.confirm !== 'DELETE') {
+        redirectDashboard(res, { error: 'Delete confirmation failed' });
+        return;
+      }
+      const cookies = parseCookies(req.headers.cookie);
+      await supporterService.deleteAccount(account.id);
+      await supporterService.destroySession(cookies[SUPPORTER_COOKIE_NAME]);
+      clearSupporterSessionCookie(res);
+      redirectDashboard(res, { success: 'Account data deleted' });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/dashboard/export.json', async (req, res, next) => {
+    try {
+      const account = await getSupporterAccountFromRequest(req);
+      if (!account) {
+        res.status(401).json({ error: 'Login required' });
+        return;
+      }
+      res.setHeader('Cache-Control', 'no-store');
+      res.json({
+        exportedAt: new Date().toISOString(),
+        account: {
+          username: account.username,
+          label: account.label,
+          tier: account.tier,
+          theme: account.theme,
+          badges: account.badges,
+          createdAt: account.createdAt,
+          expiresAt: account.expiresAt,
+          lifetime: account.lifetime
+        },
+        profiles: account.profiles || {},
+        backups: account.backups || []
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/dashboard/early-access.json', async (req, res, next) => {
+    try {
+      const account = await getSupporterAccountFromRequest(req);
+      if (!account) {
+        res.status(401).json({ error: 'Login required' });
+        return;
+      }
+      res.setHeader('Cache-Control', 'no-store');
+      res.json({
+        enabled: true,
+        tier: account.tier || 'supporter',
+        flags: { dashboardV2: true, profileSync: true, profileShortUrls: true, exclusiveThemes: true, prioritySupport: true },
+        updatedAt: new Date().toISOString()
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.post('/configure/supporter-profile', async (req, res, next) => {
+    try {
+      const auth = await supporterService.authenticateCode(req.body?.supporterCode || '');
+      if (!auth?.valid || !auth.account) {
+        res.status(401).json({ error: auth?.message || 'Invalid supporter code' });
+        return;
+      }
+      const profile = await supporterService.saveProfile(auth.account.id, {
+        name: req.body?.name,
+        configJson: req.body?.configJson && typeof req.body.configJson === 'object' ? req.body.configJson : {},
+        makeDefault: true
+      });
+      const token = await supporterService.createSession(auth.account.id);
+      setSupporterSessionCookie(req, res, token);
+      const freshAccount = supporterService.getAccount(auth.account.id);
+      res.setHeader('Cache-Control', 'no-store');
+      res.json({
+        ok: true,
+        profile,
+        dashboardUrl: `${getPublicBaseUrl(req)}/dashboard`,
+        shortUrl: freshAccount?.username ? `${getPublicBaseUrl(req)}/u/${freshAccount.username}` : ''
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/u/:username', async (req, res, next) => {
+    try {
+      const account = supporterService.getAccountByUsername(req.params.username);
+      if (account) await supporterService.incrementAccountStat(account.id, 'installs', 1);
+      res.redirect(302, '/u/' + encodeURIComponent(req.params.username) + '/manifest.json');
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/u/:username/:profileId/manifest.json', async (req, res, next) => {
+    try {
+      const account = supporterService.getAccountByUsername(req.params.username);
+      const profile = account?.profiles?.[String(req.params.profileId || '')] || null;
+      if (!account || !profile) {
+        throw new HttpError(404, 'Supporter profile not found');
+      }
+      const configJson = profile.configJson || {};
+      const { manifestPath } = await streamManager.createPrivateConfig({
+        providers: configJson.providers,
+        qualityPriority: configJson.qualityPriority,
+        streamOptions: configJson.streamOptions,
+        privateProviderSettings: configJson.privateProviderSettings,
+        supporter: createSupporterRecordFromAccount(account),
+        profileCode: configJson.profileCode
+      });
+      await supporterService.incrementAccountStat(account.id, 'manifests', 1);
+      res.redirect(302, manifestPath);
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.get('/u/:username/manifest.json', async (req, res, next) => {
+    try {
+      const account = supporterService.getAccountByUsername(req.params.username);
+      const profile = account?.defaultProfileId ? account.profiles?.[account.defaultProfileId] : null;
+      if (!account || !profile) {
+        throw new HttpError(404, 'Supporter profile not found');
+      }
+      const configJson = profile.configJson || {};
+      const { manifestPath } = await streamManager.createPrivateConfig({
+        providers: configJson.providers,
+        qualityPriority: configJson.qualityPriority,
+        streamOptions: configJson.streamOptions,
+        privateProviderSettings: configJson.privateProviderSettings,
+        supporter: createSupporterRecordFromAccount(account),
+        profileCode: configJson.profileCode
+      });
+      await supporterService.incrementAccountStat(account.id, 'manifests', 1);
+      res.redirect(302, manifestPath);
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.get('/donate', (req, res) => {
     res
       .status(200)
@@ -5459,6 +6394,116 @@ const bootstrap = async () => {
       .send(renderDonatePage({
         baseUrl: getPublicBaseUrl(req)
       }));
+  });
+
+  app.post(['/webhooks/kofi', '/webhooks/ko-fi'], async (req, res, next) => {
+    try {
+      if (!config.KOFI_WEBHOOK_TOKEN) {
+        res.status(503).json({ ok: false, error: 'Ko-fi webhook not configured' });
+        return;
+      }
+
+      let payload;
+      try {
+        payload = parseKofiWebhookPayload(req.body || {});
+      } catch (error) {
+        res.status(400).json({ ok: false, error: 'Invalid Ko-fi payload' });
+        return;
+      }
+
+      if (payload?.verification_token !== config.KOFI_WEBHOOK_TOKEN) {
+        res.status(401).json({ ok: false, error: 'Invalid Ko-fi token' });
+        return;
+      }
+      if (!emailService.isConfigured()) {
+        res.status(503).json({ ok: false, error: 'Supporter email not configured' });
+        return;
+      }
+
+      const transactionId = getKofiTransactionId(payload);
+      const email = String(payload.email || '').trim();
+      const amount = getKofiAmount(payload);
+      const currency = String(payload.currency || '').trim().toUpperCase();
+      const paymentType = String(payload.type || (payload.is_subscription_payment ? 'Subscription' : 'Donation')).trim();
+      const tier = amount >= 10 ? 'founder' : 'supporter';
+      const months = tier === 'founder' ? 36 : config.KOFI_SUPPORTER_CODE_MONTHS;
+      const lifecycleType = paymentType.toLowerCase();
+
+      if (!transactionId) {
+        res.status(400).json({ ok: false, error: 'Missing transaction id' });
+        return;
+      }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(email)) {
+        res.status(400).json({ ok: false, error: 'Missing supporter email' });
+        return;
+      }
+      if (/(?:cancel|cancelled|canceled|refund|chargeback|suspend|pause)/u.test(lifecycleType)) {
+        await supporterService.updateAccountStatusByEmail(email, lifecycleType.includes('refund') || lifecycleType.includes('chargeback') ? 'revoked' : 'inactive');
+        res.status(200).json({ ok: true, lifecycle: true });
+        return;
+      }
+      if (amount < config.KOFI_MIN_AMOUNT) {
+        res.status(202).json({ ok: true, ignored: true, reason: 'below minimum amount' });
+        return;
+      }
+      if (supporterService.hasPayment(transactionId)) {
+        res.status(200).json({ ok: true, duplicate: true });
+        return;
+      }
+
+      const created = await supporterService.createCode({
+        label: payload.from_name || email,
+        tier,
+        months
+      });
+      await supporterService.upsertAccountForCode({
+        codeHash: created.hash,
+        email,
+        label: payload.from_name || email,
+        tier,
+        expiresAt: created.expiresAt,
+        lifetime: tier === 'founder'
+      });
+
+      await emailService.sendSupporterCode({
+        to: email,
+        name: payload.from_name,
+        code: created.code,
+        expiresAt: created.expiresAt,
+        baseUrl: getPublicBaseUrl(req)
+      });
+
+      await supporterService.recordPayment({
+        transactionId,
+        email,
+        amount: payload.amount || String(amount),
+        currency,
+        paymentType,
+        codeHash: created.hash,
+        emailSentAt: new Date().toISOString()
+      });
+
+      logger.info('kofi supporter code sent', {
+        transactionId,
+        emailMasked: maskEmailAddress(email),
+        amount,
+        currency,
+        paymentType
+      });
+      res.status(200).json({ ok: true });
+    } catch (error) {
+      let transactionId = '';
+      try {
+        transactionId = getKofiTransactionId(parseKofiWebhookPayload(req.body || {}));
+      } catch {
+        transactionId = '';
+      }
+      logger.error('kofi webhook failed', {
+        error,
+        transactionId
+      });
+      next(error);
+    }
   });
 
   app.get('/admin/login', (req, res) => {
@@ -5490,6 +6535,33 @@ const bootstrap = async () => {
     res.redirect(302, '/admin/login');
   });
 
+  app.post('/admin/supporters/create', requireAdminAuth, async (req, res, next) => {
+    try {
+      const created = await supporterService.createCode({
+        label: req.body?.label,
+        tier: req.body?.tier,
+        months: req.body?.months
+      });
+      const flashId = crypto.randomBytes(8).toString('hex');
+      adminSupporterFlashCodes.set(flashId, {
+        code: created.code,
+        expiresAt: Date.now() + 5 * 60 * 1000
+      });
+      res.redirect(302, `/admin?supporterFlash=${encodeURIComponent(flashId)}`);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/admin/supporters/revoke', requireAdminAuth, async (req, res, next) => {
+    try {
+      await supporterService.revokeCode(req.body?.hash);
+      res.redirect(302, '/admin');
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.get('/admin', requireAdminAuth, async (req, res, next) => {
     try {
       const systemStats = await getSystemStats();
@@ -5514,10 +6586,28 @@ const bootstrap = async () => {
         users: userTracker.getStats(),
         cache: cacheStats,
         providers: providerService.getStats(),
-        sourceRegistry: sourceRegistry.getStats()
+        sourceRegistry: sourceRegistry.getStats(),
+        supporters: supporterService.getStats()
       };
 
-      res.status(200).type('html').send(renderAdminPage({ stats }));
+      const flashId = typeof req.query.supporterFlash === 'string' ? req.query.supporterFlash : '';
+      const supporterFlash = adminSupporterFlashCodes.get(flashId);
+      const createdSupporterCode = supporterFlash && supporterFlash.expiresAt > Date.now()
+        ? supporterFlash.code
+        : '';
+      if (flashId) {
+        adminSupporterFlashCodes.delete(flashId);
+      }
+      for (const [id, flash] of adminSupporterFlashCodes.entries()) {
+        if (!flash || flash.expiresAt <= Date.now()) {
+          adminSupporterFlashCodes.delete(id);
+        }
+      }
+
+      res.status(200).type('html').send(renderAdminPage({
+        stats,
+        createdSupporterCode
+      }));
     } catch (error) {
       next(error);
     }
@@ -5527,6 +6617,25 @@ const bootstrap = async () => {
   app.get('/stremio/manifest.json', streamManager.handleStremioManifest.bind(streamManager));
   app.post('/configure/private-config', streamManager.handleCreatePrivateConfig.bind(streamManager));
   app.post('/configure/validate-iptv', streamManager.handleValidateIptvConfig.bind(streamManager));
+  app.post('/configure/validate-supporter', async (req, res, next) => {
+    try {
+      const result = await supporterService.validateCode(req.body?.supporterCode || req.body?.code || '');
+      res
+        .setHeader('Cache-Control', 'no-store')
+        .json({
+          configured: result.configured,
+          valid: result.valid,
+          message: result.message,
+          supporter: result.valid ? {
+            tier: result.supporter.tier,
+            label: result.supporter.label,
+            expiresAt: result.supporter.expiresAt
+          } : null
+        });
+    } catch (error) {
+      next(error);
+    }
+  });
   app.get('/configured/:providerConfig', streamManager.handleStremioManifest.bind(streamManager));
   app.get('/configured/:providerConfig/manifest.json', streamManager.handleStremioManifest.bind(streamManager));
   app.get('/configured/:providerConfig/stremio/manifest.json', streamManager.handleStremioManifest.bind(streamManager));

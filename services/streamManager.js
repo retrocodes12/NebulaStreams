@@ -359,6 +359,23 @@ const PRIVATE_CONFIG_VERSION = 1;
 const PRIVATE_PROVIDER_COOKIE_MAX_LENGTH = 4096;
 const CONTENT_SELECTIONS = new Set(['default', 'movie', 'series']);
 
+const normalizeSupporterRecord = (value) => {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  const expiresAtMs = Date.parse(value.expiresAt || '');
+  if (!value.active || !Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) {
+    return null;
+  }
+  return {
+    active: true,
+    tier: String(value.tier || 'supporter').trim().toLowerCase().replace(/[^a-z0-9_-]/gu, '').slice(0, 32) || 'supporter',
+    label: String(value.label || '').trim().slice(0, 80),
+    expiresAt: new Date(expiresAtMs).toISOString(),
+    codeHash: String(value.codeHash || '').trim().toLowerCase().replace(/[^a-f0-9]/gu, '').slice(0, 64)
+  };
+};
+
 const normalizeContentSelection = (value) => {
   const normalized = String(value || '').trim().toLowerCase();
   return CONTENT_SELECTIONS.has(normalized) ? normalized : 'default';
@@ -396,6 +413,9 @@ const HIGH_VALUE_CACHE_PATTERN = /\b(4khdhub|hdhub|hubcloud|hub cloud)\b/iu;
 const LAST_GOOD_PRIMARY_PROVIDERS = new Set(['4khdhub', 'scrapling 4khdhub', '4khdhub tv', 'hdhub4u', 'uhdmovies']);
 const LAST_GOOD_SECONDARY_PROVIDERS = new Set(['vidsrc', 'vixsrc', 'vidlink', 'moviebox', 'cinestream', 'streamflix']);
 const STANDALONE_FAST_PASS_PROVIDER_ORDER = Object.freeze([
+  'r3-plugin',
+  'r5-plugin',
+  'r2-plugin',
   'moviebox',
   'vidlink',
   'videasy',
@@ -3245,7 +3265,7 @@ export const parseRangeHeader = (rangeHeader, totalSize) => {
 };
 
 export class StreamManager {
-  constructor({ torrentEngine, httpProxy, cacheManager, sourceRegistry, providerService, imdbResolver, userTracker = null }) {
+  constructor({ torrentEngine, httpProxy, cacheManager, sourceRegistry, providerService, imdbResolver, userTracker = null, supporterService = null }) {
     this.torrentEngine = torrentEngine;
     this.httpProxy = httpProxy;
     this.cacheManager = cacheManager;
@@ -3253,6 +3273,7 @@ export class StreamManager {
     this.providerService = providerService;
     this.imdbResolver = imdbResolver;
     this.userTracker = userTracker;
+    this.supporterService = supporterService;
     this.activeStreams = 0;
     this.stremioResultCache = new Map();
     this.stremioResultInFlight = new Map();
@@ -3724,6 +3745,7 @@ export class StreamManager {
       qualityPriority,
       streamOptions,
       privateProviderSettings,
+      supporter: normalizeSupporterRecord(payload.supporter),
       profileCode: profileCode && CONFIGURED_PROFILE_LABELS[profileCode] ? profileCode : null,
       updatedAt: typeof payload.updatedAt === 'string' ? payload.updatedAt : new Date().toISOString()
     };
@@ -3753,10 +3775,17 @@ export class StreamManager {
             this.privateConfigStore.set(configId, normalized);
           }
         } catch (error) {
+          if (error?.code === 'ENOENT') {
+            continue;
+          }
+
           logger.warn('private config load failed', {
             configId,
             error
           });
+          const brokenPath = this.getPrivateConfigPath(configId);
+          const quarantinePath = `${brokenPath}.invalid-${Date.now()}`;
+          await rename(brokenPath, quarantinePath).catch(() => {});
         }
       }
     } catch (error) {
@@ -3830,6 +3859,11 @@ export class StreamManager {
         qualityPriority: normalized.qualityPriority,
         streamOptions: normalized.streamOptions,
         privateProviderSettingsHash: getPrivateProviderSettingsHash(normalized.privateProviderSettings),
+        supporter: normalized.supporter ? {
+          tier: normalized.supporter.tier,
+          expiresAt: normalized.supporter.expiresAt,
+          codeHash: normalized.supporter.codeHash
+        } : null,
         profileCode: normalized.profileCode
       }))
       .digest('hex')
@@ -4360,11 +4394,13 @@ export class StreamManager {
   }
 
   getAddonPresentation(req) {
+    const privateConfig = this.getRequestedPrivateConfig(req);
     const providers = this.getRequestedProviders(req);
     const qualityPriority = this.getRequestedQualityPriority(req);
     const streamOptions = this.getRequestedStreamOptions(req);
     const privateProviderSettingsHash = getPrivateProviderSettingsHash(this.getRequestedPrivateProviderSettings(req));
     const configuredProfile = this.getRequestedConfiguredProfile(req);
+    const supporter = normalizeSupporterRecord(privateConfig?.supporter);
     const hasDefaultQualityPriority = qualityPriority.join(',') === DEFAULT_QUALITY_PRIORITY.join(',');
     const hasDefaultStreamOptions = JSON.stringify(streamOptions) === JSON.stringify(DEFAULT_STREAM_OPTIONS);
 
@@ -4396,7 +4432,7 @@ export class StreamManager {
       addonId: `${getStandaloneAddonId(req)}.${providerHash}`,
       addonName: `${config.STREMIO_ADDON_NAME}(${configuredLabel.code})`,
       configurable: true,
-      description: `Configured install: ${configuredLabel.label}. Providers: ${providerSummary}. Quality priority: ${qualityPriority.join(' > ')}. Playback: ${summarizeStreamOptions(streamOptions)}`
+      description: `${supporter ? 'Supporter install. ' : ''}Configured install: ${configuredLabel.label}. Providers: ${providerSummary}. Quality priority: ${qualityPriority.join(' > ')}. Playback: ${summarizeStreamOptions(streamOptions)}`
     };
   }
 
@@ -4630,6 +4666,7 @@ export class StreamManager {
       return;
     }
 
+    const routeStartedAt = Date.now();
     const clientUserAgent = String(req.get?.('user-agent') || '').toLowerCase();
     const isAioStreamsClient = /\baiostreams\b/u.test(clientUserAgent);
     const isShortDeadlineClient = /\b(?:nuvio|stremio-apple|stremioshell|strmr|fusionapp|ktor-client|okhttp)\b/u
@@ -4666,7 +4703,48 @@ export class StreamManager {
     req.on('aborted', onClientClose);
     res.on('close', onClientClose);
     let timeoutFallbackContext = null;
-    const overallTimeout = setTimeout(() => {
+    let deadlineRefreshInput = null;
+    let overallTimeout = null;
+    let standaloneDeadlineResponseTimer = null;
+    const clearStandaloneDeadlineResponseTimer = () => {
+      if (standaloneDeadlineResponseTimer) {
+        clearTimeout(standaloneDeadlineResponseTimer);
+        standaloneDeadlineResponseTimer = null;
+      }
+    };
+    const sendDeadlineFallbackResponse = (reason) => {
+      if (res.destroyed || res.writableEnded) {
+        return false;
+      }
+
+      const cachedStreams = timeoutFallbackContext?.cachedResult?.state === 'stale'
+        ? timeoutFallbackContext.cachedResult.streams
+        : null;
+      const fallbackStreams = Array.isArray(cachedStreams) && cachedStreams.length > 0
+        ? cachedStreams
+        : (Array.isArray(timeoutFallbackContext?.lastGoodStreams) && timeoutFallbackContext.lastGoodStreams.length > 0
+            ? timeoutFallbackContext.lastGoodStreams
+            : []);
+
+      logger.warn('serving standalone stremio deadline response', {
+        imdbId: req.params.id,
+        mediaType: req.params.type,
+        reason,
+        resultCount: fallbackStreams.length
+      });
+      if (deadlineRefreshInput && !isAioStreamsClient) {
+        this.scheduleStremioBackgroundRefresh(deadlineRefreshInput);
+      }
+      abortActiveSearch(`Stremio ${reason}`);
+      setResponseHeader('X-NebulaStreams-Cache', fallbackStreams.length > 0 ? reason : 'deadline-empty');
+      clearStandaloneDeadlineResponseTimer();
+      if (overallTimeout) {
+        clearTimeout(overallTimeout);
+      }
+      this.sendStremioStreamsResponse(res, fallbackStreams);
+      return true;
+    };
+    overallTimeout = setTimeout(() => {
       void (async () => {
         if (res.headersSent && !res.locals?.nebulaStremioKeepaliveStarted) {
           return;
@@ -4714,7 +4792,7 @@ export class StreamManager {
           return;
         }
 
-        this.sendStremioStreamsResponse(res, []);
+        sendDeadlineFallbackResponse('overall-timeout');
       })().catch((error) => {
         logger.warn('stremio timeout fallback failed', { error });
         this.sendStremioStreamsResponse(res, []);
@@ -4774,6 +4852,8 @@ export class StreamManager {
                   ? 13_500
                   : overallTimeoutMs - 500
       ));
+      const getRemainingRouteBudgetMs = (reserveMs = 350) =>
+        Math.max(0, routeSoftDeadlineMs - (Date.now() - routeStartedAt) - reserveMs);
       const bypassStremioResultCache = (requestedProviders.length === 1 && requestedProviders[0] === 'allyoucanwatch')
         || streamOptions.torboxOnlyStreams;
       const resultCacheKey = this.buildStremioResultCacheKey({
@@ -4812,6 +4892,19 @@ export class StreamManager {
         clearTimeout(overallTimeout);
         this.sendStremioStreamsResponse(res, cachedResult.streams);
         return;
+      }
+
+      if (!isAioStreamsClient) {
+        const elapsedMs = Date.now() - routeStartedAt;
+        const standaloneResponseDeadlineMs = Math.min(
+          overallTimeoutMs - 1_200,
+          isShortDeadlineClient ? 9_500 : 11_000
+        );
+        const standaloneResponseDelayMs = Math.max(250, standaloneResponseDeadlineMs - elapsedMs);
+        standaloneDeadlineResponseTimer = setTimeout(() => {
+          sendDeadlineFallbackResponse('standalone-client-deadline');
+        }, standaloneResponseDelayMs);
+        standaloneDeadlineResponseTimer.unref?.();
       }
 
       if (bypassStremioResultCache) {
@@ -4863,6 +4956,7 @@ export class StreamManager {
         privateProviderSettings,
         signal: requestAbortController.signal
       };
+      deadlineRefreshInput = buildInput;
 
       if (lastGoodStreams?.length && getLastGoodStreamSetScore(lastGoodStreams) > 0) {
         this.scheduleStremioBackgroundRefresh(buildInput);
@@ -4901,30 +4995,44 @@ export class StreamManager {
 
       if (standaloneFastPassProviders) {
         const standaloneTimeoutSentinel = { timedOut: true };
-        const standaloneStreams = await withTimeoutFallback(
-          this.buildStremioStreams({
-            ...buildInput,
-            requestedProviders: standaloneFastPassProviders,
-            cacheResult: false
-          }),
-          Math.max(5_000, Math.min(routeSoftDeadlineMs, 8_500)),
-          standaloneTimeoutSentinel
+        const standaloneFastPassCapMs = parsed.mediaType === 'movie' ? 9_000 : 6_000;
+        const standaloneFastPassReserveMs = parsed.mediaType === 'movie' ? 700 : 1_200;
+        const standaloneBudgetMs = Math.min(
+          getRemainingRouteBudgetMs(standaloneFastPassReserveMs),
+          standaloneFastPassCapMs
         );
+        if (standaloneBudgetMs < 1_000) {
+          logger.warn('standalone fast-pass skipped because deadline budget is exhausted', {
+            tmdbId,
+            mediaType: parsed.mediaType,
+            remainingMs: standaloneBudgetMs
+          });
+        } else {
+          const standaloneStreams = await withTimeoutFallback(
+            this.buildStremioStreams({
+              ...buildInput,
+              requestedProviders: standaloneFastPassProviders,
+              cacheResult: false
+            }),
+            standaloneBudgetMs,
+            standaloneTimeoutSentinel
+          );
 
-        if (standaloneStreams !== standaloneTimeoutSentinel && Array.isArray(standaloneStreams) && standaloneStreams.length > 0) {
-          this.scheduleStremioBackgroundRefresh(buildInput);
-          setResponseHeader('X-NebulaStreams-Mode', 'standalone-fast-pass');
-          clearTimeout(overallTimeout);
-          this.sendStremioStreamsResponse(res, standaloneStreams);
-          return;
+          if (standaloneStreams !== standaloneTimeoutSentinel && Array.isArray(standaloneStreams) && standaloneStreams.length > 0) {
+            this.scheduleStremioBackgroundRefresh(buildInput);
+            setResponseHeader('X-NebulaStreams-Mode', 'standalone-fast-pass');
+            clearTimeout(overallTimeout);
+            this.sendStremioStreamsResponse(res, standaloneStreams);
+            return;
+          }
+
+          logger.warn('standalone fast-pass returned no streams before client deadline', {
+            tmdbId,
+            mediaType: parsed.mediaType,
+            providerCount: standaloneFastPassProviders.length,
+            timedOut: standaloneStreams === standaloneTimeoutSentinel
+          });
         }
-
-        logger.warn('standalone fast-pass returned no streams before client deadline', {
-          tmdbId,
-          mediaType: parsed.mediaType,
-          providerCount: standaloneFastPassProviders.length,
-          timedOut: standaloneStreams === standaloneTimeoutSentinel
-        });
       }
 
       let stremioStreams;
@@ -4932,9 +5040,23 @@ export class StreamManager {
       try {
         const buildTimeoutSentinel = { timedOut: true };
         const buildPromise = this.getOrBuildStremioStreams(buildInput);
+        const buildBudgetMs = getRemainingRouteBudgetMs();
+
+        if (buildBudgetMs <= 0) {
+          logger.warn('standalone route deadline exhausted before full build', {
+            tmdbId,
+            mediaType: parsed.mediaType
+          });
+          abortActiveSearch('Stremio route deadline exhausted');
+          setResponseHeader('X-NebulaStreams-Cache', 'deadline-empty');
+          clearTimeout(overallTimeout);
+          this.sendStremioStreamsResponse(res, []);
+          return;
+        }
+
         stremioStreams = await withTimeoutFallback(
           buildPromise,
-          routeSoftDeadlineMs,
+          buildBudgetMs,
           buildTimeoutSentinel
         );
 
@@ -5009,6 +5131,17 @@ export class StreamManager {
       this.sendStremioStreamsResponse(res, stremioStreams);
     } catch (error) {
       clearTimeout(overallTimeout);
+      const isMalformedStremioProbe = error?.statusCode === 400
+        && /^Series stream id must be in/u.test(String(error?.message || ''));
+      if (isMalformedStremioProbe) {
+        logger.info('stremio stream route ignored malformed series probe', {
+          id: req.params.id,
+          mediaType: req.params.type
+        });
+        this.sendStremioStreamsResponse(res, []);
+        return;
+      }
+
       logger.warn('stremio stream route failed; serving fallback response', {
         id: req.params.id,
         mediaType: req.params.type,
@@ -5803,12 +5936,16 @@ export class StreamManager {
       const createPayload = await createResponse.json().catch(() => ({}));
 
       if (!createResponse.ok && createResponse.status !== 409) {
-        throw createHttpError(createResponse.status || 502, createPayload?.detail || 'TorBox web download failed');
+        const detail = String(createPayload?.detail || createPayload?.error || 'TorBox web download failed');
+        const unsupported = /not supported|unsupported|not allowed/iu.test(detail);
+        throw createHttpError(unsupported ? 422 : (createResponse.status || 502), detail);
       }
 
       const webId = extractTorBoxWebDownloadId(createPayload);
       if (!webId) {
-        throw createHttpError(502, createPayload?.detail || 'TorBox did not return a web download id');
+        const detail = String(createPayload?.detail || createPayload?.error || 'TorBox did not return a web download id');
+        const unsupported = /not supported|unsupported|not allowed/iu.test(detail);
+        throw createHttpError(unsupported ? 422 : 502, detail);
       }
 
       let fileId = null;
@@ -5994,11 +6131,21 @@ export class StreamManager {
 
   async handleCreatePrivateConfig(req, res, next) {
     try {
+      let supporter = null;
+      const supporterCode = String(req.body?.supporterCode || '').trim();
+      if (supporterCode) {
+        const validation = await this.supporterService?.validateCode(supporterCode, { touch: true });
+        if (!validation?.valid) {
+          throw createHttpError(401, validation?.message || 'Invalid supporter code');
+        }
+        supporter = validation.supporter;
+      }
       const { configId, manifestPath } = await this.createPrivateConfig({
         providers: req.body?.providers,
         qualityPriority: req.body?.qualityPriority,
         streamOptions: req.body?.streamOptions,
         privateProviderSettings: req.body?.privateProviderSettings,
+        supporter,
         profileCode: req.body?.profileCode
       });
       const installUrls = getManifestInstallUrls(req, manifestPath);

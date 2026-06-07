@@ -11,10 +11,13 @@ import json
 import os
 import re
 import signal
+import socket
 import sys
 import time
+import threading
 from html import unescape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote_plus, urljoin, urlparse
 from urllib.request import Request, urlopen
@@ -26,6 +29,26 @@ except Exception:  # pragma: no cover - optional dependency
     StealthyFetcher = None
 
 
+def _load_env_file() -> None:
+    env_path = Path(__file__).resolve().parents[2] / ".env"
+    if not env_path.exists():
+        return
+    try:
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip("\"'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+    except Exception:
+        return
+
+
+_load_env_file()
+
 PORT = int(os.environ.get("SCRAPLING_SERVICE_PORT", "8787"))
 TMDB_API_KEY = os.environ.get("TMDB_API_KEY", "439c478a771f35c05022f9feabcca01c")
 TIMEOUT_SECONDS = float(os.environ.get("SCRAPLING_FETCH_TIMEOUT_SECONDS", "8"))
@@ -34,6 +57,17 @@ USER_AGENT = os.environ.get(
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
 )
+HOST_FAILURE_TTL_SECONDS = float(os.environ.get("SCRAPLING_HOST_FAILURE_TTL_SECONDS", "600"))
+HOST_FAILURE_PATTERNS = (
+    "could not resolve host",
+    "name or service not known",
+    "temporary failure in name resolution",
+    "nodename nor servname provided",
+    "failed to establish a new connection",
+    "connection refused",
+)
+_HOST_FAILURES: dict[str, float] = {}
+_HOST_FAILURE_LOCK = threading.Lock()
 
 
 class ReusableThreadingHTTPServer(ThreadingHTTPServer):
@@ -102,31 +136,92 @@ def slug(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", (value or "").lower()).strip()
 
 
+def host_from_url(url: str) -> str:
+    return (urlparse(url).hostname or "").lower()
+
+
+def should_skip_host(url: str) -> bool:
+    host = host_from_url(url)
+    if not host:
+        return False
+    now = time.time()
+    with _HOST_FAILURE_LOCK:
+        expires_at = _HOST_FAILURES.get(host)
+        if not expires_at:
+            return False
+        if expires_at <= now:
+            _HOST_FAILURES.pop(host, None)
+            return False
+        return True
+
+
+def mark_host_failure(url: str, error: Exception) -> None:
+    message = str(error).lower()
+    if not any(pattern in message for pattern in HOST_FAILURE_PATTERNS):
+        return
+    host = host_from_url(url)
+    if not host:
+        return
+    with _HOST_FAILURE_LOCK:
+        _HOST_FAILURES[host] = time.time() + HOST_FAILURE_TTL_SECONDS
+
+
+def mark_host_failure_by_host(host: str) -> None:
+    if not host:
+        return
+    with _HOST_FAILURE_LOCK:
+        _HOST_FAILURES[host] = time.time() + HOST_FAILURE_TTL_SECONDS
+
+
+def host_resolves(url: str) -> bool:
+    host = host_from_url(url)
+    if not host:
+        return True
+    try:
+        socket.getaddrinfo(host, None)
+        return True
+    except OSError:
+        mark_host_failure_by_host(host)
+        return False
+
+
 def fetch_text(url: str, *, stealth: bool = False) -> tuple[str, str]:
+    if should_skip_host(url):
+        raise RuntimeError(f"host temporarily quarantined: {host_from_url(url)}")
+
     headers = {
         "User-Agent": USER_AGENT,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Referer": f"{urlparse(url).scheme}://{urlparse(url).netloc}/",
     }
 
-    if stealth and StealthyFetcher is not None:
-        page = StealthyFetcher.fetch(
-            url,
-            headless=True,
-            network_idle=False,
-            disable_resources=True,
-            timeout=int(TIMEOUT_SECONDS * 1000),
-        )
-        return str(page.body.decode("utf-8", "ignore") if isinstance(page.body, bytes) else page.body), str(getattr(page, "url", url))
+    try:
+        if stealth and StealthyFetcher is not None:
+            page = StealthyFetcher.fetch(
+                url,
+                headless=True,
+                network_idle=False,
+                disable_resources=True,
+                timeout=int(TIMEOUT_SECONDS * 1000),
+            )
+            return str(page.body.decode("utf-8", "ignore") if isinstance(page.body, bytes) else page.body), str(getattr(page, "url", url))
 
-    if Fetcher is not None:
-        page = Fetcher.get(url, headers=headers, timeout=int(TIMEOUT_SECONDS * 1000))
-        body = page.body.decode("utf-8", "ignore") if isinstance(page.body, bytes) else str(page.body)
-        return body, str(getattr(page, "url", url))
+        if Fetcher is not None:
+            page = Fetcher.get(url, headers=headers, timeout=int(TIMEOUT_SECONDS * 1000))
+            body = page.body.decode("utf-8", "ignore") if isinstance(page.body, bytes) else str(page.body)
+            return body, str(getattr(page, "url", url))
 
-    request = Request(url, headers=headers)
-    with urlopen(request, timeout=TIMEOUT_SECONDS) as response:
-        return response.read().decode("utf-8", "ignore"), response.geturl()
+        request = Request(url, headers=headers)
+        with urlopen(request, timeout=TIMEOUT_SECONDS) as response:
+            return response.read().decode("utf-8", "ignore"), response.geturl()
+    except Exception as error:
+        mark_host_failure(url, error)
+        raise
+
+
+def active_domains(domains: list[str]) -> list[str]:
+    return [domain for domain in domains if not should_skip_host(domain) and host_resolves(domain)]
+
 
 
 def fetch_text_post(url: str, data: dict[str, str], *, referer: str | None = None, extra_headers: dict[str, str] | None = None) -> tuple[str, str]:
@@ -308,7 +403,7 @@ def scrape_hdhub4u(payload: dict[str, Any]) -> list[dict[str, Any]]:
             continue
 
     if not post_links:
-        for domain in HDHUB4U_DOMAINS[:2]:
+        for domain in active_domains(HDHUB4U_DOMAINS[:2]):
             for query in queries[:1]:
                 try:
                     html, final_url = fetch_text(f"{domain}/search.html?q={quote_plus(query)}")
@@ -376,7 +471,7 @@ def scrape_4khdhub(payload: dict[str, Any]) -> list[dict[str, Any]]:
         queries.insert(0, f"{title} Season {season_int}")
 
     post_links: list[dict[str, str]] = []
-    for domain in FOURKHDHUB_DOMAINS:
+    for domain in active_domains(FOURKHDHUB_DOMAINS):
         for query in queries:
             try:
                 html, final_url = fetch_text(f"{domain}/?s={quote_plus(query)}")
@@ -437,7 +532,7 @@ def scrape_4khdhub(payload: dict[str, Any]) -> list[dict[str, Any]]:
 
 def uhdmovies_search_posts(title: str, year: int) -> list[dict[str, str]]:
     posts: list[dict[str, str]] = []
-    for domain in UHDMOVIES_DOMAINS:
+    for domain in active_domains(UHDMOVIES_DOMAINS):
         try:
             html, final_url = fetch_text(f"{domain}/?s={quote_plus(f'{title} {year}'.strip())}")
         except Exception:
@@ -574,11 +669,12 @@ def handle_scrape(payload: dict[str, Any]) -> dict[str, Any]:
         streams = scrape_uhdmovies(payload)
     else:
         return {"streams": [], "error": f"unsupported provider {provider}"}
+    duration_ms = int((time.time() - start) * 1000)
     return {
         "streams": streams,
         "meta": {
             "provider": provider,
-            "durationMs": int((time.time() - start) * 1000),
+            "durationMs": duration_ms,
             "scraplingAvailable": Fetcher is not None,
             "stealthAvailable": StealthyFetcher is not None,
         },
@@ -601,7 +697,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         if self.path == "/health":
-            self._json(200, {"status": "ok", "scraplingAvailable": Fetcher is not None})
+            self._json(200, {
+                "status": "ok",
+                "scraplingAvailable": Fetcher is not None,
+            })
             return
         self._json(404, {"error": "not found"})
 
@@ -624,9 +723,17 @@ class Handler(BaseHTTPRequestHandler):
 
 def main() -> None:
     server = ReusableThreadingHTTPServer(("127.0.0.1", PORT), Handler)
-    signal.signal(signal.SIGTERM, lambda *_: server.shutdown())
-    signal.signal(signal.SIGINT, lambda *_: server.shutdown())
-    print(json.dumps({"status": "listening", "port": PORT, "scraplingAvailable": Fetcher is not None}), flush=True)
+
+    def request_shutdown(*_: Any) -> None:
+        threading.Thread(target=server.shutdown, daemon=True).start()
+
+    signal.signal(signal.SIGTERM, request_shutdown)
+    signal.signal(signal.SIGINT, request_shutdown)
+    print(json.dumps({
+        "status": "listening",
+        "port": PORT,
+        "scraplingAvailable": Fetcher is not None,
+    }), flush=True)
     server.serve_forever()
 
 

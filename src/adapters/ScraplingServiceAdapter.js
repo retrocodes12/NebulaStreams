@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, promises as fsPromises } from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
@@ -10,7 +10,9 @@ import { withTimeout } from '../utils/timeout.js';
 
 const DEFAULT_SERVICE_URL = 'http://127.0.0.1:8787';
 const execFileAsync = promisify(execFile);
+const { mkdir, open, readFile, rm } = fsPromises;
 const VIDEO_GEN_HOSTS = new Set(['cdn.video-gen.xyz', 'video-gen.xyz']);
+const START_LOCK_STALE_MS = 45_000;
 
 const wait = (ms, signal = null) => new Promise((resolve, reject) => {
   if (signal?.aborted) {
@@ -294,54 +296,145 @@ export class ScraplingServiceAdapter extends PluginProviderAdapter {
       return;
     }
 
-    await this.stopStaleSidecar();
-
-    if (await this.isHealthy()) {
-      return;
+    const lock = await this.acquireStartLock(signal);
+    if (!lock) {
+      if (await this.waitUntilHealthy(35_000, signal)) {
+        return;
+      }
+      throw new Error('Scrapling service did not become healthy');
     }
 
-    if (!sharedState.child || sharedState.child.exitCode !== null) {
-      const scriptPath = path.resolve(process.cwd(), 'services/scrapling_service/server.py');
-      const venvPython = path.resolve(process.cwd(), 'services/scrapling_service/.venv/bin/python');
-      const pythonBin = String(process.env.SCRAPLING_PYTHON_BIN || (existsSync(venvPython) ? venvPython : 'python3')).trim() || 'python3';
-      sharedState.child = spawn(pythonBin, [scriptPath], {
-        cwd: process.cwd(),
-        env: {
-          ...process.env,
-          SCRAPLING_SERVICE_PORT: new URL(this.serviceUrl).port || '8787',
-          TMDB_API_KEY: config.TMDB_API_KEY
-        },
-        stdio: ['ignore', 'pipe', 'pipe']
-      });
+    try {
+      if (await this.isHealthy()) {
+        return;
+      }
 
-      sharedState.child.stdout?.on('data', (chunk) => {
-        this.logger.info?.('scrapling service stdout', { message: String(chunk).trim() });
-      });
-      sharedState.child.stderr?.on('data', (chunk) => {
-        const message = this.summarizeChildLog(chunk);
-        const isAccessNoise = /"GET \/health HTTP\/1\.1" 200|"POST \/scrape HTTP\/1\.1" 200|INFO: Fetched \(200\)/u.test(message);
-        const log = isAccessNoise ? this.logger.info : this.logger.warn;
-        log?.call(this.logger, 'scrapling service stderr', { message });
-      });
-      sharedState.child.on('exit', (code, childSignal) => {
-        this.logger.warn?.('scrapling service exited', { code, signal: childSignal });
-      });
-      this.registerShutdownHandler();
-      sharedState.child.unref?.();
+      await this.stopStaleSidecar();
+
+      if (await this.isHealthy()) {
+        return;
+      }
+
+      if (!sharedState.child || sharedState.child.exitCode !== null) {
+        const scriptPath = path.resolve(process.cwd(), 'services/scrapling_service/server.py');
+        const venvPython = path.resolve(process.cwd(), 'services/scrapling_service/.venv/bin/python');
+        const pythonBin = String(process.env.SCRAPLING_PYTHON_BIN || (existsSync(venvPython) ? venvPython : 'python3')).trim() || 'python3';
+        sharedState.child = spawn(pythonBin, [scriptPath], {
+          cwd: process.cwd(),
+          env: {
+            ...process.env,
+            SCRAPLING_SERVICE_PORT: new URL(this.serviceUrl).port || '8787',
+            TMDB_API_KEY: config.TMDB_API_KEY
+          },
+          stdio: ['ignore', 'pipe', 'pipe']
+        });
+
+        sharedState.child.stdout?.on('data', (chunk) => {
+          this.logger.info?.('scrapling service stdout', { message: String(chunk).trim() });
+        });
+        sharedState.child.stderr?.on('data', (chunk) => {
+          const message = this.summarizeChildLog(chunk);
+          const isAccessNoise = /"GET \/health HTTP\/1\.1" 200|"POST \/scrape HTTP\/1\.1" 200|INFO: Fetched \(200\)/u.test(message);
+          const log = isAccessNoise ? this.logger.info : this.logger.warn;
+          log?.call(this.logger, 'scrapling service stderr', { message });
+        });
+        sharedState.child.on('exit', (code, childSignal) => {
+          this.logger.warn?.('scrapling service exited', { code, signal: childSignal });
+        });
+        this.registerShutdownHandler();
+        sharedState.child.unref?.();
+      }
+
+      if (await this.waitUntilHealthy(30_000, signal)) {
+        return;
+      }
+
+      throw new Error('Scrapling service did not become healthy');
+    } finally {
+      await lock.release();
     }
+  }
 
-    const deadline = Date.now() + 30_000;
+  async waitUntilHealthy(timeoutMs, signal = null) {
+    const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       if (signal?.aborted) {
         throw signal.reason || new Error('Scrapling service start aborted');
       }
       if (await this.isHealthy(signal)) {
-        return;
+        return true;
       }
-      await wait(200);
+      await wait(200, signal);
+    }
+    return false;
+  }
+
+  getStartLockPath() {
+    return path.join(config.CACHE_DIR, 'scrapling-service-start.lock');
+  }
+
+  async acquireStartLock(signal = null) {
+    const lockPath = this.getStartLockPath();
+    await mkdir(path.dirname(lockPath), { recursive: true });
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      if (signal?.aborted) {
+        throw signal.reason || new Error('Scrapling service start aborted');
+      }
+
+      try {
+        const handle = await open(lockPath, 'wx');
+        await handle.writeFile(JSON.stringify({
+          pid: process.pid,
+          createdAt: Date.now()
+        }));
+        await handle.close();
+        return {
+          release: async () => {
+            await rm(lockPath, { force: true }).catch(() => {});
+          }
+        };
+      } catch (error) {
+        if (error?.code !== 'EEXIST') {
+          throw error;
+        }
+
+        if (await this.removeStaleStartLock(lockPath)) {
+          continue;
+        }
+
+        return null;
+      }
     }
 
-    throw new Error('Scrapling service did not become healthy');
+    return null;
+  }
+
+  async removeStaleStartLock(lockPath) {
+    try {
+      const payload = JSON.parse(await readFile(lockPath, 'utf8'));
+      const createdAt = Number(payload?.createdAt || 0);
+      const pid = Number(payload?.pid || 0);
+      const staleByAge = !Number.isFinite(createdAt) || Date.now() - createdAt > START_LOCK_STALE_MS;
+      let staleByPid = false;
+      if (pid > 0) {
+        try {
+          process.kill(pid, 0);
+        } catch {
+          staleByPid = true;
+        }
+      }
+
+      if (staleByAge || staleByPid) {
+        await rm(lockPath, { force: true });
+        return true;
+      }
+    } catch {
+      await rm(lockPath, { force: true }).catch(() => {});
+      return true;
+    }
+
+    return false;
   }
 
   summarizeChildLog(chunk) {
