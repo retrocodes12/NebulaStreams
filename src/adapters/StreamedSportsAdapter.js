@@ -11,6 +11,8 @@ const API_BASE = 'https://streamed.pk';
 const EMBED_BASE = 'https://embed.st';
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const EVENT_CATALOG_LIMIT = 50;
+const FIFA_WC_CATALOG_ID = 'streamed-events-fifa-wc';
+const FIFA_WC_CACHE_KEY = 'fifa-wc';
 const DEFAULT_BROWSER_TIMEOUT_MS = 15_000;
 const DEFAULT_HLS_CACHE_MS = 15_000;
 const DEFAULT_PLAYLIST_CACHE_MS = 1_500;
@@ -25,7 +27,118 @@ const STREAM_SOURCE_RANK = new Map([
   ['admin', 0],
   ['delta', 1],
   ['echo', 2],
-  ['golf', 3]
+  ['golf', 3],
+  ['hellosports', 4]
+]);
+const LICENSED_EXTERNAL_EMBED_STREAMS = [
+  {
+    id: 'l1',
+    streamNo: 1,
+    language: 'English',
+    hd: true,
+    embedUrl: 'https://helloxsports.in/worldcup/fox1.html'
+  },
+  {
+    id: 'l2',
+    streamNo: 2,
+    language: 'English',
+    hd: true,
+    embedUrl: 'https://paribirdflygame.blogspot.com/?b4x=https://soccerball.st/rampages/searccch1/'
+  },
+  {
+    id: 'l3',
+    streamNo: 3,
+    language: 'Arabic',
+    hd: true,
+    embedUrl: 'https://helloxsports.in/isl/player.html?get=https://live.shoranz.cfd/shossss3/index.m3u8'
+  },
+  {
+    id: 'l4',
+    streamNo: 4,
+    language: 'Brazilian',
+    hd: true,
+    embedUrl: 'https://helloxsports.in/uefa/telemundo.html'
+  },
+  {
+    id: 'l5',
+    streamNo: 5,
+    language: 'Vietnamese',
+    hd: true,
+    embedUrl: 'https://helloxsports.in/isl/player.html?get=https://live05.msdht.app/live/24561735.m3u8'
+  },
+  {
+    id: 'l6',
+    streamNo: 6,
+    language: 'Multi Quality',
+    hd: true,
+    embedUrl: 'https://helloxsports.in/worldcup/dsports.html'
+  },
+  {
+    id: 'l7',
+    streamNo: 7,
+    language: 'Malayalam',
+    hd: false,
+    embedUrl: 'https://helloxsports.in/worldcup/dsports.html'
+  }
+];
+const LICENSED_EXTERNAL_EMBED_STREAM_BY_ID = new Map(
+  LICENSED_EXTERNAL_EMBED_STREAMS.map((stream) => [stream.id, stream])
+);
+const FIFA_WC_TEAM_ALIASES = new Set([
+  'algeria',
+  'argentina',
+  'australia',
+  'austria',
+  'belgium',
+  'bosnia and herzegovina',
+  'brazil',
+  'canada',
+  'cape verde',
+  'cabo verde',
+  'colombia',
+  'congo dr',
+  'dr congo',
+  'czechia',
+  'curacao',
+  'croatia',
+  'ecuador',
+  'egypt',
+  'england',
+  'france',
+  'germany',
+  'ghana',
+  'haiti',
+  'iran',
+  'iraq',
+  'ivory coast',
+  'cote d ivoire',
+  'japan',
+  'jordan',
+  'korea republic',
+  'south korea',
+  'mexico',
+  'morocco',
+  'netherlands',
+  'new zealand',
+  'norway',
+  'panama',
+  'paraguay',
+  'portugal',
+  'qatar',
+  'saudi arabia',
+  'scotland',
+  'senegal',
+  'south africa',
+  'spain',
+  'sweden',
+  'switzerland',
+  'tunisia',
+  'turkiye',
+  'turkey',
+  'united states',
+  'usa',
+  'uruguay',
+  'uzbekistan'
 ]);
 
 const toString = (value) => String(value ?? '').trim();
@@ -36,9 +149,49 @@ const normalizeIdPart = (value) =>
 const normalizeTitle = (value) =>
   toString(value)
     .toLowerCase()
+    .normalize('NFKD')
+    .replace(/\p{Diacritic}/gu, '')
     .replace(/['’]/gu, '')
     .replace(/[^a-z0-9]+/gu, ' ')
     .trim();
+
+const normalizeTeamName = (value) =>
+  normalizeTitle(value)
+    .replace(/\bt\s*rkiye\b/gu, 'turkiye')
+    .replace(/\bturkiye\b/gu, 'turkiye')
+    .replace(/\bturkey\b/gu, 'turkey')
+    .replace(/\bcuracao\b/gu, 'curacao')
+    .replace(/\bcote d ivoire\b/gu, 'cote d ivoire')
+    .replace(/\bcabo verde\b/gu, 'cabo verde')
+    .replace(/\bcape verde\b/gu, 'cape verde');
+
+const splitFixtureTeams = (title) => {
+  const normalized = toString(title)
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/\p{Diacritic}/gu, '')
+    .replace(/['’]/gu, '')
+    .replace(/[._/]+/gu, ' ')
+    .replace(/\s+/gu, ' ')
+    .trim();
+  const parts = normalized
+    .split(/\s+(?:vs?\.?|versus)\s+|\s+-\s+/u)
+    .map((part) => normalizeTeamName(part.replace(/^\bppv\b\s+/u, '')))
+    .filter(Boolean);
+  return parts.length === 2 ? parts : [];
+};
+
+const isFifaWorldCupTeam = (team) => FIFA_WC_TEAM_ALIASES.has(normalizeTeamName(team));
+
+const isFifaWorldCupMatch = (match = {}) => {
+  const text = `${match.title || ''} ${match.category || ''}`;
+  if (/\bworld\s+cup\b/iu.test(text) && /\b(?:fifa|football|soccer)\b/iu.test(text)) return true;
+  if (normalizeIdPart(match.category) !== 'football') return false;
+  const teams = Array.isArray(match.teams) && match.teams.length === 2
+    ? match.teams
+    : splitFixtureTeams(match.title);
+  return teams.length === 2 && teams.every(isFifaWorldCupTeam);
+};
 
 const isHttpUrl = (value) => {
   try {
@@ -160,6 +313,7 @@ export class StreamedSportsAdapter {
   getEventCatalogDefinitions(sports = []) {
     const definitions = [
       { type: 'tv', id: 'streamed-events-live', endpoint: '/api/matches/live', name: 'Sports Events: Live' },
+      { type: 'tv', id: FIFA_WC_CATALOG_ID, endpoint: FIFA_WC_CACHE_KEY, name: 'Sports Events: FIFA WC', fifaWorldCup: true },
       { type: 'tv', id: 'streamed-events-today', endpoint: '/api/matches/all-today', name: 'Sports Events: Today' },
       { type: 'tv', id: 'streamed-events-popular', endpoint: '/api/matches/all-today/popular', name: 'Sports Events: Popular' }
     ];
@@ -185,6 +339,9 @@ export class StreamedSportsAdapter {
   async loadMatches(catalog, signal = null) {
     const endpoint = toString(catalog?.endpoint);
     if (!endpoint) return [];
+    if (catalog?.fifaWorldCup || catalog?.id === FIFA_WC_CATALOG_ID || endpoint === FIFA_WC_CACHE_KEY) {
+      return this.loadFifaWorldCupMatches(catalog, signal);
+    }
 
     const cached = this.matchesCache.get(endpoint);
     if (cached && cached.expiresAt > Date.now()) {
@@ -223,6 +380,37 @@ export class StreamedSportsAdapter {
       this.indexMatches(catalog, fallback);
       return fallback;
     }
+  }
+
+  async loadFifaWorldCupMatches(catalog, signal = null) {
+    const cached = this.matchesCache.get(FIFA_WC_CACHE_KEY);
+    if (cached && cached.expiresAt > Date.now()) {
+      this.indexMatches(catalog, cached.value);
+      return cached.value;
+    }
+
+    const sourceCatalogs = [
+      { id: 'streamed-events-football-source', endpoint: '/api/matches/football' },
+      { id: 'streamed-events-today-source', endpoint: '/api/matches/all-today' },
+      { id: 'streamed-events-popular-source', endpoint: '/api/matches/all-today/popular' },
+      { id: 'streamed-events-live-source', endpoint: '/api/matches/live' }
+    ];
+    const settled = await Promise.allSettled(sourceCatalogs.map((sourceCatalog) => this.loadMatches(sourceCatalog, signal)));
+    const bySourceId = new Map();
+    for (const result of settled) {
+      if (result.status !== 'fulfilled') continue;
+      for (const match of result.value) {
+        if (isFifaWorldCupMatch(match)) bySourceId.set(match.sourceId, match);
+      }
+    }
+
+    const matches = [...bySourceId.values()].sort((left, right) => Number(left.date || 0) - Number(right.date || 0));
+    this.matchesCache.set(FIFA_WC_CACHE_KEY, {
+      value: matches,
+      expiresAt: Date.now() + CACHE_TTL_MS
+    });
+    this.indexMatches(catalog, matches);
+    return matches;
   }
 
   indexMatches(catalog, matches = []) {
@@ -282,8 +470,7 @@ export class StreamedSportsAdapter {
   }
 
   toEventMeta(match) {
-    const isWorldCupFootball = /\bworld\s+cup\b/iu.test(`${match.title} ${match.category}`)
-      && /\b(?:fifa|football|soccer)\b/iu.test(`${match.title} ${match.category}`);
+    const isWorldCupFootball = isFifaWorldCupMatch(match);
     return {
       id: match.id,
       type: 'tv',
@@ -391,10 +578,42 @@ export class StreamedSportsAdapter {
     return `${normalizedBase}/private/${encodeURIComponent(privateConfigId)}/streamed/${encodeURIComponent(stream.source)}/${encodeURIComponent(stream.id)}/${encodeURIComponent(String(stream.streamNo || 1))}.m3u8`;
   }
 
+  getLicensedExternalEmbedStreams({ baseUrl = '' } = {}) {
+    return LICENSED_EXTERNAL_EMBED_STREAMS
+      .map((stream) => ({
+        id: `hellosports:${stream.id}`,
+        source: 'hellosports',
+        streamId: stream.id,
+        streamNo: stream.streamNo,
+        language: stream.language,
+        hd: Boolean(stream.hd),
+        viewers: 0,
+        embedUrl: baseUrl
+          ? `${String(baseUrl).replace(/\/+$/u, '')}/watch-together/hellosports/${encodeURIComponent(stream.id)}`
+          : stream.embedUrl
+      }))
+      .filter((stream) => isHttpUrl(stream.embedUrl));
+  }
+
+  getLicensedExternalEmbedSource(id) {
+    return LICENSED_EXTERNAL_EMBED_STREAM_BY_ID.get(normalizeIdPart(id)) || null;
+  }
+
+  dedupeEmbedStreams(streams = []) {
+    const seen = new Set();
+    return streams.filter((stream) => {
+      const key = toString(stream?.embedUrl).toLowerCase();
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
   async getEventEmbedStreams(id, options = null) {
     const signal = options && typeof options === 'object' && 'signal' in options
       ? options.signal
       : options || null;
+    const baseUrl = options?.baseUrl || '';
     const match = await this.findMatch(id, signal);
     if (!match) return { match: null, streams: [] };
 
@@ -424,7 +643,16 @@ export class StreamedSportsAdapter {
       }))
       .filter((stream) => isHttpUrl(stream.embedUrl));
 
-    return { match, streams };
+    const externalStreams = isFifaWorldCupMatch(match)
+      ? this.getLicensedExternalEmbedStreams({ baseUrl })
+      : [];
+    return {
+      match,
+      streams: this.dedupeEmbedStreams([
+        ...streams,
+        ...externalStreams
+      ])
+    };
   }
 
   async getEventStreams(id, options = null) {
