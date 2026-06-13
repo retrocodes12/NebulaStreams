@@ -8119,6 +8119,7 @@ const bootstrap = async () => {
     try {
       const account = await getOptionalWatchTogetherAccount(req);
       const result = await streamManager.streamedSportsAdapter.getEventEmbedStreams(req.params.id, {
+        baseUrl: `${req.protocol}://${req.get('host')}`,
         signal: AbortSignal.timeout(8_000)
       });
       if (account) {
@@ -8136,6 +8137,54 @@ const bootstrap = async () => {
         });
     } catch (error) {
       next(error);
+    }
+  });
+
+  const renderHelloSportsPlayerPage = ({ source = null, errorMessage = '' } = {}) => {
+    const title = source ? `HelloSports #${source.streamNo}` : 'Live Stream';
+    const sourceUrl = source?.embedUrl || '';
+    return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>${escapeHtml(title)}</title>
+  <style>
+    html,body{margin:0;width:100%;height:100%;background:#050608;color:#eef2f0;font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    .shell{position:fixed;inset:0;background:#050608;overflow:hidden}
+    .player-crop{position:absolute;inset:0;overflow:hidden;background:#050608}
+    iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:#050608}
+    .message{max-width:360px;text-align:center;color:#9aa3af;font-size:13px;line-height:1.45;padding:18px}
+    .message strong{display:block;color:#f8fbff;font-size:15px;margin-bottom:6px}
+  </style>
+</head>
+<body>
+  <main class="shell">
+    ${errorMessage ? `<div class="message"><strong>Source unavailable</strong><span>${escapeHtml(errorMessage)}</span></div>` : `<div class="player-crop"><iframe src="${escapeHtml(sourceUrl)}" allow="autoplay; fullscreen; encrypted-media; picture-in-picture" allowfullscreen referrerpolicy="no-referrer-when-downgrade"></iframe></div>`}
+  </main>
+</body>
+</html>`;
+  };
+
+  app.get('/watch-together/hellosports/:id', async (req, res) => {
+    try {
+      const source = streamManager.streamedSportsAdapter.getLicensedExternalEmbedSource(req.params.id);
+      if (!source) throw new Error('Unknown HelloSports source');
+      res
+        .status(200)
+        .setHeader('Cache-Control', 'no-store')
+        .type('html')
+        .send(renderHelloSportsPlayerPage({ source }));
+    } catch (error) {
+      logger.warn('hellosports clean player failed', {
+        id: req.params.id,
+        error: error?.message || String(error)
+      });
+      res
+        .status(200)
+        .setHeader('Cache-Control', 'no-store')
+        .type('html')
+        .send(renderHelloSportsPlayerPage({ errorMessage: error?.message || 'Unable to load this source.' }));
     }
   });
 
