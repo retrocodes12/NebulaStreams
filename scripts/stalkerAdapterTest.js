@@ -126,8 +126,14 @@ const streams = await adapter.getStreams({
   baseUrl: 'https://nebula.example.test',
   privateConfigId: 'private123'
 });
-assert.equal(streams.length, 1);
-assert.equal(streams[0].url, 'https://nebula.example.test/private/private123/stalker/live/101.ts');
+assert.equal(streams.length, 3);
+assert.equal(streams[0].title, 'Live TV\nStalker Fresh Link');
+assert.equal(streams[0].url, 'https://nebula.example.test/private/private123/stalker/live/101.ts?mode=direct&pb=2');
+assert.equal(streams[1].title, 'Live TV\nStalker HLS');
+assert.equal(streams[1].url, 'https://nebula.example.test/private/private123/stalker/live/101.m3u8?mode=playlist&pb=2');
+assert.equal(streams[2].title, 'Live TV\nStalker Proxy Fallback');
+assert.equal(streams[2].url, 'https://nebula.example.test/private/private123/stalker/live/101.ts?pb=2');
+assert.equal(streams[2].behaviorHints.notWebReady, true);
 
 const link = await adapter.createLink(credentials, '101');
 assert.equal(link, 'http://origin.test/live/101.m3u8');
@@ -141,6 +147,12 @@ const playbackOnlyLink = await playbackOnlyAdapter.createLink(credentials, '101'
 assert.equal(playbackOnlyLink, 'http://origin.test/live/101.m3u8');
 assert.equal(playbackFetch.attemptsByAction.get('get_all_channels') || 0, 0);
 assert.equal(playbackFetch.attemptsByAction.get('create_link'), 1);
+
+const crossOriginHeaderCandidates = await adapter.getPlaybackHeaderCandidates(credentials, null, 'http://cdn.example.test/live/101.ts');
+assert.equal(crossOriginHeaderCandidates.length, 4);
+assert.equal(Object.hasOwn(crossOriginHeaderCandidates[0], 'Range'), false);
+assert.equal(Object.hasOwn(crossOriginHeaderCandidates[1], 'Range'), false);
+assert.equal(crossOriginHeaderCandidates[2].Range, 'bytes=0-');
 
 const malformedAdapter = new StalkerPortalAdapter({
   logger: { info() {}, warn() {}, error() {}, debug() {} },

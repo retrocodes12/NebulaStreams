@@ -8,8 +8,18 @@ const EPG_TTL_MS = 2 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 12_000;
 const CATALOG_LIMIT = 50;
 const MIN_REQUEST_INTERVAL_MS = 180;
-const MAG_USER_AGENT = 'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3';
 const STB_TYPES = new Set(['MAG250', 'MAG254', 'MAG256', 'MAG270', 'MAG322', 'MAG324', 'MAG349', 'MAG351', 'MAG420']);
+const STB_MODEL_PROFILES = Object.freeze({
+  MAG250: { imageVersion: 218, apiVersion: 343, stbApiVersion: 146, playerEngine: '0x58c', portalVersion: '5.6.8', stbAppVersion: 2, rev: 250 },
+  MAG254: { imageVersion: 218, apiVersion: 343, stbApiVersion: 146, playerEngine: '0x58c', portalVersion: '5.6.8', stbAppVersion: 2, rev: 254 },
+  MAG256: { imageVersion: 218, apiVersion: 343, stbApiVersion: 146, playerEngine: '0x58c', portalVersion: '5.6.8', stbAppVersion: 2, rev: 256 },
+  MAG270: { imageVersion: 218, apiVersion: 343, stbApiVersion: 146, playerEngine: '0x58c', portalVersion: '5.6.8', stbAppVersion: 4, rev: 270 },
+  MAG322: { imageVersion: 218, apiVersion: 343, stbApiVersion: 146, playerEngine: '0x58c', portalVersion: '5.6.8', stbAppVersion: 4, rev: 322 },
+  MAG324: { imageVersion: 218, apiVersion: 343, stbApiVersion: 146, playerEngine: '0x58c', portalVersion: '5.6.8', stbAppVersion: 4, rev: 324 },
+  MAG349: { imageVersion: 218, apiVersion: 343, stbApiVersion: 146, playerEngine: '0x58c', portalVersion: '5.6.8', stbAppVersion: 4, rev: 349 },
+  MAG351: { imageVersion: 218, apiVersion: 343, stbApiVersion: 146, playerEngine: '0x58c', portalVersion: '5.6.8', stbAppVersion: 4, rev: 351 },
+  MAG420: { imageVersion: 218, apiVersion: 343, stbApiVersion: 146, playerEngine: '0x58c', portalVersion: '5.6.8', stbAppVersion: 4, rev: 420 }
+});
 
 /**
  * @typedef {Object} StalkerCredentials
@@ -88,6 +98,14 @@ const normalizeStbType = (value) => {
   return STB_TYPES.has(normalized) ? normalized : 'MAG254';
 };
 
+const getStbProfile = (stbType) => STB_MODEL_PROFILES[normalizeStbType(stbType)] || STB_MODEL_PROFILES.MAG254;
+
+const buildMagUserAgent = (stbType) => {
+  const normalizedStbType = normalizeStbType(stbType);
+  const profile = getStbProfile(normalizedStbType);
+  return `Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) ${normalizedStbType} stbapp ver: ${profile.stbAppVersion} rev: ${profile.rev} Safari/533.3`;
+};
+
 const normalizeDeviceField = (value) => toString(value).replace(/[^a-zA-Z0-9_-]/gu, '').slice(0, 128);
 
 const normalizePortalUrl = (value) => {
@@ -139,16 +157,51 @@ const decodeMaybeBase64 = (value) => {
   }
 };
 
-const sanitizeCmd = (value) => toString(value).replace(/^(?:ffmpeg|ffrt3)\s*/iu, '').trim();
+const sanitizeCmd = (value) => {
+  const trimmed = toString(value);
+  if (!trimmed) return '';
+  const splitAt = trimmed.indexOf(' ');
+  if (splitAt > 0) {
+    const candidate = trimmed.slice(splitAt + 1).trim();
+    if (/^(?:https?:\/\/|\/|\?)/iu.test(candidate)) {
+      return candidate;
+    }
+  }
+  return trimmed.replace(/^(?:ffmpeg|ffrt3|ffrt4|ifm)\s*/iu, '').trim();
+};
 
 const absolutizeUrl = (value, baseUrl) => {
   const raw = sanitizeCmd(value);
   if (!raw) return '';
+  if (/^https?:\/\//iu.test(raw)) return raw;
   try {
-    return new URL(raw, baseUrl || undefined).toString();
+    const parsedBase = new URL(baseUrl || undefined);
+    const pathParts = parsedBase.pathname.split('/');
+    let basePath = '';
+    for (let index = 0; index < pathParts.length; index += 1) {
+      if (pathParts[index] === 'stalker_portal' || pathParts[index] === 'c' || pathParts[index] === 'portal') {
+        basePath = '/' + pathParts.slice(1, index + 1).join('/');
+        break;
+      }
+    }
+    if (raw.startsWith('/')) {
+      return `${parsedBase.origin}${basePath}${raw}`;
+    }
+    return new URL(raw, `${parsedBase.origin}${basePath}/`).toString();
   } catch {
     return raw;
   }
+};
+
+const resolvePlaybackUrl = (portalUrl, originalCmd, responseCmd) => {
+  const raw = sanitizeCmd(responseCmd);
+  if (!raw) return '';
+  if (!raw.startsWith('?')) return absolutizeUrl(raw, portalUrl);
+  const normalizedOriginal = sanitizeCmd(originalCmd);
+  if (/^https?:\/\//iu.test(normalizedOriginal)) {
+    return `${normalizedOriginal}${raw}`;
+  }
+  return `${absolutizeUrl(normalizedOriginal, portalUrl)}${raw}`;
 };
 
 export class StalkerPortalAdapter {
@@ -220,7 +273,7 @@ export class StalkerPortalAdapter {
     ];
     return {
       Accept: '*/*',
-      'User-Agent': MAG_USER_AGENT,
+      'User-Agent': buildMagUserAgent(normalized.stbType),
       Referer: referer,
       'Accept-Language': 'en-US,en;q=0.5',
       Pragma: 'no-cache',
@@ -381,19 +434,28 @@ export class StalkerPortalAdapter {
     const deviceId = normalized.deviceId || defaultDeviceId;
     const deviceId2 = normalized.deviceId2 || deviceId;
     const serialNumber = normalized.serialNumber || `NS${credentialKey.slice(0, 11).toUpperCase()}`;
+    const profile = getStbProfile(normalized.stbType);
 
     return this.requestPayload(credentials, 'stb', 'get_profile', {
       hd: 1,
-      ver: 'ImageDescription: 0.2.18-r23-254; ImageDate: Wed Aug 29 10:49:53 EEST 2018; PORTAL version: 5.6.8; API Version: JS API version: 343; STB API version: 146; Player Engine version: 0x58c',
+      ver: `ImageDescription: 0.2.18-r23-${profile.rev}; ImageDate: Wed Aug 29 10:49:53 EEST 2018; PORTAL version: ${profile.portalVersion}; API Version: JS API version: ${profile.apiVersion}; STB API version: ${profile.stbApiVersion}; Player Engine version: ${profile.playerEngine}`,
       num_banks: 2,
       sn: serialNumber,
       stb_type: normalized.stbType,
       client_type: 'STB',
-      image_version: 218,
+      image_version: profile.imageVersion,
       video_out: 'hdmi',
       device_id: deviceId,
       device_id2: deviceId2,
-      signature: hashKey(`${serialNumber}|${deviceId}|${deviceId2}|${normalized.macAddress}`)
+      signature: hashKey(`${serialNumber}|${deviceId}|${deviceId2}|${normalized.macAddress}`),
+      metrics: JSON.stringify({
+        mac: normalized.macAddress,
+        sn: serialNumber,
+        model: normalized.stbType,
+        type: 'STB',
+        uid: deviceId,
+        random: credentialKey.slice(0, 40)
+      })
     }, { ttlMs: PROFILE_TTL_MS, signal });
   }
 
@@ -481,7 +543,7 @@ export class StalkerPortalAdapter {
       }));
   }
 
-  getCompactCatalogDefinitions(categories = [], maxCategories = 40) {
+  getCompactCatalogDefinitions(categories = [], maxCategories = 40, offset = 0) {
     const definitions = [{
       type: 'tv',
       id: 'stalker-live-all',
@@ -489,7 +551,9 @@ export class StalkerPortalAdapter {
       categoryId: '*'
     }];
 
-    for (const category of (Array.isArray(categories) ? categories : [])) {
+    const normalizedOffset = Math.max(0, Number.parseInt(offset, 10) || 0);
+    const normalizedMax = Math.max(1, Number.parseInt(maxCategories, 10) || 40);
+    for (const category of (Array.isArray(categories) ? categories : []).slice(normalizedOffset)) {
       const id = toString(category.id);
       if (!id || id === '*') continue;
       definitions.push({
@@ -498,7 +562,7 @@ export class StalkerPortalAdapter {
         name: `MAG: ${category.title || category.name || id}`,
         categoryId: id
       });
-      if (definitions.length >= maxCategories) break;
+      if (definitions.length >= normalizedMax + 1) break;
     }
 
     return definitions;
@@ -581,21 +645,42 @@ export class StalkerPortalAdapter {
     }
   }
 
-  buildPrivateStreamUrl({ baseUrl, privateConfigId, channelId }) {
-    return `${String(baseUrl || '').replace(/\/+$/u, '')}/private/${encodeURIComponent(privateConfigId)}/stalker/live/${encodeURIComponent(String(channelId))}.ts`;
+  buildPrivateStreamUrl({ baseUrl, privateConfigId, channelId, mode = '' }) {
+    const url = new URL(`${String(baseUrl || '').replace(/\/+$/u, '')}/private/${encodeURIComponent(privateConfigId)}/stalker/live/${encodeURIComponent(String(channelId))}.ts`);
+    if (mode) url.searchParams.set('mode', mode);
+    url.searchParams.set('pb', '2');
+    return url.toString();
   }
 
   async getStreams({ credentials, id, baseUrl, privateConfigId, signal = null }) {
     const parsed = this.parseMetaId(id);
     if (!parsed) return [];
-    const fallbackUrl = this.buildPrivateStreamUrl({ baseUrl, privateConfigId, channelId: parsed.channelId });
+    const playlistUrl = this.buildPrivateStreamUrl({ baseUrl, privateConfigId, channelId: parsed.channelId, mode: 'playlist' }).replace(/\.ts(?:\?)/u, '.m3u8?');
+    const redirectUrl = this.buildPrivateStreamUrl({ baseUrl, privateConfigId, channelId: parsed.channelId, mode: 'direct' });
+    const proxyUrl = this.buildPrivateStreamUrl({ baseUrl, privateConfigId, channelId: parsed.channelId });
     return [{
       name: 'NebulaStreams MAG IPTV',
-      title: 'Live TV\nStalker Portal',
-      url: fallbackUrl,
+      title: 'Live TV\nStalker Fresh Link',
+      url: redirectUrl,
       behaviorHints: {
         notWebReady: false,
-        bingeGroup: `stalker:live:${parsed.channelId}`
+        bingeGroup: `stalker:live:${parsed.channelId}:fresh`
+      }
+    }, {
+      name: 'NebulaStreams MAG IPTV',
+      title: 'Live TV\nStalker HLS',
+      url: playlistUrl,
+      behaviorHints: {
+        notWebReady: false,
+        bingeGroup: `stalker:live:${parsed.channelId}:hls`
+      }
+    }, {
+      name: 'NebulaStreams MAG IPTV',
+      title: 'Live TV\nStalker Proxy Fallback',
+      url: proxyUrl,
+      behaviorHints: {
+        notWebReady: true,
+        bingeGroup: `stalker:live:${parsed.channelId}:proxy`
       }
     }];
   }
@@ -616,8 +701,8 @@ export class StalkerPortalAdapter {
       throw new Error('Stalker channel id missing');
     }
     const commandCandidates = [
-      this.getCachedChannelCommand(normalized, normalizedChannelId),
-      `http://localhost/ch/${normalizedChannelId}_`
+      `http://localhost/ch/${normalizedChannelId}_`,
+      this.getCachedChannelCommand(normalized, normalizedChannelId)
     ].filter(Boolean);
     let lastError = null;
     const links = [];
@@ -637,7 +722,7 @@ export class StalkerPortalAdapter {
           signal,
           refreshToken: false
         });
-        const link = absolutizeUrl(payload?.url || payload?.cmd || payload, normalized.portalUrl);
+        const link = resolvePlaybackUrl(normalized.portalUrl, cmd, payload?.url || payload?.cmd || payload);
         if (!link || !/^https?:\/\//iu.test(link)) {
           throw new Error('Stalker create_link returned no playable URL');
         }
@@ -660,5 +745,49 @@ export class StalkerPortalAdapter {
     const normalized = normalizeCredentials(credentials);
     const token = await this.getToken(normalized, { signal });
     return this.buildHeaders(normalized, token);
+  }
+
+  async getPlaybackHeaderCandidates(credentials, signal = null, streamUrl = '') {
+    const headers = await this.getPlaybackHeaders(credentials, signal);
+    const normalized = normalizeCredentials(credentials);
+    let crossOriginStream = false;
+    try {
+      crossOriginStream = new URL(streamUrl).origin !== new URL(normalized.portalUrl).origin;
+    } catch {
+      crossOriginStream = false;
+    }
+    if (crossOriginStream) {
+      return [{
+        Accept: '*/*',
+        'User-Agent': 'KSPlayer',
+        'Icy-MetaData': '1',
+        Connection: 'keep-alive'
+      }, {
+        Accept: '*/*',
+        'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20',
+        'Icy-MetaData': '1',
+        Connection: 'keep-alive'
+      }, {
+        Accept: '*/*',
+        'User-Agent': 'KSPlayer',
+        Range: 'bytes=0-',
+        'Icy-MetaData': '1',
+        Connection: 'keep-alive'
+      }, {
+        Accept: '*/*',
+        'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20',
+        Range: 'bytes=0-',
+        'Icy-MetaData': '1',
+        Connection: 'keep-alive'
+      }];
+    }
+    const tokenlessHeaders = { ...headers };
+    delete tokenlessHeaders.Authorization;
+    const vlcHeaders = {
+      ...tokenlessHeaders,
+      Accept: '*/*',
+      'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20'
+    };
+    return [headers, tokenlessHeaders, vlcHeaders];
   }
 }

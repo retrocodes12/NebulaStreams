@@ -4,7 +4,7 @@ NebulaStreams supports private Stalker Portal / MAG IPTV accounts for Live TV ca
 
 ## Configuration
 
-Open `/configure`, go to `IPTV`, enable IPTV, then enter:
+Open `/configure`, go to `IPTV`, enable `Stalker / MAG Portal`, then enter:
 
 - Stalker Portal URL, usually ending in `/c/`
 - MAC Address, for example `00:1A:79:00:00:00`
@@ -12,6 +12,7 @@ Open `/configure`, go to `IPTV`, enable IPTV, then enter:
 - Optional serial number
 - Optional `device_id`
 - Optional `device_id2`
+- Category Start and Category Catalogs when the portal has more categories than Stremio can fit in one manifest
 
 When Stalker is configured, NebulaStreams creates a private manifest at:
 
@@ -44,6 +45,7 @@ If device fields are blank, NebulaStreams generates stable private values from t
 ## Supported Features
 
 - Live TV category catalogs
+- Category window controls for large portals. Example: start `0`, `40`, `80`, `120` to page through hundreds of portal categories.
 - Channel listing and search
 - Per-channel Stremio metadata
 - Short EPG when the portal exposes it

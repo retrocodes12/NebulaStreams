@@ -2,6 +2,7 @@ import { pipeline } from 'node:stream/promises';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { promises as fsPromises } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { setMaxListeners } from 'node:events';
 import v8 from 'node:v8';
 import { createClient } from 'redis';
@@ -11,6 +12,8 @@ import { logger } from '../utils/logger.js';
 import { RogPlayAdapter } from '../providers/rogplay/RogPlayAdapter.js';
 import { GermanIptvLiveAdapter } from '../src/adapters/GermanIptvLiveAdapter.js';
 import { FamelackLiveAdapter } from '../src/adapters/FamelackLiveAdapter.js';
+import { NflixLiveAdapter } from '../src/adapters/NflixLiveAdapter.js';
+import { StreamedSportsAdapter } from '../src/adapters/StreamedSportsAdapter.js';
 import { XtreamCodesAdapter, hasXtreamCredentials } from '../src/adapters/XtreamCodesAdapter.js';
 import { StalkerPortalAdapter, hasStalkerCredentials } from '../src/adapters/StalkerPortalAdapter.js';
 
@@ -353,7 +356,10 @@ const DEFAULT_PRIVATE_PROVIDER_SETTINGS = Object.freeze({
   stalkerSerialNumber: null,
   stalkerDeviceId: null,
   stalkerDeviceId2: null,
-  famelackLiveEnabled: false
+  stalkerCategoryOffset: 0,
+  stalkerCategoryLimit: 40,
+  famelackLiveEnabled: false,
+  nflixLiveEnabled: false
 });
 const PRIVATE_CONFIG_VERSION = 1;
 const PRIVATE_PROVIDER_COOKIE_MAX_LENGTH = 4096;
@@ -413,6 +419,12 @@ const HIGH_VALUE_CACHE_PATTERN = /\b(4khdhub|hdhub|hubcloud|hub cloud)\b/iu;
 const LAST_GOOD_PRIMARY_PROVIDERS = new Set(['4khdhub', 'scrapling 4khdhub', '4khdhub tv', 'hdhub4u', 'uhdmovies']);
 const LAST_GOOD_SECONDARY_PROVIDERS = new Set(['vidsrc', 'vixsrc', 'vidlink', 'moviebox', 'cinestream', 'streamflix']);
 const STANDALONE_FAST_PASS_PROVIDER_ORDER = Object.freeze([
+  '4khdhub_tv',
+  '4khdhub',
+  'scrapling-4khdhub',
+  'hdhub4u',
+  'scrapling-hdhub4u',
+  'uhdmovies',
   'r3-plugin',
   'r5-plugin',
   'r2-plugin',
@@ -1959,7 +1971,11 @@ const normalizePrivateProviderSettings = (value) => ({
   stalkerSerialNumber: normalizePrivateCookie(value?.stalkerSerialNumber),
   stalkerDeviceId: normalizePrivateCookie(value?.stalkerDeviceId),
   stalkerDeviceId2: normalizePrivateCookie(value?.stalkerDeviceId2),
-  famelackLiveEnabled: Boolean(value?.famelackLiveEnabled)
+  stalkerCategoryOffset: normalizePositiveIntegerOption(value?.stalkerCategoryOffset),
+  stalkerCategoryLimit: Math.min(120, Math.max(1, normalizePositiveIntegerOption(value?.stalkerCategoryLimit) || 40)),
+  famelackLiveEnabled: Boolean(value?.famelackLiveEnabled),
+  nflixLiveEnabled: Boolean(value?.nflixLiveEnabled),
+  streamedSportsEnabled: Boolean(value?.streamedSportsEnabled)
 });
 
 const getPrivateProviderSettingsHash = (privateProviderSettings) => {
@@ -1980,9 +1996,13 @@ const getPrivateProviderSettingsHash = (privateProviderSettings) => {
       stbType: normalized.stalkerStbType,
       serialNumber: normalized.stalkerSerialNumber,
       deviceId: normalized.stalkerDeviceId,
-      deviceId2: normalized.stalkerDeviceId2
+      deviceId2: normalized.stalkerDeviceId2,
+      categoryOffset: normalized.stalkerCategoryOffset,
+      categoryLimit: normalized.stalkerCategoryLimit
     }) &&
-    !normalized.famelackLiveEnabled
+    !normalized.famelackLiveEnabled &&
+    !normalized.nflixLiveEnabled &&
+    !normalized.streamedSportsEnabled
   ) {
     return null;
   }
@@ -3206,6 +3226,54 @@ export class HttpError extends Error {
 export const createHttpError = (statusCode, message, details) =>
   new HttpError(statusCode, message, details);
 
+const summarizePlaybackUrl = (value) => {
+  try {
+    const parsed = new URL(String(value || ''));
+    return {
+      protocol: parsed.protocol.replace(/:$/u, ''),
+      host: parsed.host,
+      path: parsed.pathname.split('/').slice(0, 4).join('/')
+    };
+  } catch {
+    return { protocol: '', host: '', path: '' };
+  }
+};
+
+const isDefinitelyUnplayableHost = (value) => {
+  const host = String(value || '').trim().toLowerCase();
+  return host === 'localhost'
+    || host === '::1'
+    || host === '0:0:0:0:0:0:0:1'
+    || /^127\./u.test(host)
+    || /^0\./u.test(host);
+};
+
+const isXtreamServerDefinitelyUnplayable = (credentials = null) => {
+  try {
+    return isDefinitelyUnplayableHost(new URL(String(credentials?.serverUrl || '')).hostname);
+  } catch {
+    return false;
+  }
+};
+
+const isLiveStremioType = (type) => {
+  const normalizedType = String(type || '').trim().toLowerCase();
+  return normalizedType === 'tv' || normalizedType === 'live' || normalizedType === 'channel' || normalizedType === 'events';
+};
+
+const getCatalogExtraParams = (req) => {
+  const extra = String(req?.params?.extra || '').trim().replace(/\.json$/u, '');
+  return new URLSearchParams(extra);
+};
+
+const getCatalogSearch = (req) =>
+  String(req?.query?.search || req?.params?.search || getCatalogExtraParams(req).get('search') || '').trim();
+
+const getCatalogSkip = (req) => {
+  const parsed = Number.parseInt(req?.query?.skip || req?.params?.skip || getCatalogExtraParams(req).get('skip') || '0', 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
+};
+
 export const parseRangeHeader = (rangeHeader, totalSize) => {
   if (!rangeHeader) {
     return {
@@ -3302,6 +3370,16 @@ export class StreamManager {
     this.rogPlayAdapter = new RogPlayAdapter({ logger });
     this.germanIptvLiveAdapter = new GermanIptvLiveAdapter({ logger });
     this.famelackLiveAdapter = new FamelackLiveAdapter({ logger });
+    this.nflixLiveAdapter = new NflixLiveAdapter({ logger });
+    this.streamedSportsDirectFetchBlocklist = new Map();
+    this.streamedSportsAdapter = new StreamedSportsAdapter({
+      logger,
+      chromePath: config.STREAMED_SPORTS_CHROME_PATH,
+      browserTimeoutMs: config.STREAMED_SPORTS_BROWSER_TIMEOUT_MS,
+      hlsCacheMs: config.STREAMED_SPORTS_HLS_CACHE_MS,
+      browserIdleMs: config.STREAMED_SPORTS_BROWSER_IDLE_MS,
+      cacheDir: path.join(config.CACHE_DIR, 'streamed-sports')
+    });
     this.xtreamCodesAdapter = new XtreamCodesAdapter({ logger });
     this.stalkerPortalAdapter = new StalkerPortalAdapter({ logger });
   }
@@ -3484,6 +3562,11 @@ export class StreamManager {
       this.hubCloudCache.clear();
       this.stremioBackgroundRefreshQueue = [];
       this.stremioBackgroundRefreshes.clear();
+      void this.streamedSportsAdapter.handleMemoryPressure?.({ critical }).catch((error) => {
+        logger.warn('streamed sports memory cleanup failed', {
+          error: error?.message || String(error)
+        });
+      });
       return;
     }
 
@@ -3497,6 +3580,11 @@ export class StreamManager {
         this.stremioBackgroundRefreshQueue = this.stremioBackgroundRefreshQueue.slice(0, keep);
       }
     }
+    void this.streamedSportsAdapter.handleMemoryPressure?.({ critical }).catch((error) => {
+      logger.warn('streamed sports memory cleanup failed', {
+        error: error?.message || String(error)
+      });
+    });
   }
 
   getProviderLiveLoad() {
@@ -3802,7 +3890,24 @@ export class StreamManager {
       return null;
     }
 
-    const privateConfig = this.privateConfigStore.get(configId) || null;
+    let privateConfig = this.privateConfigStore.get(configId) || null;
+    if (!privateConfig && /^[a-f0-9]{24}$/iu.test(configId)) {
+      try {
+        const payload = JSON.parse(readFileSync(this.getPrivateConfigPath(configId), 'utf8'));
+        privateConfig = this.normalizePrivateConfigRecord(payload);
+        if (privateConfig) {
+          this.privateConfigStore.set(configId, privateConfig);
+          logger.info('private config loaded on demand', { configId });
+        }
+      } catch (error) {
+        if (error?.code !== 'ENOENT') {
+          logger.warn('private config on-demand load failed', {
+            configId,
+            error: error?.message || String(error)
+          });
+        }
+      }
+    }
 
     if (!privateConfig) {
       throw createHttpError(404, 'Private config not found');
@@ -3928,7 +4033,13 @@ export class StreamManager {
         return;
       }
 
-      if (normalizedStreams.length === 0) {
+      const hasPrivateEphemeralStreams = normalizedStreams.some((stream) => {
+        const url = String(stream?.url || stream?.externalUrl || '').trim();
+        return /\/private\/[^/]+\/(?:xtream|stalker)\//u.test(url)
+          || /[?&]mode=direct(?:&|$)/u.test(url);
+      });
+
+      if (normalizedStreams.length === 0 || hasPrivateEphemeralStreams) {
         res.setHeader('Cache-Control', 'no-store, max-age=0');
       } else {
         res.setHeader('Cache-Control', 'public, max-age=60');
@@ -4444,7 +4555,12 @@ export class StreamManager {
     const xtreamEnabled = hasXtreamCredentials(xtreamCredentials);
     const stalkerCredentials = this.getRequestedStalkerCredentials(req);
     const stalkerEnabled = hasStalkerCredentials(stalkerCredentials);
-    const famelackEnabled = Boolean(this.getRequestedPrivateProviderSettings(req).famelackLiveEnabled);
+    const privateProviderSettings = this.getRequestedPrivateProviderSettings(req);
+    const stalkerCategoryOffset = normalizePositiveIntegerOption(privateProviderSettings.stalkerCategoryOffset);
+    const stalkerCategoryLimit = Math.min(120, Math.max(1, normalizePositiveIntegerOption(privateProviderSettings.stalkerCategoryLimit) || 40));
+    const famelackEnabled = Boolean(privateProviderSettings.famelackLiveEnabled);
+    const nflixEnabled = Boolean(privateProviderSettings.nflixLiveEnabled);
+    const streamedSportsEnabled = Boolean(privateProviderSettings.streamedSportsEnabled);
     const xtreamCatalogDefinitions = xtreamEnabled
       ? await Promise.all([
         this.xtreamCodesAdapter.getCategories(xtreamCredentials, 'live', AbortSignal.timeout(8_000)).catch(() => []),
@@ -4461,7 +4577,7 @@ export class StreamManager {
       : [];
     const stalkerCatalogDefinitions = stalkerEnabled
       ? await this.stalkerPortalAdapter.getCategories(stalkerCredentials, AbortSignal.timeout(8_000)).then((categories) =>
-        this.stalkerPortalAdapter.getCompactCatalogDefinitions(categories, 40)
+        this.stalkerPortalAdapter.getCompactCatalogDefinitions(categories, stalkerCategoryLimit, stalkerCategoryOffset)
       ).catch((error) => {
         logger.warn('stalker compact manifest catalog load failed', {
           error: error?.message || String(error)
@@ -4479,11 +4595,36 @@ export class StreamManager {
         return this.famelackLiveAdapter.getLiveCatalogDefinitions();
       })
       : [];
+    const nflixCatalogDefinitions = nflixEnabled
+      ? await this.nflixLiveAdapter.loadChannels(AbortSignal.timeout(8_000)).then((payload) =>
+        this.nflixLiveAdapter.getLiveCatalogDefinitions(payload.categories)
+      ).catch((error) => {
+        logger.warn('nflix compact manifest catalog load failed', {
+          error: error?.message || String(error)
+        });
+        return this.nflixLiveAdapter.getLiveCatalogDefinitions();
+      })
+      : [];
+    const streamedSportsCatalogDefinitions = streamedSportsEnabled
+      ? await this.streamedSportsAdapter.getSports(AbortSignal.timeout(8_000)).then((sports) =>
+        this.streamedSportsAdapter.getEventCatalogDefinitions(sports)
+      ).catch((error) => {
+        logger.warn('streamed sports compact manifest catalog load failed', {
+          error: error?.message || String(error)
+        });
+        return this.streamedSportsAdapter.getEventCatalogDefinitions();
+      })
+      : [];
+    if (streamedSportsEnabled && streamedSportsCatalogDefinitions.length > 0) {
+      this.streamedSportsAdapter.prewarmCatalogs(streamedSportsCatalogDefinitions);
+    }
     const manifestTypes = contentSelection === 'movie'
       ? ['movie']
       : contentSelection === 'series'
         ? ['series']
-        : ((xtreamEnabled || stalkerEnabled || famelackEnabled) ? ['movie', 'series', 'tv'] : ['movie', 'series']);
+        : ((xtreamEnabled || stalkerEnabled || famelackEnabled || nflixEnabled || streamedSportsEnabled)
+          ? ['movie', 'series', 'tv', ...(streamedSportsEnabled ? ['events'] : [])]
+          : ['movie', 'series']);
     const xtreamCatalogs = xtreamCatalogDefinitions
       .filter((catalog) => contentSelection === 'default' || catalog.type === contentSelection)
       .map((catalog) => ({
@@ -4517,12 +4658,36 @@ export class StreamManager {
           { name: 'search', isRequired: false }
         ]
       }));
+    const nflixCatalogs = nflixCatalogDefinitions
+      .filter((catalog) => contentSelection === 'default' || catalog.type === contentSelection)
+      .map((catalog) => ({
+        type: 'tv',
+        id: catalog.id,
+        name: catalog.name,
+        extra: [
+          { name: 'skip', isRequired: false },
+          { name: 'search', isRequired: false }
+        ]
+      }));
+    const streamedSportsCatalogs = streamedSportsCatalogDefinitions
+      .filter((catalog) => contentSelection === 'default' || catalog.type === contentSelection)
+      .flatMap((catalog) => ['tv', 'events'].map((type) => ({
+        type,
+        id: catalog.id,
+        name: catalog.name,
+        extra: [
+          { name: 'skip', isRequired: false },
+          { name: 'search', isRequired: false }
+        ]
+      })));
     const catalogResources = [
       ...(xtreamEnabled ? ['xtream:'] : []),
       ...(stalkerEnabled ? ['stalker:'] : []),
-      ...(famelackEnabled ? ['famelack:'] : [])
+      ...(famelackEnabled ? ['famelack:'] : []),
+      ...(nflixEnabled ? ['nflix:'] : []),
+      ...(streamedSportsEnabled ? ['streamed:'] : [])
     ];
-    const allCatalogs = [...xtreamCatalogs, ...stalkerCatalogs, ...famelackCatalogs];
+    const allCatalogs = [...xtreamCatalogs, ...stalkerCatalogs, ...famelackCatalogs, ...nflixCatalogs, ...streamedSportsCatalogs];
 
     res.json({
       id: addonPresentation.addonId,
@@ -4613,10 +4778,66 @@ export class StreamManager {
       return;
     }
 
+    if (this.isNflixLiveStreamRequest(req.params.type, req.params.id)) {
+      try {
+        const nflixEnabled = Boolean(this.getRequestedPrivateProviderSettings(req).nflixLiveEnabled);
+        if (!nflixEnabled || !req.params.privateConfigId) {
+          this.sendStremioStreamsResponse(res, []);
+          return;
+        }
+
+        const streams = await this.nflixLiveAdapter.getLiveStreams(req.params.id, {
+          baseUrl: getStremioRequestBaseUrl(req),
+          privateConfigId: req.params.privateConfigId,
+          signal: req.signal || null
+        });
+        this.sendStremioStreamsResponse(res, streams);
+      } catch (error) {
+        logger.warn('nflix live stream lookup failed', {
+          id: req.params.id,
+          error: error?.message || String(error)
+        });
+        this.sendStremioStreamsResponse(res, []);
+      }
+      return;
+    }
+
+    if (this.isStreamedSportsStreamRequest(req.params.type, req.params.id)) {
+      try {
+        const streamedSportsEnabled = Boolean(this.getRequestedPrivateProviderSettings(req).streamedSportsEnabled);
+        if (!streamedSportsEnabled || !req.params.privateConfigId) {
+          this.sendStremioStreamsResponse(res, []);
+          return;
+        }
+
+        const streams = await this.streamedSportsAdapter.getEventStreams(req.params.id, {
+          baseUrl: getStremioRequestBaseUrl(req),
+          privateConfigId: req.params.privateConfigId,
+          signal: req.signal || null
+        });
+        this.sendStremioStreamsResponse(res, streams);
+      } catch (error) {
+        logger.warn('streamed sports stream lookup failed', {
+          id: req.params.id,
+          error: error?.message || String(error)
+        });
+        this.sendStremioStreamsResponse(res, []);
+      }
+      return;
+    }
+
     if (this.isXtreamStreamRequest(req.params.type, req.params.id)) {
       try {
         const xtreamCredentials = this.getRequestedXtreamCredentials(req);
         if (!hasXtreamCredentials(xtreamCredentials) || !req.params.privateConfigId) {
+          this.sendStremioStreamsResponse(res, []);
+          return;
+        }
+        if (isXtreamServerDefinitelyUnplayable(xtreamCredentials)) {
+          logger.warn('xtream stream lookup skipped for unplayable server host', {
+            id: req.params.id,
+            type: req.params.type
+          });
           this.sendStremioStreamsResponse(res, []);
           return;
         }
@@ -4677,7 +4898,7 @@ export class StreamManager {
     );
     const overallTimeoutMs = isAioStreamsClient
       ? Math.max(baseOverallTimeoutMs, 28_000)
-      : Math.min(baseOverallTimeoutMs, isShortDeadlineClient ? 11_500 : 13_500);
+      : Math.min(baseOverallTimeoutMs, isShortDeadlineClient ? 14_500 : 16_500);
     const requestAbortController = new AbortController();
     allowHighFanoutAbortSignal(requestAbortController.signal);
     const setResponseHeader = (name, value) => {
@@ -4843,13 +5064,13 @@ export class StreamManager {
         isAioStreamsClient
           ? 27_500
           : isShortDeadlineClient && hasOnlyNuvioProviders
-            ? 8_500
+            ? 12_500
             : isShortDeadlineClient && hasExplicitProviderConfig
-              ? 12_500
+              ? 13_600
               : isShortDeadlineClient
-                ? 11_500
+                ? 13_600
                 : hasExplicitProviderConfig
-                  ? 13_500
+                  ? 15_500
                   : overallTimeoutMs - 500
       ));
       const getRemainingRouteBudgetMs = (reserveMs = 350) =>
@@ -4898,7 +5119,7 @@ export class StreamManager {
         const elapsedMs = Date.now() - routeStartedAt;
         const standaloneResponseDeadlineMs = Math.min(
           overallTimeoutMs - 1_200,
-          isShortDeadlineClient ? 9_500 : 11_000
+          isShortDeadlineClient ? 13_200 : 15_200
         );
         const standaloneResponseDelayMs = Math.max(250, standaloneResponseDeadlineMs - elapsedMs);
         standaloneDeadlineResponseTimer = setTimeout(() => {
@@ -4995,8 +5216,8 @@ export class StreamManager {
 
       if (standaloneFastPassProviders) {
         const standaloneTimeoutSentinel = { timedOut: true };
-        const standaloneFastPassCapMs = parsed.mediaType === 'movie' ? 9_000 : 6_000;
-        const standaloneFastPassReserveMs = parsed.mediaType === 'movie' ? 700 : 1_200;
+        const standaloneFastPassCapMs = parsed.mediaType === 'movie' ? 10_800 : 8_200;
+        const standaloneFastPassReserveMs = parsed.mediaType === 'movie' ? 450 : 800;
         const standaloneBudgetMs = Math.min(
           getRemainingRouteBudgetMs(standaloneFastPassReserveMs),
           standaloneFastPassCapMs
@@ -5047,10 +5268,16 @@ export class StreamManager {
             tmdbId,
             mediaType: parsed.mediaType
           });
+          if (!isAioStreamsClient) {
+            this.scheduleStremioBackgroundRefresh(buildInput);
+          }
+          const fallbackStreams = Array.isArray(lastGoodStreams) && lastGoodStreams.length > 0
+            ? lastGoodStreams
+            : (cachedResult?.streams?.length ? cachedResult.streams : []);
           abortActiveSearch('Stremio route deadline exhausted');
-          setResponseHeader('X-NebulaStreams-Cache', 'deadline-empty');
+          setResponseHeader('X-NebulaStreams-Cache', fallbackStreams.length > 0 ? 'deadline-fallback' : 'deadline-refreshing-empty');
           clearTimeout(overallTimeout);
-          this.sendStremioStreamsResponse(res, []);
+          this.sendStremioStreamsResponse(res, fallbackStreams);
           return;
         }
 
@@ -5083,8 +5310,11 @@ export class StreamManager {
             tmdbId,
             mediaType: parsed.mediaType
           });
+          if (!isAioStreamsClient) {
+            this.scheduleStremioBackgroundRefresh(buildInput);
+          }
           abortActiveSearch('Stremio soft deadline reached');
-          setResponseHeader('X-NebulaStreams-Cache', 'deadline-empty');
+          setResponseHeader('X-NebulaStreams-Cache', 'deadline-refreshing-empty');
           clearTimeout(overallTimeout);
           this.sendStremioStreamsResponse(res, []);
           return;
@@ -5805,7 +6035,7 @@ export class StreamManager {
 
   async handleAddSource(req, res, next) {
     try {
-      const streamUrl = await this.createRegisteredStreamUrl(`${req.protocol}://${req.get('host')}`, {
+      const streamUrl = await this.createRegisteredStreamUrl(getStremioRequestBaseUrl(req), {
         type: req.body?.type,
         source: req.body?.source,
         headers: req.body?.headers,
@@ -6183,6 +6413,10 @@ export class StreamManager {
 
       if (result.xtream.configured) {
         try {
+          const serverHost = new URL(xtreamCredentials.serverUrl).hostname;
+          if (isDefinitelyUnplayableHost(serverHost)) {
+            throw new Error('Xtream server URL is not reachable by Stremio. Use the public IPTV server host, not localhost or 0.0.0.x.');
+          }
           await this.xtreamCodesAdapter.authenticate(xtreamCredentials, AbortSignal.timeout(10_000));
           const [live, vod, series] = await Promise.all([
             this.xtreamCodesAdapter.getCategories(xtreamCredentials, 'live', AbortSignal.timeout(10_000)).catch(() => []),
@@ -6217,7 +6451,11 @@ export class StreamManager {
             valid: true,
             message: 'Valid',
             categories: {
-              live: categories.length
+              live: categories.length,
+              offset: settings.stalkerCategoryOffset,
+              limit: settings.stalkerCategoryLimit,
+              visibleFrom: categories.length > 0 ? settings.stalkerCategoryOffset + 1 : 0,
+              visibleTo: Math.min(categories.length, settings.stalkerCategoryOffset + settings.stalkerCategoryLimit)
             }
           };
         } catch (error) {
@@ -6243,26 +6481,73 @@ export class StreamManager {
       if (!hasXtreamCredentials(credentials)) {
         throw createHttpError(404, 'Xtream config not found');
       }
+      if (isXtreamServerDefinitelyUnplayable(credentials)) {
+        throw createHttpError(400, 'Xtream server URL is not reachable by Stremio');
+      }
 
       const kind = String(req.params.kind || '').trim().toLowerCase();
       if (!['live', 'movie', 'series'].includes(kind)) {
         throw createHttpError(400, 'Invalid Xtream stream kind');
       }
 
-      const upstreamUrl = this.xtreamCodesAdapter.getUpstreamStreamUrl(
-        credentials,
-        kind,
-        req.params.streamId,
-        req.params.extension || (kind === 'live' ? 'm3u8' : 'mp4')
-      );
+      if (String(req.method || 'GET').toUpperCase() === 'HEAD') {
+        const extension = String(req.params.extension || '').trim().toLowerCase();
+        res
+          .status(200)
+          .setHeader('Cache-Control', 'no-store')
+          .setHeader('Content-Type', extension === 'm3u8' ? 'application/vnd.apple.mpegurl' : kind === 'live' ? 'video/mp2t' : 'video/mp4')
+          .setHeader('Accept-Ranges', 'none')
+          .end();
+        return;
+      }
 
-      res
-        .status(302)
-        .setHeader('Cache-Control', 'no-store')
-        .setHeader('Location', upstreamUrl)
-        .end();
+      const encodedProxyUrl = String(req.query.url || '').trim();
+      const upstreamUrl = encodedProxyUrl
+        ? Buffer.from(encodedProxyUrl, 'base64url').toString('utf8')
+        : this.xtreamCodesAdapter.getUpstreamStreamUrl(
+          credentials,
+          kind,
+          req.params.streamId,
+          req.params.extension || (kind === 'live' ? 'ts' : 'mp4')
+        );
+
+      if (!/^https?:\/\//iu.test(upstreamUrl)) {
+        throw createHttpError(400, 'Invalid Xtream upstream URL');
+      }
+
+      if (String(req.query.mode || '').trim().toLowerCase() === 'direct') {
+        logger.info('xtream playback direct redirect', {
+          kind,
+          streamId: req.params.streamId,
+          extension: req.params.extension,
+          userAgent: String(req.get?.('user-agent') || '').slice(0, 120),
+          target: summarizePlaybackUrl(upstreamUrl)
+        });
+        res
+          .status(302)
+          .setHeader('Cache-Control', 'no-store, no-cache, must-revalidate')
+          .setHeader('Pragma', 'no-cache')
+          .setHeader('Expires', '0')
+          .setHeader('Location', upstreamUrl)
+          .end();
+        return;
+      }
+
+      logger.info('xtream playback proxy open', {
+        kind,
+        streamId: req.params.streamId,
+        extension: req.params.extension,
+        userAgent: String(req.get?.('user-agent') || '').slice(0, 120)
+      });
+      await this.proxyXtreamUpstream({
+        req,
+        res,
+        kind,
+        streamId: req.params.streamId,
+        upstreamUrl
+      });
     } catch (error) {
-      logger.warn('xtream playback redirect failed', {
+      logger.warn('xtream playback proxy failed', {
         kind: req.params.kind,
         streamId: req.params.streamId,
         error: error?.message || String(error)
@@ -6279,11 +6564,69 @@ export class StreamManager {
       }
 
       if (String(req.method || 'GET').toUpperCase() === 'HEAD') {
+        const extension = String(req.params.extension || '').trim().toLowerCase();
         res
           .status(200)
           .setHeader('Cache-Control', 'no-store')
-          .setHeader('Content-Type', 'video/mp2t')
+          .setHeader('Content-Type', extension === 'm3u8' ? 'application/vnd.apple.mpegurl' : 'video/mp2t')
           .setHeader('Accept-Ranges', 'none')
+          .end();
+        return;
+      }
+
+      if (String(req.query.mode || '').trim().toLowerCase() === 'playlist') {
+        logger.info('stalker playback hls handoff requested', {
+          channelId: req.params.channelId,
+          userAgent: String(req.get?.('user-agent') || '').slice(0, 120)
+        });
+        const baseUrl = getStremioRequestBaseUrl(req);
+        const directUrl = `${baseUrl}/private/${encodeURIComponent(req.params.privateConfigId)}/stalker/live/${encodeURIComponent(String(req.params.channelId))}.ts?mode=direct&pb=2`;
+        logger.info('stalker playback hls playlist served', {
+          channelId: req.params.channelId,
+          baseUrl,
+          segment: summarizePlaybackUrl(directUrl)
+        });
+        res
+          .status(200)
+          .setHeader('Cache-Control', 'no-store, no-cache, must-revalidate')
+          .setHeader('Content-Type', 'application/vnd.apple.mpegurl')
+          .send([
+            '#EXTM3U',
+            '#EXT-X-VERSION:3',
+            '#EXT-X-TARGETDURATION:3600',
+            '#EXT-X-MEDIA-SEQUENCE:0',
+            '#EXT-X-PLAYLIST-TYPE:EVENT',
+            '#EXTINF:3600.0,',
+            directUrl,
+            ''
+          ].join('\n'));
+        return;
+      }
+
+      if (String(req.query.mode || '').trim().toLowerCase() === 'direct') {
+        logger.info('stalker playback fresh redirect requested', {
+          channelId: req.params.channelId,
+          userAgent: String(req.get?.('user-agent') || '').slice(0, 120)
+        });
+        const upstreamUrls = await this.stalkerPortalAdapter.createLinkCandidates(
+          credentials,
+          req.params.channelId,
+          req.signal || null
+        );
+        const upstreamUrl = Array.isArray(upstreamUrls) ? upstreamUrls[0] : '';
+        if (!/^https?:\/\//iu.test(upstreamUrl || '')) {
+          throw createHttpError(502, 'Stalker create_link returned no direct URL');
+        }
+        logger.info('stalker playback fresh redirect target', {
+          channelId: req.params.channelId,
+          target: summarizePlaybackUrl(upstreamUrl)
+        });
+        res
+          .status(302)
+          .setHeader('Cache-Control', 'no-store, no-cache, must-revalidate')
+          .setHeader('Pragma', 'no-cache')
+          .setHeader('Expires', '0')
+          .setHeader('Location', upstreamUrl)
           .end();
         return;
       }
@@ -6294,13 +6637,17 @@ export class StreamManager {
         req.signal || null
       );
 
+      logger.info('stalker playback proxy open', {
+        channelId: req.params.channelId,
+        candidateCount: Array.isArray(upstreamUrls) ? upstreamUrls.length : 0,
+        userAgent: String(req.get?.('user-agent') || '').slice(0, 120)
+      });
       await this.proxyStalkerUpstream({
         req,
         res,
         credentials,
         channelId: req.params.channelId,
-        upstreamUrls,
-        fallbackToRedirect: true
+        upstreamUrls
       });
     } catch (error) {
       logger.warn('stalker playback redirect failed', {
@@ -6339,50 +6686,41 @@ export class StreamManager {
     }
   }
 
-  async proxyStalkerUpstream({ req, res, credentials, channelId, upstreamUrls, fallbackToRedirect = false }) {
-    const headers = await this.stalkerPortalAdapter.getPlaybackHeaders(credentials, req.signal || null);
-    const requestHeaders = {
-      ...headers,
-      ...(req.headers.range ? { Range: req.headers.range } : {})
-    };
+  async proxyStalkerUpstream({ req, res, credentials, channelId, upstreamUrls }) {
     let response = null;
     let selectedUrl = '';
-    let fallbackUrl = '';
     let lastError = null;
 
     for (const upstreamUrl of Array.isArray(upstreamUrls) ? upstreamUrls : []) {
-      fallbackUrl = upstreamUrl;
-      try {
-        const candidateResponse = await fetch(upstreamUrl, {
-          headers: requestHeaders,
-          redirect: 'follow',
-          signal: req.signal || null
-        });
-        if (candidateResponse.ok) {
-          response = candidateResponse;
-          selectedUrl = upstreamUrl;
-          break;
+      const headerCandidates = typeof this.stalkerPortalAdapter.getPlaybackHeaderCandidates === 'function'
+        ? await this.stalkerPortalAdapter.getPlaybackHeaderCandidates(credentials, req.signal || null, upstreamUrl)
+        : [await this.stalkerPortalAdapter.getPlaybackHeaders(credentials, req.signal || null)];
+      for (const candidateHeaders of headerCandidates) {
+        const requestHeaders = {
+          ...candidateHeaders,
+          ...(req.headers.range ? { Range: req.headers.range } : {})
+        };
+        try {
+          const candidateResponse = await fetch(upstreamUrl, {
+            headers: requestHeaders,
+            redirect: 'follow',
+            signal: req.signal || null
+          });
+          if (candidateResponse.ok) {
+            response = candidateResponse;
+            selectedUrl = upstreamUrl;
+            break;
+          }
+          lastError = createHttpError(candidateResponse.status, `Stalker upstream HTTP ${candidateResponse.status}`);
+          await candidateResponse.body?.cancel?.().catch?.(() => {});
+        } catch (error) {
+          lastError = error;
         }
-        lastError = createHttpError(candidateResponse.status, `Stalker upstream HTTP ${candidateResponse.status}`);
-        await candidateResponse.body?.cancel?.().catch?.(() => {});
-      } catch (error) {
-        lastError = error;
       }
+      if (response) break;
     }
 
     if (!response) {
-      if (fallbackToRedirect && fallbackUrl && !res.headersSent) {
-        logger.warn('stalker proxy failed; falling back to direct upstream redirect', {
-          channelId,
-          error: lastError?.message || String(lastError || 'unknown')
-        });
-        res
-          .status(302)
-          .setHeader('Cache-Control', 'no-store')
-          .setHeader('Location', fallbackUrl)
-          .end();
-        return;
-      }
       throw lastError || createHttpError(502, 'Stalker upstream unavailable');
     }
 
@@ -6396,7 +6734,7 @@ export class StreamManager {
 
     if (isPlaylist) {
       const text = await response.text();
-      const baseUrl = `${req.protocol}://${req.get('host')}`;
+      const baseUrl = getStremioRequestBaseUrl(req);
       res
         .status(200)
         .setHeader('Cache-Control', 'no-store')
@@ -6416,6 +6754,531 @@ export class StreamManager {
     if (acceptRanges) res.setHeader('Accept-Ranges', acceptRanges);
 
     await pipeline(response.body, res);
+  }
+
+  async proxyXtreamUpstream({ req, res, kind, streamId, upstreamUrl }) {
+    const requestHeaders = {
+      Accept: '*/*',
+      'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20',
+      'Icy-MetaData': '1',
+      ...(req.headers.range ? { Range: req.headers.range } : {})
+    };
+
+    const response = await fetch(upstreamUrl, {
+      headers: requestHeaders,
+      redirect: 'follow',
+      signal: req.signal || null
+    });
+
+    if (!response.ok) {
+      await response.body?.cancel?.().catch?.(() => {});
+      throw createHttpError(response.status, `Xtream upstream HTTP ${response.status}`);
+    }
+
+    const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+    const finalUrl = response.url || upstreamUrl;
+    const isPlaylist = contentType.includes('mpegurl') || contentType.includes('m3u8') || /\.m3u8(?:$|[?#])/iu.test(finalUrl);
+
+    if (isPlaylist) {
+      const text = await response.text();
+      const baseUrl = getStremioRequestBaseUrl(req);
+      res
+        .status(200)
+        .setHeader('Cache-Control', 'no-store')
+        .setHeader('Content-Type', 'application/vnd.apple.mpegurl')
+        .send(this.rewriteXtreamPlaylist(text, finalUrl, baseUrl, req.params.privateConfigId, kind, streamId, req.params.extension || (kind === 'live' ? 'ts' : 'm3u8')));
+      return;
+    }
+
+    res.status(response.status);
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Content-Type', response.headers.get('content-type') || 'video/mp2t');
+    const contentLength = response.headers.get('content-length');
+    if (contentLength) res.setHeader('Content-Length', contentLength);
+    const contentRange = response.headers.get('content-range');
+    if (contentRange) res.setHeader('Content-Range', contentRange);
+    const acceptRanges = response.headers.get('accept-ranges');
+    if (acceptRanges) res.setHeader('Accept-Ranges', acceptRanges);
+
+    await pipeline(response.body, res);
+  }
+
+  async handleNflixStream(req, res, next) {
+    try {
+      const nflixEnabled = Boolean(this.getRequestedPrivateProviderSettings(req).nflixLiveEnabled);
+      if (!nflixEnabled || !req.params.privateConfigId) {
+        throw createHttpError(404, 'Nflix Live TV is not enabled');
+      }
+
+      const channel = await this.nflixLiveAdapter.findChannel(`nflix:${encodeURIComponent(req.params.channelId || '')}`, req.signal || null);
+      const upstreamUrl = req.query.url
+        ? Buffer.from(String(req.query.url), 'base64url').toString('utf8')
+        : channel?.url;
+
+      if (!channel || !upstreamUrl) {
+        throw createHttpError(404, 'Nflix live channel not found');
+      }
+
+      await this.proxyNflixUpstream({
+        req,
+        res,
+        channelId: req.params.channelId,
+        upstreamUrl,
+        headers: channel.headers
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async proxyNflixUpstream({ req, res, channelId, upstreamUrl, headers = null }) {
+    const requestHeaders = {
+      Accept: '*/*',
+      ...(headers?.Cookie ? { Cookie: headers.Cookie } : {}),
+      ...(headers?.Authorization ? { Authorization: headers.Authorization } : {}),
+      ...(req.headers.range ? { Range: req.headers.range } : {})
+    };
+
+    let response = null;
+    let selectedUrl = upstreamUrl;
+    let lastError = null;
+    for (const candidateUrl of this.getNflixUpstreamCandidates(upstreamUrl)) {
+      try {
+        const candidateResponse = await fetch(candidateUrl, {
+          headers: requestHeaders,
+          redirect: 'follow',
+          signal: req.signal || null
+        });
+
+        if (candidateResponse.ok) {
+          response = candidateResponse;
+          selectedUrl = candidateUrl;
+          break;
+        }
+
+        lastError = createHttpError(candidateResponse.status, `Nflix upstream HTTP ${candidateResponse.status}`);
+        await candidateResponse.body?.cancel?.().catch?.(() => {});
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    if (!response) {
+      throw lastError || createHttpError(502, 'Nflix upstream unavailable');
+    }
+
+    const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+    const finalUrl = response.url || selectedUrl;
+    const isPlaylist = contentType.includes('mpegurl') || contentType.includes('m3u8') || /\.m3u8(?:$|[?#])/iu.test(finalUrl);
+
+    if (isPlaylist) {
+      const text = await response.text();
+      const baseUrl = getStremioRequestBaseUrl(req);
+      res
+        .status(200)
+        .setHeader('Cache-Control', 'no-store')
+        .setHeader('Content-Type', 'application/vnd.apple.mpegurl')
+        .send(this.rewriteNflixPlaylist(text, finalUrl, baseUrl, req.params.privateConfigId, channelId));
+      return;
+    }
+
+    res.status(response.status);
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Content-Type', response.headers.get('content-type') || 'video/mp2t');
+    const contentLength = response.headers.get('content-length');
+    if (contentLength) res.setHeader('Content-Length', contentLength);
+    const contentRange = response.headers.get('content-range');
+    if (contentRange) res.setHeader('Content-Range', contentRange);
+    const acceptRanges = response.headers.get('accept-ranges');
+    if (acceptRanges) res.setHeader('Accept-Ranges', acceptRanges);
+
+    await pipeline(response.body, res);
+  }
+
+  async handleStreamedSportsStream(req, res, next) {
+    try {
+      const streamedSportsEnabled = Boolean(this.getRequestedPrivateProviderSettings(req).streamedSportsEnabled);
+      if (!streamedSportsEnabled || !req.params.privateConfigId) {
+        throw createHttpError(404, 'Streamed sports is not enabled');
+      }
+
+      let hlsFallback = null;
+      let hlsHeaders = null;
+      const upstreamUrl = req.query.url
+        ? Buffer.from(String(req.query.url), 'base64url').toString('utf8')
+        : (await this.resolveStreamedSportsPlaybackHls(req).then((hls) => {
+          hlsFallback = hls?.fallback || null;
+          hlsHeaders = hls?.headers || null;
+          return hls?.url;
+        }));
+
+      if (!/^https?:\/\//iu.test(upstreamUrl)) {
+        throw createHttpError(400, 'Invalid Streamed sports upstream URL');
+      }
+
+      await this.proxyStreamedSportsUpstream({
+        req,
+        res,
+        upstreamUrl,
+        source: hlsFallback?.source || req.params.source,
+        streamId: hlsFallback?.streamId || req.params.streamId,
+        streamNo: hlsFallback?.streamNo || req.params.streamNo,
+        hlsHeaders
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async resolveStreamedSportsPlaybackHls(req) {
+    try {
+      return await this.streamedSportsAdapter.resolvePlayableHls({
+        source: req.params.source,
+        streamId: req.params.streamId,
+        streamNo: req.params.streamNo,
+        signal: req.signal || null
+      });
+    } catch (error) {
+      logger.warn('streamed sports primary hls failed; trying fallback source', {
+        source: req.params.source,
+        streamNo: req.params.streamNo,
+        error: error?.message || String(error)
+      });
+      const fallback = await this.streamedSportsAdapter.resolveFallbackPlayableHls({
+        source: req.params.source,
+        streamId: req.params.streamId,
+        streamNo: req.params.streamNo,
+        signal: req.signal || null
+      });
+      if (fallback?.url) return fallback;
+      throw error;
+    }
+  }
+
+  async proxyStreamedSportsUpstream({ req, res, upstreamUrl, source, streamId, streamNo, hlsHeaders = null }) {
+    this.activeStreams += 1;
+    try {
+      await this.proxyStreamedSportsUpstreamInternal({ req, res, upstreamUrl, source, streamId, streamNo, hlsHeaders });
+    } finally {
+      this.activeStreams = Math.max(this.activeStreams - 1, 0);
+    }
+  }
+
+  async proxyStreamedSportsUpstreamInternal({ req, res, upstreamUrl, source, streamId, streamNo, hlsHeaders = null }) {
+    const isLikelyPlaylist = /\.m3u8(?:$|[?#])/iu.test(upstreamUrl);
+    const directStartedAt = Date.now();
+    const directFetchBlocked = isLikelyPlaylist
+      && (this.shouldUseBrowserForStreamedSportsPlaylist(upstreamUrl) || this.isStreamedSportsDirectFetchBlocked(upstreamUrl));
+    const directSignal = directFetchBlocked
+      ? null
+      : (req.signal && typeof AbortSignal.any === 'function'
+        ? AbortSignal.any([req.signal, AbortSignal.timeout(3_000)])
+        : AbortSignal.timeout(3_000));
+    const directResponse = directFetchBlocked
+      ? { ok: false, status: 403, skipped: true, error: new Error('direct playlist fetch skipped after recent 403') }
+      : await fetch(upstreamUrl, {
+        headers: this.getStreamedSportsUpstreamHeaders(upstreamUrl, hlsHeaders),
+        redirect: 'follow',
+        signal: directSignal
+      }).catch((error) => ({ ok: false, status: 0, error }));
+
+    if (directResponse?.ok) {
+      const directContentType = String(directResponse.headers.get('content-type') || '').toLowerCase();
+      const directFinalUrl = directResponse.url || upstreamUrl;
+      const directIsPlaylist = directContentType.includes('mpegurl')
+        || directContentType.includes('m3u8')
+        || /\.m3u8(?:$|[?#])/iu.test(directFinalUrl)
+        || isLikelyPlaylist;
+
+      if (directIsPlaylist) {
+        const playlistText = await directResponse.text();
+        const baseUrl = getStremioRequestBaseUrl(req);
+        res
+          .status(200)
+          .setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+          .setHeader('Pragma', 'no-cache')
+          .setHeader('Expires', '0')
+          .setHeader('Access-Control-Allow-Origin', '*')
+          .setHeader('X-Accel-Buffering', 'no')
+          .setHeader('Content-Type', 'application/vnd.apple.mpegurl')
+          .send(this.rewriteStreamedSportsPlaylist(
+            playlistText,
+            directFinalUrl,
+            baseUrl,
+            req.params.privateConfigId,
+            source,
+            streamId,
+            streamNo
+          ));
+        return;
+      }
+
+      res.status(directResponse.status || 200);
+      res.setHeader('Cache-Control', 'public, max-age=30');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.setHeader('Content-Type', directResponse.headers.get('content-type') || 'video/mp2t');
+      const contentLength = directResponse.headers.get('content-length');
+      if (contentLength) res.setHeader('Content-Length', contentLength);
+      const contentRange = directResponse.headers.get('content-range');
+      if (contentRange) res.setHeader('Content-Range', contentRange);
+      const acceptRanges = directResponse.headers.get('accept-ranges');
+      if (acceptRanges) res.setHeader('Accept-Ranges', acceptRanges);
+      await pipeline(directResponse.body, res);
+      return;
+    }
+
+    await directResponse?.body?.cancel?.().catch?.(() => {});
+    if (isLikelyPlaylist && [401, 403].includes(Number(directResponse?.status || 0))) {
+      this.rememberStreamedSportsDirectFetchBlocked(upstreamUrl);
+    }
+    const directFailureDetails = {
+      playlist: isLikelyPlaylist,
+      status: directResponse?.status || 0,
+      durationMs: Date.now() - directStartedAt,
+      error: directResponse?.error?.message || undefined
+    };
+    if (directResponse?.skipped) {
+      logger.info('streamed sports direct fetch skipped; using browser', directFailureDetails);
+    } else {
+      logger.warn('streamed sports direct fetch failed; falling back to browser', directFailureDetails);
+    }
+
+    const fetched = await this.streamedSportsAdapter.browserFetchBytes(upstreamUrl, {
+      signal: req.signal || null
+    });
+
+    const contentType = String(fetched.headers['content-type'] || '').toLowerCase();
+    const finalUrl = fetched.url || upstreamUrl;
+    const isPlaylist = contentType.includes('mpegurl') || contentType.includes('m3u8') || /\.m3u8(?:$|[?#])/iu.test(finalUrl);
+
+    if (isPlaylist) {
+      const playlistText = fetched.body.toString('utf8');
+      const baseUrl = getStremioRequestBaseUrl(req);
+      res
+        .status(200)
+        .setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+        .setHeader('Pragma', 'no-cache')
+        .setHeader('Expires', '0')
+        .setHeader('Access-Control-Allow-Origin', '*')
+        .setHeader('X-Accel-Buffering', 'no')
+        .setHeader('Content-Type', 'application/vnd.apple.mpegurl')
+        .send(this.rewriteStreamedSportsPlaylist(
+          playlistText,
+          finalUrl,
+          baseUrl,
+          req.params.privateConfigId,
+          source,
+          streamId,
+          streamNo
+        ));
+      return;
+    }
+
+    res.status(fetched.status || 200);
+    res.setHeader('Cache-Control', 'public, max-age=30');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.setHeader('Content-Type', fetched.headers['content-type'] || 'video/mp2t');
+    const contentLength = fetched.headers['content-length'];
+    if (contentLength) res.setHeader('Content-Length', contentLength);
+    const contentRange = fetched.headers['content-range'];
+    if (contentRange) res.setHeader('Content-Range', contentRange);
+    const acceptRanges = fetched.headers['accept-ranges'];
+    if (acceptRanges) res.setHeader('Accept-Ranges', acceptRanges);
+    res.send(fetched.body);
+  }
+
+  getStreamedSportsDirectFetchBlockKey(upstreamUrl) {
+    try {
+      return new URL(String(upstreamUrl || '')).hostname.toLowerCase();
+    } catch {
+      return '';
+    }
+  }
+
+  shouldUseBrowserForStreamedSportsPlaylist(upstreamUrl) {
+    try {
+      const host = new URL(String(upstreamUrl || '')).hostname.toLowerCase();
+      return host === 'strmd.st' || host.endsWith('.strmd.st');
+    } catch {
+      return false;
+    }
+  }
+
+  getStreamedSportsUpstreamHeaders(upstreamUrl, hlsHeaders = null) {
+    if (hlsHeaders) return hlsHeaders;
+    try {
+      const host = new URL(String(upstreamUrl || '')).hostname.toLowerCase();
+      if (host === 'zohanayaan.com' || host.endsWith('.zohanayaan.com')) {
+        return {
+          ...this.streamedSportsAdapter.getBrowserFetchHeaders(),
+          origin: 'https://exposestrat.com',
+          referer: 'https://exposestrat.com/maestrohd1.php'
+        };
+      }
+    } catch {
+      // Fall through to default headers.
+    }
+    return this.streamedSportsAdapter.getBrowserFetchHeaders();
+  }
+
+  isStreamedSportsDirectFetchBlocked(upstreamUrl) {
+    const key = this.getStreamedSportsDirectFetchBlockKey(upstreamUrl);
+    if (!key) return false;
+    const expiresAt = this.streamedSportsDirectFetchBlocklist.get(key) || 0;
+    if (expiresAt > Date.now()) return true;
+    if (expiresAt) this.streamedSportsDirectFetchBlocklist.delete(key);
+    return false;
+  }
+
+  rememberStreamedSportsDirectFetchBlocked(upstreamUrl) {
+    const key = this.getStreamedSportsDirectFetchBlockKey(upstreamUrl);
+    if (!key) return;
+    this.streamedSportsDirectFetchBlocklist.set(key, Date.now() + 60_000);
+  }
+
+  prewarmStreamedSportsPlaylistChildren(playlistText, finalUrl) {
+    return;
+  }
+
+  getNflixUpstreamCandidates(upstreamUrl) {
+    const candidates = [];
+    const addCandidate = (value) => {
+      const normalized = String(value || '').trim();
+      if (normalized && !candidates.includes(normalized)) {
+        candidates.push(normalized);
+      }
+    };
+
+    addCandidate(upstreamUrl);
+
+    try {
+      const parsed = new URL(String(upstreamUrl || '').trim());
+      if (parsed.hostname.endsWith('.dulo.tv')) {
+        for (const hostname of ['gotcha.dulo.tv', 'hey.dulo.tv', 'bridge.dulo.tv', 'images.dulo.tv']) {
+          parsed.hostname = hostname;
+          addCandidate(parsed.toString());
+        }
+      }
+    } catch {
+      // Keep original-only candidate list.
+    }
+
+    return candidates;
+  }
+
+  getStreamedSportsChildPlaylistUrls(text, playlistUrl) {
+    return String(text || '').split(/\r?\n/u)
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith('#') && /\.m3u8(?:$|[?#])/iu.test(line))
+      .map((line) => {
+        try {
+          return new URL(line, playlistUrl).toString();
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean);
+  }
+
+  getStreamedSportsTargetDurationMs(text) {
+    const match = String(text || '').match(/#EXT-X-TARGETDURATION:([0-9.]+)/iu);
+    const seconds = Number(match?.[1] || 4);
+    if (!Number.isFinite(seconds) || seconds <= 0) return 2_000;
+    return Math.max(1_000, Math.min(5_000, seconds * 500));
+  }
+
+  rewriteNflixPlaylist(text, playlistUrl, baseUrl, privateConfigId, channelId) {
+    return String(text || '').split(/\r?\n/u).map((line) => {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) {
+        return line;
+      }
+
+      let absoluteUrl;
+      try {
+        absoluteUrl = new URL(trimmed, playlistUrl).toString();
+      } catch {
+        return line;
+      }
+
+      const encodedUrl = Buffer.from(absoluteUrl).toString('base64url');
+      return `${String(baseUrl || '').replace(/\/+$/u, '')}/private/${encodeURIComponent(privateConfigId)}/nflix/live/${encodeURIComponent(String(channelId))}.m3u8?url=${encodedUrl}`;
+    }).join('\n');
+  }
+
+  rewriteStreamedSportsPlaylist(text, playlistUrl, baseUrl, privateConfigId, source, streamId, streamNo) {
+    const rawText = String(text || '');
+    const hasSegments = rawText.includes('#EXTINF');
+    const startOffsetSeconds = 18;
+    let playlistText = rawText
+      .split(/\r?\n/u)
+      .filter((line) => {
+        const tag = line.trim().toUpperCase();
+        return tag !== '#EXT-X-ENDLIST' && !tag.startsWith('#EXT-X-PLAYLIST-TYPE:');
+      })
+      .join('\n');
+    if (hasSegments && !playlistText.includes('#EXT-X-START:')) {
+      playlistText = playlistText.includes('#EXT-X-VERSION:')
+        ? playlistText.replace(/(#EXT-X-VERSION:\d+\s*)/u, `$1#EXT-X-START:TIME-OFFSET=-${startOffsetSeconds},PRECISE=YES\n`)
+        : playlistText.replace(/(#EXTM3U\s*)/u, `$1#EXT-X-START:TIME-OFFSET=-${startOffsetSeconds},PRECISE=YES\n`);
+    }
+
+    let awaitingMediaUri = false;
+    return playlistText.split(/\r?\n/u).map((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        return line;
+      }
+      if (trimmed.startsWith('#')) {
+        if (trimmed.toUpperCase().startsWith('#EXTINF')) {
+          awaitingMediaUri = true;
+        }
+        return line;
+      }
+
+      if (hasSegments && !awaitingMediaUri) {
+        return null;
+      }
+      awaitingMediaUri = false;
+
+      let absoluteUrl;
+      try {
+        absoluteUrl = new URL(trimmed, playlistUrl).toString();
+      } catch {
+        return line;
+      }
+
+      const parsedAbsoluteUrl = new URL(absoluteUrl);
+      const extensionMatch = parsedAbsoluteUrl.pathname.match(/\.([a-z0-9]+)$/iu);
+      const extension = extensionMatch?.[1] || 'ts';
+      if (extension.toLowerCase() !== 'm3u8') {
+        return absoluteUrl;
+      }
+      const encodedUrl = Buffer.from(absoluteUrl).toString('base64url');
+      return `${String(baseUrl || '').replace(/\/+$/u, '')}/private/${encodeURIComponent(privateConfigId)}/streamed/${encodeURIComponent(String(source))}/${encodeURIComponent(String(streamId))}/${encodeURIComponent(String(streamNo || 1))}.${extension}?url=${encodedUrl}`;
+    }).filter((line) => line !== null).join('\n');
+  }
+
+  rewriteXtreamPlaylist(text, playlistUrl, baseUrl, privateConfigId, kind, streamId, extension = 'm3u8') {
+    return String(text || '').split(/\r?\n/u).map((line) => {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) {
+        return line;
+      }
+
+      let absoluteUrl;
+      try {
+        absoluteUrl = new URL(trimmed, playlistUrl).toString();
+      } catch {
+        return line;
+      }
+
+      const encodedUrl = Buffer.from(absoluteUrl).toString('base64url');
+      const safeExtension = String(extension || 'm3u8').replace(/[^a-z0-9]/giu, '') || 'm3u8';
+      return `${String(baseUrl || '').replace(/\/+$/u, '')}/private/${encodeURIComponent(privateConfigId)}/xtream/${encodeURIComponent(String(kind))}/${encodeURIComponent(String(streamId))}.${safeExtension}?url=${encodedUrl}`;
+    }).join('\n');
   }
 
   rewriteStalkerPlaylist(text, playlistUrl, baseUrl, privateConfigId, channelId) {
@@ -6439,7 +7302,7 @@ export class StreamManager {
 
   async handleProviderStreams(req, res, next) {
     try {
-      const baseUrl = `${req.protocol}://${req.get('host')}`;
+      const baseUrl = getStremioRequestBaseUrl(req);
       const provider = req.params.provider;
       const streams = await this.providerService.getStreams({
         provider,
@@ -6479,7 +7342,7 @@ export class StreamManager {
 
   async handleAggregateProviderStreams(req, res, next) {
     try {
-      const baseUrl = `${req.protocol}://${req.get('host')}`;
+      const baseUrl = getStremioRequestBaseUrl(req);
       const requestedProviders = typeof req.query.providers === 'string'
         ? req.query.providers.split(',').map((value) => value.trim()).filter(Boolean)
         : undefined;
@@ -6545,7 +7408,7 @@ export class StreamManager {
 
       if (catalogId.startsWith('xtream-')) {
         const credentials = this.getRequestedXtreamCredentials(req);
-        if (!hasXtreamCredentials(credentials)) {
+        if (!hasXtreamCredentials(credentials) || isXtreamServerDefinitelyUnplayable(credentials)) {
           res.json({ metas: [] });
           return;
         }
@@ -6563,8 +7426,8 @@ export class StreamManager {
           return;
         }
 
-        const search = String(req.query.search || req.params.search || '').trim();
-        const skip = Number.parseInt(req.query.skip || '0', 10);
+        const search = getCatalogSearch(req);
+        const skip = getCatalogSkip(req);
         const metas = await this.xtreamCodesAdapter.getCatalog({
           credentials,
           catalogId,
@@ -6581,13 +7444,13 @@ export class StreamManager {
 
       if (catalogId.startsWith('stalker-live-')) {
         const credentials = this.getRequestedStalkerCredentials(req);
-        if (!hasStalkerCredentials(credentials) || type !== 'tv') {
+        if (!hasStalkerCredentials(credentials) || !isLiveStremioType(type)) {
           res.json({ metas: [] });
           return;
         }
 
-        const search = String(req.query.search || req.params.search || '').trim();
-        const skip = Number.parseInt(req.query.skip || '0', 10);
+        const search = getCatalogSearch(req);
+        const skip = getCatalogSkip(req);
         const metas = await this.stalkerPortalAdapter.getCatalog({
           credentials,
           catalogId,
@@ -6604,7 +7467,7 @@ export class StreamManager {
 
       if (catalogId.startsWith('famelack-live-')) {
         const famelackEnabled = Boolean(this.getRequestedPrivateProviderSettings(req).famelackLiveEnabled);
-        if (!famelackEnabled || type !== 'tv') {
+        if (!famelackEnabled || !isLiveStremioType(type)) {
           res.json({ metas: [] });
           return;
         }
@@ -6617,14 +7480,14 @@ export class StreamManager {
           return;
         }
 
-        const search = String(req.query.search || req.params.search || '').trim();
+        const search = getCatalogSearch(req);
         if (search && search.length < 3) {
           res
             .setHeader('Cache-Control', 'public, max-age=30')
             .json({ metas: [] });
           return;
         }
-        const skip = Number.parseInt(req.query.skip || '0', 10);
+        const skip = getCatalogSkip(req);
         const metas = await this.famelackLiveAdapter.getLiveCatalog({
           catalog,
           search,
@@ -6638,7 +7501,78 @@ export class StreamManager {
         return;
       }
 
-      if (type !== 'tv' || (!catalogId.startsWith('rogplay-live-') && !catalogId.startsWith('cs-german-live-'))) {
+      if (catalogId.startsWith('nflix-live-')) {
+        const nflixEnabled = Boolean(this.getRequestedPrivateProviderSettings(req).nflixLiveEnabled);
+        if (!nflixEnabled || !isLiveStremioType(type)) {
+          res.json({ metas: [] });
+          return;
+        }
+
+        const catalog = await this.nflixLiveAdapter.getCatalogDefinition(catalogId, req.signal || null);
+        if (!catalog) {
+          res.json({ metas: [] });
+          return;
+        }
+
+        const search = getCatalogSearch(req);
+        if (search && search.length < 3) {
+          res
+            .setHeader('Cache-Control', 'public, max-age=30')
+            .json({ metas: [] });
+          return;
+        }
+        const skip = getCatalogSkip(req);
+        const metas = await this.nflixLiveAdapter.getLiveCatalog({
+          catalog,
+          search,
+          skip: Number.isInteger(skip) && skip > 0 ? skip : 0,
+          signal: req.signal || null
+        });
+
+        res
+          .setHeader('Cache-Control', 'public, max-age=120')
+          .json({ metas });
+        return;
+      }
+
+      if (catalogId.startsWith('streamed-events-')) {
+        const streamedSportsEnabled = Boolean(this.getRequestedPrivateProviderSettings(req).streamedSportsEnabled);
+        if (!streamedSportsEnabled || !isLiveStremioType(type)) {
+          res.json({ metas: [] });
+          return;
+        }
+
+        const catalog = await this.streamedSportsAdapter.getCatalogDefinition(catalogId, req.signal || null);
+        if (!catalog) {
+          res.json({ metas: [] });
+          return;
+        }
+
+        const search = getCatalogSearch(req);
+        if (search && search.length < 3) {
+          res
+            .setHeader('Cache-Control', 'public, max-age=30')
+            .json({ metas: [] });
+          return;
+        }
+        const skip = getCatalogSkip(req);
+        const metas = await this.streamedSportsAdapter.getEventCatalog({
+          catalog,
+          search,
+          skip: Number.isInteger(skip) && skip > 0 ? skip : 0,
+          signal: req.signal || null
+        });
+        const responseMetas = type === 'events'
+          ? metas.map((meta) => ({ ...meta, type: 'events' }))
+          : metas;
+
+        res
+          .setHeader('Cache-Control', 'public, max-age=60')
+          .json({ metas: responseMetas });
+        return;
+      }
+
+      if (!isLiveStremioType(type) || (!catalogId.startsWith('rogplay-live-') && !catalogId.startsWith('cs-german-live-'))) {
         res.json({ metas: [] });
         return;
       }
@@ -6653,7 +7587,7 @@ export class StreamManager {
         return;
       }
 
-      const search = String(req.query.search || req.params.search || '').trim().toLowerCase();
+      const search = getCatalogSearch(req).toLowerCase();
       if (search) {
         if (search.length < 3) {
           res
@@ -6678,7 +7612,7 @@ export class StreamManager {
         return;
       }
 
-      const skip = Number.parseInt(req.query.skip || '0', 10);
+      const skip = getCatalogSkip(req);
       let metas = await liveAdapter.getLiveCatalog({
         category: catalog.category,
         source: catalog.source || null,
@@ -6698,7 +7632,7 @@ export class StreamManager {
 
       if (id.startsWith('xtream:')) {
         const credentials = this.getRequestedXtreamCredentials(req);
-        if (!hasXtreamCredentials(credentials)) {
+        if (!hasXtreamCredentials(credentials) || isXtreamServerDefinitelyUnplayable(credentials)) {
           res.json({ meta: null });
           return;
         }
@@ -6718,7 +7652,7 @@ export class StreamManager {
 
       if (id.startsWith('stalker:')) {
         const credentials = this.getRequestedStalkerCredentials(req);
-        if (!hasStalkerCredentials(credentials) || type !== 'tv') {
+        if (!hasStalkerCredentials(credentials) || !isLiveStremioType(type)) {
           res.json({ meta: null });
           return;
         }
@@ -6732,7 +7666,7 @@ export class StreamManager {
 
       if (id.startsWith('famelack:')) {
         const famelackEnabled = Boolean(this.getRequestedPrivateProviderSettings(req).famelackLiveEnabled);
-        if (!famelackEnabled || type !== 'tv') {
+        if (!famelackEnabled || !isLiveStremioType(type)) {
           res.json({ meta: null });
           return;
         }
@@ -6744,7 +7678,38 @@ export class StreamManager {
         return;
       }
 
-      if (type !== 'tv' || (!id.startsWith('rogplay:') && !id.startsWith('cs-german:'))) {
+      if (id.startsWith('nflix:')) {
+        const nflixEnabled = Boolean(this.getRequestedPrivateProviderSettings(req).nflixLiveEnabled);
+        if (!nflixEnabled || !isLiveStremioType(type)) {
+          res.json({ meta: null });
+          return;
+        }
+
+        const meta = await this.nflixLiveAdapter.getLiveMeta(id, req.signal || null);
+        res
+          .setHeader('Cache-Control', 'public, max-age=120')
+          .json({ meta });
+        return;
+      }
+
+      if (id.startsWith('streamed:')) {
+        const streamedSportsEnabled = Boolean(this.getRequestedPrivateProviderSettings(req).streamedSportsEnabled);
+        if (!streamedSportsEnabled || !isLiveStremioType(type)) {
+          res.json({ meta: null });
+          return;
+        }
+
+        const meta = await this.streamedSportsAdapter.getEventMeta(id, req.signal || null);
+        const responseMeta = meta && type === 'events'
+          ? { ...meta, type: 'events' }
+          : meta;
+        res
+          .setHeader('Cache-Control', 'public, max-age=60')
+          .json({ meta: responseMeta });
+        return;
+      }
+
+      if (!isLiveStremioType(type) || (!id.startsWith('rogplay:') && !id.startsWith('cs-german:'))) {
         res.json({ meta: null });
         return;
       }
@@ -6774,6 +7739,18 @@ export class StreamManager {
     const normalizedType = String(type || '').trim().toLowerCase();
     return (normalizedType === 'tv' || normalizedType === 'live' || normalizedType === 'channel')
       && String(id || '').startsWith('famelack:');
+  }
+
+  isNflixLiveStreamRequest(type, id) {
+    const normalizedType = String(type || '').trim().toLowerCase();
+    return (normalizedType === 'tv' || normalizedType === 'live' || normalizedType === 'channel')
+      && String(id || '').startsWith('nflix:');
+  }
+
+  isStreamedSportsStreamRequest(type, id) {
+    const normalizedType = String(type || '').trim().toLowerCase();
+    return (normalizedType === 'tv' || normalizedType === 'live' || normalizedType === 'channel' || normalizedType === 'events')
+      && String(id || '').startsWith('streamed:');
   }
 
   isXtreamStreamRequest(type, id) {
@@ -6849,7 +7826,7 @@ export class StreamManager {
         return;
       }
 
-      const baseUrl = `${req.protocol}://${req.get('host')}`;
+      const baseUrl = getStremioRequestBaseUrl(req);
       const requestedProviders = this.getRequestedProviders(req);
       const qualityPriority = this.getRequestedQualityPriority(req);
       const streamOptions = this.getRequestedStreamOptions(req);

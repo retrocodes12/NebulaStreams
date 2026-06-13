@@ -142,15 +142,18 @@ export class XtreamCodesAdapter {
   buildStreamTarget(credentials, kind, streamId, extension = '') {
     const normalized = normalizeCredentials(credentials);
     const safeKind = kind === 'live' ? 'live' : kind === 'series' ? 'series' : 'movie';
-    const safeExtension = toString(extension).replace(/[^a-z0-9]/giu, '') || (safeKind === 'live' ? 'm3u8' : 'mp4');
+    const safeExtension = toString(extension).replace(/[^a-z0-9]/giu, '') || (safeKind === 'live' ? 'ts' : 'mp4');
     const encodedUser = encodeURIComponent(normalized.username);
     const encodedPassword = encodeURIComponent(normalized.password);
     return `${normalized.serverUrl}/${safeKind}/${encodedUser}/${encodedPassword}/${encodeURIComponent(String(streamId))}.${safeExtension}`;
   }
 
-  buildPrivateStreamUrl({ baseUrl, privateConfigId, kind, streamId, extension = '' }) {
-    const safeExtension = toString(extension).replace(/[^a-z0-9]/giu, '') || (kind === 'live' ? 'm3u8' : 'mp4');
-    return `${String(baseUrl || '').replace(/\/+$/u, '')}/private/${encodeURIComponent(privateConfigId)}/xtream/${kind}/${encodeURIComponent(String(streamId))}.${safeExtension}`;
+  buildPrivateStreamUrl({ baseUrl, privateConfigId, kind, streamId, extension = '', mode = '' }) {
+    const safeExtension = toString(extension).replace(/[^a-z0-9]/giu, '') || (kind === 'live' ? 'ts' : 'mp4');
+    const url = new URL(`${String(baseUrl || '').replace(/\/+$/u, '')}/private/${encodeURIComponent(privateConfigId)}/xtream/${kind}/${encodeURIComponent(String(streamId))}.${safeExtension}`);
+    if (mode) url.searchParams.set('mode', mode);
+    url.searchParams.set('pb', '2');
+    return url.toString();
   }
 
   async rateLimit(credentials) {
@@ -479,18 +482,34 @@ export class XtreamCodesAdapter {
 
     const kind = parsed.kind === 'episode' ? 'series' : parsed.kind;
     const streamId = parsed.kind === 'episode' ? parsed.episodeId : parsed.id;
-    const extension = parsed.kind === 'live' ? 'm3u8' : (parsed.extension || 'mp4');
-    const url = this.buildPrivateStreamUrl({ baseUrl, privateConfigId, kind, streamId, extension });
+    const extension = parsed.kind === 'live' ? 'ts' : (parsed.extension || 'mp4');
+    const liveFormats = kind === 'live' ? ['ts', 'm3u8'] : [extension];
     const name = kind === 'live' ? 'NebulaStreams IPTV' : 'NebulaStreams Xtream';
-    return [{
-      name,
-      title: `${kind === 'live' ? 'Live TV' : kind === 'series' ? 'Series Episode' : 'VOD'}\nXtream Codes`,
-      url,
-      behaviorHints: {
-        notWebReady: false,
-        bingeGroup: `xtream:${kind}:${streamId}`
-      }
-    }];
+    const label = kind === 'live' ? 'Live TV' : kind === 'series' ? 'Series Episode' : 'VOD';
+    const streams = [];
+    for (const format of liveFormats) {
+      streams.push({
+        name,
+        title: `${label}\nXtream Direct ${format.toUpperCase()}`,
+        url: this.buildPrivateStreamUrl({ baseUrl, privateConfigId, kind, streamId, extension: format, mode: 'direct' }),
+        behaviorHints: {
+          notWebReady: false,
+          bingeGroup: `xtream:${kind}:${streamId}:redirect:${format}`
+        }
+      });
+    }
+    for (const format of liveFormats) {
+      streams.push({
+        name,
+        title: `${label}\nXtream Proxy Fallback ${format.toUpperCase()}`,
+        url: this.buildPrivateStreamUrl({ baseUrl, privateConfigId, kind, streamId, extension: format }),
+        behaviorHints: {
+          notWebReady: true,
+          bingeGroup: `xtream:${kind}:${streamId}:proxy:${format}`
+        }
+      });
+    }
+    return streams;
   }
 
   getUpstreamStreamUrl(credentials, kind, streamId, extension = '') {

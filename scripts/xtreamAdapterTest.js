@@ -135,8 +135,23 @@ const streams = await adapter.getStreams({
   baseUrl: 'https://nebula.example.test',
   privateConfigId: 'private123'
 });
-assert.equal(streams.length, 1);
-assert.equal(streams[0].url, 'https://nebula.example.test/private/private123/xtream/series/ep-1.mp4');
+assert.equal(streams.length, 2);
+assert.equal(streams[0].url, 'https://nebula.example.test/private/private123/xtream/series/ep-1.mp4?mode=direct&pb=2');
+assert.equal(streams[1].url, 'https://nebula.example.test/private/private123/xtream/series/ep-1.mp4?pb=2');
+assert.equal(streams[1].behaviorHints.notWebReady, true);
+
+const liveStreams = await adapter.getStreams({
+  credentials,
+  id: 'xtream:live:101',
+  baseUrl: 'https://nebula.example.test',
+  privateConfigId: 'private123'
+});
+assert.equal(liveStreams.length, 4);
+assert.equal(liveStreams[0].url, 'https://nebula.example.test/private/private123/xtream/live/101.ts?mode=direct&pb=2');
+assert.equal(liveStreams[1].url, 'https://nebula.example.test/private/private123/xtream/live/101.m3u8?mode=direct&pb=2');
+assert.equal(liveStreams[2].behaviorHints.notWebReady, true);
+assert.equal(liveStreams[2].url, 'https://nebula.example.test/private/private123/xtream/live/101.ts?pb=2');
+assert.equal(liveStreams[3].url, 'https://nebula.example.test/private/private123/xtream/live/101.m3u8?pb=2');
 
 const target = adapter.getUpstreamStreamUrl(credentials, 'live', 101, 'm3u8');
 assert.equal(target, 'https://iptv.example.test/live/demo-user/demo-pass/101.m3u8');

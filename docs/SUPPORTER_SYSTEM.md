@@ -50,12 +50,18 @@ Flow:
 
 Webhook route: `POST /webhooks/kofi`
 
+Donation pledge:
+
+- 50% of supporter donations are set aside for charities and humanitarian programs.
+- Example organizations include UNICEF, UNFPA, CRY, and similar anti-genocide, child welfare, and emergency aid efforts.
+- The remaining 50% supports NebulaStreams hosting, traffic, tunnels, monitoring, and maintenance.
+
 Behavior:
 
 - Verifies Ko-fi `verification_token`.
 - Ignores payments below `KOFI_MIN_AMOUNT`.
 - `$1+` creates `supporter` tier.
-- `$10+` creates `founder` tier with lifetime status.
+- `$5+` creates `founder` tier with lifetime status.
 - Creates supporter account, code, payment record.
 - Emails code through SMTP.
 - Duplicate transaction ids do not create duplicate codes.

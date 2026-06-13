@@ -88,4 +88,86 @@ export class EmailService {
       html
     });
   }
+
+  async sendSportsToken({ to, name = '', code, expiresAt, baseUrl }) {
+    const transport = this.getTransport();
+    if (!transport) {
+      throw new Error('Sports email SMTP is not configured');
+    }
+
+    const displayName = escapeText(name) || 'supporter';
+    const installUrl = `${String(baseUrl || '').replace(/\/+$/u, '') || 'https://nebula.work.gd'}/sports`;
+    const expiryLabel = expiresAt || 'Lifetime';
+    const subject = 'Your Nebula Sports access token';
+    const text = [
+      `Hi ${displayName},`,
+      '',
+      'Thanks for supporting Nebula Sports.',
+      '',
+      `Secret token: ${code}`,
+      `Valid until: ${expiryLabel}`,
+      '',
+      `Open Nebula Sports: ${installUrl}`,
+      'Create a username and password, then paste this token on signup.',
+      '',
+      'Keep this token private. It can be claimed once.'
+    ].join('\n');
+    const html = `
+      <p>Hi ${escapeHtml(displayName)},</p>
+      <p>Thanks for supporting Nebula Sports.</p>
+      <p><strong>Secret token:</strong> <code>${escapeHtml(code)}</code></p>
+      <p><strong>Valid until:</strong> ${escapeHtml(expiryLabel)}</p>
+      <p><a href="${escapeHtml(installUrl)}">Open Nebula Sports</a></p>
+      <p>Create a username and password, then paste this token on signup.</p>
+      <p>Keep this token private. It can be claimed once.</p>
+    `;
+
+    await transport.sendMail({
+      from: this.config.SMTP_FROM,
+      to,
+      replyTo: this.config.SUPPORTER_EMAIL_REPLY_TO || undefined,
+      subject,
+      text,
+      html
+    });
+  }
+
+  async sendSportsTrialToken({ to, code, expiresAt, baseUrl }) {
+    const transport = this.getTransport();
+    if (!transport) {
+      throw new Error('Sports email SMTP is not configured');
+    }
+
+    const installUrl = `${String(baseUrl || '').replace(/\/+$/u, '') || 'https://nebula.work.gd'}/sports`;
+    const expiryLabel = expiresAt || '30 minutes';
+    const subject = 'Your Nebula Sports 24h trial token';
+    const text = [
+      'Nebula Sports 24h trial',
+      '',
+      `Trial token: ${code}`,
+      `Claim before: ${expiryLabel}`,
+      '',
+      `Open Nebula Sports: ${installUrl}`,
+      'Create a username and password, then paste this token on signup.',
+      '',
+      'The trial starts after signup and lasts 24 hours. This token can be claimed once.'
+    ].join('\n');
+    const html = `
+      <p><strong>Nebula Sports 24h trial</strong></p>
+      <p><strong>Trial token:</strong> <code>${escapeHtml(code)}</code></p>
+      <p><strong>Claim before:</strong> ${escapeHtml(expiryLabel)}</p>
+      <p><a href="${escapeHtml(installUrl)}">Open Nebula Sports</a></p>
+      <p>Create a username and password, then paste this token on signup.</p>
+      <p>The trial starts after signup and lasts 24 hours. This token can be claimed once.</p>
+    `;
+
+    await transport.sendMail({
+      from: this.config.SMTP_FROM,
+      to,
+      replyTo: this.config.SUPPORTER_EMAIL_REPLY_TO || undefined,
+      subject,
+      text,
+      html
+    });
+  }
 }
