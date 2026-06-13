@@ -22,10 +22,10 @@ const HLS_PROBE_TIMEOUT_MS = 6_000;
 const HLS_PROBE_DISABLE_MS = 10 * 60 * 1000;
 const HLS_PROBE_SCRIPT = path.join(process.cwd(), 'scripts', 'streamed_hls_probe.py');
 const STREAM_SOURCE_RANK = new Map([
-  ['delta', 0],
-  ['echo', 1],
-  ['golf', 2],
-  ['admin', 9]
+  ['admin', 0],
+  ['delta', 1],
+  ['echo', 2],
+  ['golf', 3]
 ]);
 
 const toString = (value) => String(value ?? '').trim();
