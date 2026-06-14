@@ -11,7 +11,7 @@ scripts/build-webos-ipk.sh
 Install on TV with Developer Mode enabled:
 
 ```bash
-ares-install --device <tv-name> dist/webos/com.nebulastreams.sports_1.0.4_all.ipk
+ares-install --device <tv-name> dist/webos/com.nebulastreams.sports_1.0.6_all.ipk
 ```
 
 Homebrew Channel custom repository:

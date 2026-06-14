@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+  <meta http-equiv="refresh" content="3;url=https://nebula.work.gd/watch-together?tv=webos">
   <title>Nebula Sports</title>
   <style>
     html,
@@ -67,6 +68,15 @@
       outline: 4px solid rgba(255, 255, 255, 0.45);
       outline-offset: 5px;
     }
+
+    iframe {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      border: 0;
+      background: #050608;
+    }
   </style>
 </head>
 <body>
@@ -78,16 +88,34 @@
       <button id="openButton" type="button">Open</button>
     </div>
   </main>
+  <iframe
+    id="fallbackFrame"
+    title="Nebula Sports"
+    src="about:blank"
+    allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+    allowfullscreen
+    hidden
+  ></iframe>
   <script>
     const appUrl = 'https://nebula.work.gd/watch-together?tv=webos';
     const openButton = document.getElementById('openButton');
+    const fallbackFrame = document.getElementById('fallbackFrame');
+    const launch = document.querySelector('.launch');
     const openApp = () => {
-      window.location.replace(`${appUrl}&r=${Date.now()}`);
+      window.location.href = `${appUrl}&r=${Date.now()}`;
+    };
+    const openFrame = () => {
+      fallbackFrame.src = `${appUrl}&frame=1&r=${Date.now()}`;
+      fallbackFrame.hidden = false;
+      launch.hidden = true;
+      fallbackFrame.focus();
     };
 
     openButton.addEventListener('click', openApp);
     openButton.focus();
-    setTimeout(openApp, 600);
+    window.onload = openApp;
+    setTimeout(openApp, 1000);
+    setTimeout(openFrame, 4500);
   </script>
 </body>
 </html>
