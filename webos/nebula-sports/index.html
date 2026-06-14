@@ -11,7 +11,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Nebula Sports">
     <title>Nebula Sports Watch Together</title>
-    <meta name="nebula-webos-package" content="1.0.9">
+    <meta name="nebula-webos-package" content="1.0.10">
     <link rel="manifest" href="/watch-together/manifest.webmanifest">
     <link rel="icon" type="image/png" sizes="32x32" href="https://nebula.work.gd/assets/nebula-sports-favicon-32.png">
     <link rel="apple-touch-icon" href="https://nebula.work.gd/assets/nebula-sports-favicon.png">
@@ -258,381 +258,654 @@
 	        <a class="kofi-fallback" id="kofiFallback" href="https://ko-fi.com/redx115775" target="_blank" rel="noopener noreferrer">Support Us</a>
 	      </main>
       <script>
-			        const state={catalogs:[],events:[],event:null,streams:[],stream:null,multiView:false,multiItems:[],sportFilter:'all',statsOpen:false,statsTimer:null,statsAbort:null};
-	        const qs=new URLSearchParams(location.search);
-	        const el=(id)=>document.getElementById(id);
-	        const esc=(value)=>String(value??'').replace(/[&<>"']/g,(ch)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
-	        const timeLabel=(value)=>{const ms=Date.now()-new Date(value).getTime();if(!Number.isFinite(ms))return '';if(ms<60000)return 'now';if(ms<3600000)return Math.max(1,Math.round(ms/60000))+'m';if(ms<86400000)return Math.round(ms/3600000)+'h';return new Date(value).toLocaleDateString()};
-	        const openPanel=(panelId)=>{document.querySelectorAll('.panel').forEach((panel)=>panel.classList.toggle('active',panel.id===panelId));document.querySelectorAll('.tab').forEach((tab)=>tab.classList.toggle('active',tab.dataset.panel===panelId))};
-	        const WEBOS_BASE='https://nebula.work.gd';const withAccessKey=(path)=>{const url=new URL(path,WEBOS_BASE);const key=qs.get('key');if(key)url.searchParams.set('key',key);return url.href};
-        const api=async(path)=>{const res=await fetch(withAccessKey(path),{headers:{accept:'application/json'}});if(!res.ok)throw new Error(await res.text());return res.json()};
-        const postApi=async(path,body)=>{const res=await fetch(withAccessKey(path),{method:'POST',headers:{accept:'application/json','content-type':'application/json'},body:JSON.stringify(body)});const data=await res.json().catch(()=>({error:'Request failed'}));if(!res.ok)throw new Error(data.error||'Request failed');return data};
-        const withPlayerParams=(value)=>{try{const url=new URL(value);[['autoplay','1'],['muted','0'],['mute','0'],['volume','1']].forEach(([key,paramValue])=>url.searchParams.set(key,paramValue));return url.toString()}catch{return value}};
-	        const isWorldCupFootballEvent=(event)=>{
-	          const text=[event?.name,event?.releaseInfo,event?.description,event?.tournament,event?.competition,...(Array.isArray(event?.genres)?event.genres:[])].join(' ').toLowerCase();
-	          return /\bworld\s+cup\b/.test(text)&&/\b(?:fifa|football|soccer)\b/.test(text);
-	        };
-	        const sportText=(event)=>[event?.name,event?.releaseInfo,event?.description,event?.tournament,event?.competition,...(Array.isArray(event?.genres)?event.genres:[])].join(' ').toLowerCase();
-	        const matchesSportFilter=(event)=>{
-	          const filter=state.sportFilter||'all';
-	          if(filter==='all')return true;
-	          const text=sportText(event);
-	          if(filter==='football')return /\b(football|soccer|fifa|uefa|premier|laliga|bundesliga|serie\s*a|ligue\s*1|afl|nfl|ncaa|eagles|swans|kangaroos|vikings|rams|defenders|kings)\b/.test(text);
-	          if(filter==='rugby')return /\b(rugby|nrl|super\s*rugby|warriors|sharks|raiders|eels|broncos|rabbitohs|storm|panthers)\b/.test(text);
-	          if(filter==='motorsport')return /\b(motor|motorsport|formula|f1|f2|f3|motogp|nascar|indycar|rally|circuit|prix|sbk)\b/.test(text);
-	          if(filter==='combat')return /\b(boxing|mma|ufc|wwe|wrestling|fight|bellator|one\s*championship)\b/.test(text);
-	          if(filter==='more')return !['football','rugby','motorsport','combat'].some((name)=>{const previous=state.sportFilter;state.sportFilter=name;const matched=matchesSportFilter(event);state.sportFilter=previous;return matched});
-	          return true;
-	        };
-        const initials=(value)=>String(value||'').split(/\s+/).filter(Boolean).slice(0,2).map((part)=>part[0]?.toUpperCase()||'').join('')||'—';
-        const renderStatsPanel=(stats)=>{
-          const overlay=el('matchStatsOverlay');
-          if(!stats?.worldCup){overlay.hidden=true;return}
-          const home=stats.teams?.home?.name||'Home';
-          const away=stats.teams?.away?.name||'Away';
-          const crest=(team,name)=>team?.crest?'<img src="'+esc(team.crest)+'" alt="" loading="lazy">':esc(initials(name));
-          const score=stats.score||{};
-          const statRows=[
-            ['Possession',stats.stats?.possession],
-            ['Shots OT',stats.stats?.shotsOnTarget],
-            ['Corners',stats.stats?.corners],
-            ['Cards',stats.stats?.cards],
-            ['Subs',stats.stats?.substitutions]
-          ];
-          overlay.innerHTML='<div class="match-stats-head"><div><strong>World Cup live stats</strong><span>'+esc(stats.updatedAt?new Date(stats.updatedAt).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}):'')+'</span></div><button class="match-stats-close" type="button" aria-label="Close stats">×</button></div><div class="match-score"><div class="match-team"><div class="match-crest">'+crest(stats.teams?.home,home)+'</div><span>'+esc(home)+'</span></div><div class="match-scoreline"><strong>'+esc((score.home||'—')+' - '+(score.away||'—'))+'</strong><span>'+esc(stats.clock||'—')+'</span></div><div class="match-team"><div class="match-crest">'+crest(stats.teams?.away,away)+'</div><span>'+esc(away)+'</span></div></div><div class="match-stats-grid">'+statRows.map(([label,pair])=>'<div class="match-stat"><span>'+esc(pair?.home||'—')+'</span><small>'+esc(label)+'</small><span>'+esc(pair?.away||'—')+'</span></div>').join('')+'</div>'+(!stats.available?'<p class="match-stats-note">'+esc(stats.message||'Stats unavailable')+'</p>':'');
-          overlay.querySelector('.match-stats-close').addEventListener('click',()=>toggleMatchStats(false));
-        };
-        const clearStatsPolling=()=>{
-          if(state.statsTimer)clearInterval(state.statsTimer);
-          state.statsTimer=null;
-          if(state.statsAbort)state.statsAbort.abort();
-          state.statsAbort=null;
-        };
-        const fetchMatchStats=async()=>{
-          if(!state.event||!isWorldCupFootballEvent(state.event))return;
-          if(state.statsAbort)state.statsAbort.abort();
-          state.statsAbort=new AbortController();
-          const params=new URLSearchParams({
-            name:state.event.name||'',
-            releaseInfo:state.event.releaseInfo||'',
-            genres:(state.event.genres||[]).join(','),
-            tournament:state.event.tournament||'',
-            competition:state.event.competition||'',
-            description:state.event.description||''
+(() => {
+  var __getOwnPropNames = Object.getOwnPropertyNames;
+  var __commonJS = (cb, mod) => function __require() {
+    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+  };
+  var __async = (__this, __arguments, generator) => {
+    return new Promise((resolve, reject) => {
+      var fulfilled = (value) => {
+        try {
+          step(generator.next(value));
+        } catch (e) {
+          reject(e);
+        }
+      };
+      var rejected = (value) => {
+        try {
+          step(generator.throw(value));
+        } catch (e) {
+          reject(e);
+        }
+      };
+      var step = (x) => x.done ? resolve(x.value) : Promise.resolve(x.value).then(fulfilled, rejected);
+      step((generator = generator.apply(__this, __arguments)).next());
+    });
+  };
+  var require_stdin = __commonJS({
+    "<stdin>"(exports) {
+      (function() {
+        if (window.fetch) return;
+        window.fetch = function(url, options) {
+          options = options || {};
+          return new Promise(function(resolve, reject) {
+            var xhr = new XMLHttpRequest();
+            xhr.open(options.method || "GET", url, true);
+            var headers = options.headers || {};
+            Object.keys(headers).forEach(function(key) {
+              xhr.setRequestHeader(key, headers[key]);
+            });
+            xhr.onload = function() {
+              var body = xhr.responseText || "";
+              resolve({ ok: xhr.status >= 200 && xhr.status < 300, status: xhr.status, text: function() {
+                return Promise.resolve(body);
+              }, json: function() {
+                return Promise.resolve(JSON.parse(body));
+              } });
+            };
+            xhr.onerror = function() {
+              reject(new Error("Network request failed"));
+            };
+            xhr.ontimeout = function() {
+              reject(new Error("Network request timed out"));
+            };
+            xhr.timeout = options.timeout || 2e4;
+            xhr.send(options.body || null);
           });
-          try{
-            const res=await fetch(withAccessKey('/watch-together/api/football-stats/'+encodeURIComponent(state.event.id)+'?'+params.toString()),{headers:{accept:'application/json'},signal:state.statsAbort.signal});
-            const data=await res.json();
-            renderStatsPanel(data);
-          }catch(error){
-            if(error?.name!=='AbortError')renderStatsPanel({worldCup:true,available:false,message:'Stats unavailable',clock:'—',score:{home:'—',away:'—'},teams:{home:{name:'Home'},away:{name:'Away'}},stats:{possession:{home:'—',away:'—'},shotsOnTarget:{home:'—',away:'—'},corners:{home:'—',away:'—'},cards:{home:'—',away:'—'},substitutions:{home:'—',away:'—'}}});
-          }
         };
-        const toggleMatchStats=(open=!state.statsOpen)=>{
-          state.statsOpen=Boolean(open);
-          el('matchStatsOverlay').hidden=!state.statsOpen;
-          if(!state.statsOpen){clearStatsPolling();return}
+      })();
+      const state = { catalogs: [], events: [], event: null, streams: [], stream: null, multiView: false, multiItems: [], sportFilter: "all", statsOpen: false, statsTimer: null, statsAbort: null };
+      const qs = new URLSearchParams(location.search);
+      const el = (id) => document.getElementById(id);
+      const esc = (value) => String(value != null ? value : "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch]);
+      const timeLabel = (value) => {
+        const ms = Date.now() - new Date(value).getTime();
+        if (!Number.isFinite(ms)) return "";
+        if (ms < 6e4) return "now";
+        if (ms < 36e5) return Math.max(1, Math.round(ms / 6e4)) + "m";
+        if (ms < 864e5) return Math.round(ms / 36e5) + "h";
+        return new Date(value).toLocaleDateString();
+      };
+      const openPanel = (panelId) => {
+        document.querySelectorAll(".panel").forEach((panel) => panel.classList.toggle("active", panel.id === panelId));
+        document.querySelectorAll(".tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.panel === panelId));
+      };
+      const WEBOS_BASE = "https://nebula.work.gd";
+      const withAccessKey = (path) => {
+        const url = new URL(path, WEBOS_BASE);
+        const key = qs.get("key");
+        if (key) url.searchParams.set("key", key);
+        return url.href;
+      };
+      const api = (path) => __async(null, null, function* () {
+        const res = yield fetch(withAccessKey(path), { headers: { accept: "application/json" } });
+        if (!res.ok) throw new Error(yield res.text());
+        return res.json();
+      });
+      const postApi = (path, body) => __async(null, null, function* () {
+        const res = yield fetch(withAccessKey(path), { method: "POST", headers: { accept: "application/json", "content-type": "application/json" }, body: JSON.stringify(body) });
+        const data = yield res.json().catch(() => ({ error: "Request failed" }));
+        if (!res.ok) throw new Error(data.error || "Request failed");
+        return data;
+      });
+      const withPlayerParams = (value) => {
+        try {
+          const url = new URL(value);
+          [["autoplay", "1"], ["muted", "0"], ["mute", "0"], ["volume", "1"]].forEach(([key, paramValue]) => url.searchParams.set(key, paramValue));
+          return url.toString();
+        } catch (e) {
+          return value;
+        }
+      };
+      const isWorldCupFootballEvent = (event) => {
+        const text = [event == null ? void 0 : event.name, event == null ? void 0 : event.releaseInfo, event == null ? void 0 : event.description, event == null ? void 0 : event.tournament, event == null ? void 0 : event.competition, ...Array.isArray(event == null ? void 0 : event.genres) ? event.genres : []].join(" ").toLowerCase();
+        return /\bworld\s+cup\b/.test(text) && /\b(?:fifa|football|soccer)\b/.test(text);
+      };
+      const sportText = (event) => [event == null ? void 0 : event.name, event == null ? void 0 : event.releaseInfo, event == null ? void 0 : event.description, event == null ? void 0 : event.tournament, event == null ? void 0 : event.competition, ...Array.isArray(event == null ? void 0 : event.genres) ? event.genres : []].join(" ").toLowerCase();
+      const matchesSportFilter = (event) => {
+        const filter = state.sportFilter || "all";
+        if (filter === "all") return true;
+        const text = sportText(event);
+        if (filter === "football") return /\b(football|soccer|fifa|uefa|premier|laliga|bundesliga|serie\s*a|ligue\s*1|afl|nfl|ncaa|eagles|swans|kangaroos|vikings|rams|defenders|kings)\b/.test(text);
+        if (filter === "rugby") return /\b(rugby|nrl|super\s*rugby|warriors|sharks|raiders|eels|broncos|rabbitohs|storm|panthers)\b/.test(text);
+        if (filter === "motorsport") return /\b(motor|motorsport|formula|f1|f2|f3|motogp|nascar|indycar|rally|circuit|prix|sbk)\b/.test(text);
+        if (filter === "combat") return /\b(boxing|mma|ufc|wwe|wrestling|fight|bellator|one\s*championship)\b/.test(text);
+        if (filter === "more") return !["football", "rugby", "motorsport", "combat"].some((name) => {
+          const previous = state.sportFilter;
+          state.sportFilter = name;
+          const matched = matchesSportFilter(event);
+          state.sportFilter = previous;
+          return matched;
+        });
+        return true;
+      };
+      const initials = (value) => String(value || "").split(/\s+/).filter(Boolean).slice(0, 2).map((part) => {
+        var _a2;
+        return ((_a2 = part[0]) == null ? void 0 : _a2.toUpperCase()) || "";
+      }).join("") || "\u2014";
+      const renderStatsPanel = (stats) => {
+        var _a2, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
+        const overlay = el("matchStatsOverlay");
+        if (!(stats == null ? void 0 : stats.worldCup)) {
+          overlay.hidden = true;
+          return;
+        }
+        const home = ((_b = (_a2 = stats.teams) == null ? void 0 : _a2.home) == null ? void 0 : _b.name) || "Home";
+        const away = ((_d = (_c = stats.teams) == null ? void 0 : _c.away) == null ? void 0 : _d.name) || "Away";
+        const crest = (team, name) => (team == null ? void 0 : team.crest) ? '<img src="' + esc(team.crest) + '" alt="" loading="lazy">' : esc(initials(name));
+        const score = stats.score || {};
+        const statRows = [
+          ["Possession", (_e = stats.stats) == null ? void 0 : _e.possession],
+          ["Shots OT", (_f = stats.stats) == null ? void 0 : _f.shotsOnTarget],
+          ["Corners", (_g = stats.stats) == null ? void 0 : _g.corners],
+          ["Cards", (_h = stats.stats) == null ? void 0 : _h.cards],
+          ["Subs", (_i = stats.stats) == null ? void 0 : _i.substitutions]
+        ];
+        overlay.innerHTML = '<div class="match-stats-head"><div><strong>World Cup live stats</strong><span>' + esc(stats.updatedAt ? new Date(stats.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "") + '</span></div><button class="match-stats-close" type="button" aria-label="Close stats">\xD7</button></div><div class="match-score"><div class="match-team"><div class="match-crest">' + crest((_j = stats.teams) == null ? void 0 : _j.home, home) + "</div><span>" + esc(home) + '</span></div><div class="match-scoreline"><strong>' + esc((score.home || "\u2014") + " - " + (score.away || "\u2014")) + "</strong><span>" + esc(stats.clock || "\u2014") + '</span></div><div class="match-team"><div class="match-crest">' + crest((_k = stats.teams) == null ? void 0 : _k.away, away) + "</div><span>" + esc(away) + '</span></div></div><div class="match-stats-grid">' + statRows.map(([label, pair]) => '<div class="match-stat"><span>' + esc((pair == null ? void 0 : pair.home) || "\u2014") + "</span><small>" + esc(label) + "</small><span>" + esc((pair == null ? void 0 : pair.away) || "\u2014") + "</span></div>").join("") + "</div>" + (!stats.available ? '<p class="match-stats-note">' + esc(stats.message || "Stats unavailable") + "</p>" : "");
+        overlay.querySelector(".match-stats-close").addEventListener("click", () => toggleMatchStats(false));
+      };
+      const clearStatsPolling = () => {
+        if (state.statsTimer) clearInterval(state.statsTimer);
+        state.statsTimer = null;
+        if (state.statsAbort) state.statsAbort.abort();
+        state.statsAbort = null;
+      };
+      const fetchMatchStats = () => __async(null, null, function* () {
+        if (!state.event || !isWorldCupFootballEvent(state.event)) return;
+        if (state.statsAbort) state.statsAbort.abort();
+        state.statsAbort = new AbortController();
+        const params = new URLSearchParams({
+          name: state.event.name || "",
+          releaseInfo: state.event.releaseInfo || "",
+          genres: (state.event.genres || []).join(","),
+          tournament: state.event.tournament || "",
+          competition: state.event.competition || "",
+          description: state.event.description || ""
+        });
+        try {
+          const res = yield fetch(withAccessKey("/watch-together/api/football-stats/" + encodeURIComponent(state.event.id) + "?" + params.toString()), { headers: { accept: "application/json" }, signal: state.statsAbort.signal });
+          const data = yield res.json();
+          renderStatsPanel(data);
+        } catch (error) {
+          if ((error == null ? void 0 : error.name) !== "AbortError") renderStatsPanel({ worldCup: true, available: false, message: "Stats unavailable", clock: "\u2014", score: { home: "\u2014", away: "\u2014" }, teams: { home: { name: "Home" }, away: { name: "Away" } }, stats: { possession: { home: "\u2014", away: "\u2014" }, shotsOnTarget: { home: "\u2014", away: "\u2014" }, corners: { home: "\u2014", away: "\u2014" }, cards: { home: "\u2014", away: "\u2014" }, substitutions: { home: "\u2014", away: "\u2014" } } });
+        }
+      });
+      const toggleMatchStats = (open = !state.statsOpen) => {
+        state.statsOpen = Boolean(open);
+        el("matchStatsOverlay").hidden = !state.statsOpen;
+        if (!state.statsOpen) {
           clearStatsPolling();
-          fetchMatchStats();
-          state.statsTimer=setInterval(fetchMatchStats,45000);
-        };
-        const refreshStatsForEvent=()=>{
-          const eligible=isWorldCupFootballEvent(state.event);
-          el('matchStatsToggle').hidden=!eligible;
-          if(!eligible){state.statsOpen=false;el('matchStatsOverlay').hidden=true;clearStatsPolling();}
-        };
-        const mountStreamGate=(target,stream)=>{
-          target.replaceChildren();
-          const gate=document.createElement('div');
-          gate.className='player-gate';
-          gate.innerHTML='<div class="player-gate-card"><button class="play-gate-btn" type="button" aria-label="Play">▶</button></div>';
-          gate.querySelector('button').addEventListener('click',()=>{
-            const frame=document.createElement('iframe');
-            frame.allow='autoplay; fullscreen; encrypted-media; picture-in-picture';
-            frame.allowFullscreen=true;
-            frame.referrerPolicy='no-referrer-when-downgrade';
-            frame.src=withPlayerParams(stream.embedUrl);
-            target.replaceChildren(frame);
-          },{once:true});
-          target.appendChild(gate);
-        };
-        const setPlayer=(stream)=>{
-          const player=el('player');
-          if(!stream?.embedUrl){player.innerHTML='<div class="empty"><strong>No source</strong><span>Try another event.</span></div>';el('statusLine').textContent='No source available';return}
-          if(state.multiView){addMultiItem(state.event,stream);return}
-          player.classList.remove('is-multiview');
-          mountStreamGate(player,stream);
-          el('nowTitle').textContent=state.event?.name||'Live event';
-	          el('nowMeta').textContent=[stream.source?.toUpperCase(),stream.hd?'HD':'',stream.language||'',stream.viewers?stream.viewers+' watching':''].filter(Boolean).join(' / ');
-	          el('statusLine').textContent=[stream.source?.toUpperCase(),stream.hd?'HD':'Live'].filter(Boolean).join(' / ');
-          qs.set('event',state.event.id);qs.set('source',stream.id);history.replaceState(null,'','/watch-together?'+qs.toString());
-        };
-        const renderMultiView=()=>{
-          const player=el('player');
-          el('multiViewToggle').classList.toggle('active-mode',state.multiView);
-          if(!state.multiView){player.classList.remove('is-multiview');if(state.stream)setPlayer(state.stream);return}
-          player.classList.add('is-multiview');
-          player.replaceChildren();
-          if(!state.multiItems.length){player.innerHTML='<div class="empty"><strong>Multiview</strong><span>Select events or sources to add up to 4 streams.</span></div>';return}
-          state.multiItems.slice(0,4).forEach((item)=>{
-            const tile=document.createElement('div');
-            tile.className='multi-tile';
-            tile.dataset.key=item.key;
-            const sourceLabel=[item.stream?.source?.toUpperCase(),item.stream?.streamNo?'#'+item.stream.streamNo:'',item.stream?.hd?'HD':''].filter(Boolean).join(' ');
-            tile.innerHTML='<div class="multi-title"><span>'+esc(item.event?.name||'Live event')+'</span><strong class="multi-source">'+esc(sourceLabel||'LIVE')+'</strong><button class="multi-close" type="button" aria-label="Remove">×</button></div><div class="multi-body"></div>';
-            tile.querySelector('.multi-close').addEventListener('click',()=>{state.multiItems=state.multiItems.filter((entry)=>entry.key!==item.key);renderMultiView()});
-            player.appendChild(tile);
-            mountStreamGate(tile.querySelector('.multi-body'),item.stream);
+          return;
+        }
+        clearStatsPolling();
+        fetchMatchStats();
+        state.statsTimer = setInterval(fetchMatchStats, 45e3);
+      };
+      const refreshStatsForEvent = () => {
+        const eligible = isWorldCupFootballEvent(state.event);
+        el("matchStatsToggle").hidden = !eligible;
+        if (!eligible) {
+          state.statsOpen = false;
+          el("matchStatsOverlay").hidden = true;
+          clearStatsPolling();
+        }
+      };
+      const mountStreamGate = (target, stream) => {
+        target.replaceChildren();
+        const gate = document.createElement("div");
+        gate.className = "player-gate";
+        gate.innerHTML = '<div class="player-gate-card"><button class="play-gate-btn" type="button" aria-label="Play">\u25B6</button></div>';
+        gate.querySelector("button").addEventListener("click", () => {
+          const frame = document.createElement("iframe");
+          frame.allow = "autoplay; fullscreen; encrypted-media; picture-in-picture";
+          frame.allowFullscreen = true;
+          frame.referrerPolicy = "no-referrer-when-downgrade";
+          frame.src = withPlayerParams(stream.embedUrl);
+          target.replaceChildren(frame);
+        }, { once: true });
+        target.appendChild(gate);
+      };
+      const setPlayer = (stream) => {
+        var _a2, _b, _c;
+        const player = el("player");
+        if (!(stream == null ? void 0 : stream.embedUrl)) {
+          player.innerHTML = '<div class="empty"><strong>No source</strong><span>Try another event.</span></div>';
+          el("statusLine").textContent = "No source available";
+          return;
+        }
+        if (state.multiView) {
+          addMultiItem(state.event, stream);
+          return;
+        }
+        player.classList.remove("is-multiview");
+        mountStreamGate(player, stream);
+        el("nowTitle").textContent = ((_a2 = state.event) == null ? void 0 : _a2.name) || "Live event";
+        el("nowMeta").textContent = [(_b = stream.source) == null ? void 0 : _b.toUpperCase(), stream.hd ? "HD" : "", stream.language || "", stream.viewers ? stream.viewers + " watching" : ""].filter(Boolean).join(" / ");
+        el("statusLine").textContent = [(_c = stream.source) == null ? void 0 : _c.toUpperCase(), stream.hd ? "HD" : "Live"].filter(Boolean).join(" / ");
+        qs.set("event", state.event.id);
+        qs.set("source", stream.id);
+        history.replaceState(null, "", "/watch-together?" + qs.toString());
+      };
+      const renderMultiView = () => {
+        const player = el("player");
+        el("multiViewToggle").classList.toggle("active-mode", state.multiView);
+        if (!state.multiView) {
+          player.classList.remove("is-multiview");
+          if (state.stream) setPlayer(state.stream);
+          return;
+        }
+        player.classList.add("is-multiview");
+        player.replaceChildren();
+        if (!state.multiItems.length) {
+          player.innerHTML = '<div class="empty"><strong>Multiview</strong><span>Select events or sources to add up to 4 streams.</span></div>';
+          return;
+        }
+        state.multiItems.slice(0, 4).forEach((item) => {
+          var _a2, _b, _c, _d, _e;
+          const tile = document.createElement("div");
+          tile.className = "multi-tile";
+          tile.dataset.key = item.key;
+          const sourceLabel = [(_b = (_a2 = item.stream) == null ? void 0 : _a2.source) == null ? void 0 : _b.toUpperCase(), ((_c = item.stream) == null ? void 0 : _c.streamNo) ? "#" + item.stream.streamNo : "", ((_d = item.stream) == null ? void 0 : _d.hd) ? "HD" : ""].filter(Boolean).join(" ");
+          tile.innerHTML = '<div class="multi-title"><span>' + esc(((_e = item.event) == null ? void 0 : _e.name) || "Live event") + '</span><strong class="multi-source">' + esc(sourceLabel || "LIVE") + '</strong><button class="multi-close" type="button" aria-label="Remove">\xD7</button></div><div class="multi-body"></div>';
+          tile.querySelector(".multi-close").addEventListener("click", () => {
+            state.multiItems = state.multiItems.filter((entry) => entry.key !== item.key);
+            renderMultiView();
           });
-        };
-        const addMultiItem=(event,stream)=>{
-          if(!event?.id||!stream?.embedUrl)return;
-          const key=event.id;
-          state.multiItems=state.multiItems.filter((item)=>item.key!==key);
-          state.multiItems.unshift({key,event:{id:event.id,name:event.name},stream});
-          state.multiItems=state.multiItems.slice(0,4);
-          renderMultiView();
-          el('nowTitle').textContent='Multiview';
-          el('nowMeta').textContent=state.multiItems.length+' streams loaded';
-          el('statusLine').textContent='Multiview / '+state.multiItems.length+' streams';
-        };
-	        const renderEvents=()=>{
-	          const box=el('events');
-	          const visibleEvents=state.events.filter(matchesSportFilter);
-	          el('eventCount').textContent=visibleEvents.length ? visibleEvents.length+' live' : 'Empty';
-	          el('heroCount').textContent=state.events.length ? state.events.length+' events' : 'No events';
-	          if(!state.events.length){box.innerHTML='<div class="empty">No events in this catalog.</div>';return}
-	          if(!visibleEvents.length){box.innerHTML='<div class="empty"><strong>No '+esc(state.sportFilter)+' events here.</strong><span>Try All, Today, or Popular.</span></div>';return}
-	          box.innerHTML=visibleEvents.map((event)=>'<button class="event '+(state.event?.id===event.id?'active':'')+'" data-id="'+esc(event.id)+'"><strong>'+esc(event.name)+'</strong><span>'+esc([event.releaseInfo,event.genres?.filter((g)=>g!=='Sports').join(', ')].filter(Boolean).join(' / '))+'</span></button>').join('');
-	          box.querySelectorAll('.event').forEach((btn)=>btn.addEventListener('click',()=>loadStreams(btn.dataset.id)));
-	        };
-        const renderStreams=()=>{
-          const box=el('streams');
-          if(!state.streams.length){box.innerHTML='<h3>Sources</h3><div class="empty">No sources for this event.</div>';return}
-	          box.innerHTML='<h3>Sources</h3>'+state.streams.map((stream)=>'<button class="stream-btn '+(state.stream?.id===stream.id?'active':'')+'" data-id="'+esc(stream.id)+'"><span class="quality">'+esc(stream.source.toUpperCase()+' #'+stream.streamNo+' '+(stream.hd?'HD':''))+'</span><span class="viewer">'+esc(stream.viewers?stream.viewers+' watching':(stream.language||'Live'))+'</span></button>').join('');
-          box.querySelectorAll('.stream-btn').forEach((btn)=>btn.addEventListener('click',()=>{state.stream=state.streams.find((s)=>s.id===btn.dataset.id);renderStreams();setPlayer(state.stream)}));
-        };
-        const setCatalogValue=(id)=>{
-          const catalog=state.catalogs.find((entry)=>entry.id===id)||state.catalogs[0];
-          if(!catalog)return;
-          el('catalog').value=catalog.id;
-          el('catalogLabel').textContent=catalog.name.replace(/^Sports Events:s*/,'');
-          el('catalogMenu').querySelectorAll('.catalog-option').forEach((option)=>option.classList.toggle('active',option.dataset.id===catalog.id));
-        };
-        const closeCatalogMenu=()=>{el('catalogPicker').classList.remove('open');el('catalogButton').setAttribute('aria-expanded','false')};
-        const openCatalogMenu=()=>{el('catalogPicker').classList.add('open');el('catalogButton').setAttribute('aria-expanded','true')};
-        const renderCatalogMenu=()=>{
-          el('catalogMenu').innerHTML=state.catalogs.map((catalog)=>'<button class="catalog-option" type="button" role="option" data-id="'+esc(catalog.id)+'">'+esc(catalog.name.replace(/^Sports Events:\s*/,''))+'</button>').join('');
-          el('catalogMenu').querySelectorAll('.catalog-option').forEach((option)=>option.addEventListener('click',()=>{setCatalogValue(option.dataset.id);closeCatalogMenu();el('catalog').dispatchEvent(new Event('change'))}));
-        };
-        const loadCatalogs=async()=>{
-          const data=await api('/watch-together/api/catalogs');
-          state.catalogs=data.catalogs||[];
-          renderCatalogMenu();
-          const requested=qs.get('catalog');
-          setCatalogValue(requested && state.catalogs.some((c)=>c.id===requested)?requested:(state.catalogs[0]?.id||'streamed-events-live'));
-        };
-        const loadEvents=async()=>{
-          el('events').innerHTML='<div class="empty">Loading events...</div>';
-          el('eventCount').textContent='Loading';
-          el('heroCount').textContent='Loading';
-          const catalog=el('catalog').value||'streamed-events-live';
-          qs.set('catalog',catalog);
-          const search=el('search').value.trim();
-          const data=await api('/watch-together/api/events?catalog='+encodeURIComponent(catalog)+'&search='+encodeURIComponent(search));
-          state.events=data.events||[]; renderEvents();
-          const requested=qs.get('event');
-          if(requested && state.events.some((event)=>event.id===requested)) await loadStreams(requested, qs.get('source'));
-        };
-        const loadStreams=async(id, preferredStreamId='')=>{
-          state.event=state.events.find((event)=>event.id===id)||{id,name:'Live event'};
-          state.stream=null; state.streams=[]; renderEvents(); renderStreams();
-          refreshStatsForEvent();
-          el('statusLine').textContent='Loading sources';
-          el('streams').innerHTML='<h3>Sources</h3><div class="empty">Loading sources...</div>';
-          const data=await api('/watch-together/api/streams/'+encodeURIComponent(id));
-          state.streams=data.streams||[];
-          state.stream=state.streams.find((stream)=>stream.id===preferredStreamId)||state.streams[0]||null;
-          renderStreams(); setPlayer(state.stream);
-          refreshStatsForEvent();
-          loadChat().catch(()=>{el('chatMessages').innerHTML='<div class="empty">Chat unavailable.</div>'});
-        };
-        el('catalogButton').addEventListener('click',()=>el('catalogPicker').classList.contains('open')?closeCatalogMenu():openCatalogMenu());
-        document.addEventListener('click',(event)=>{if(!el('catalogPicker').contains(event.target))closeCatalogMenu()});
-        el('catalogButton').addEventListener('keydown',(event)=>{if(event.key==='Escape')closeCatalogMenu();if(event.key==='ArrowDown'||event.key==='Enter'||event.key===' '){event.preventDefault();openCatalogMenu();el('catalogMenu').querySelector('.catalog-option')?.focus()}});
-        el('catalogMenu').addEventListener('keydown',(event)=>{const options=[...el('catalogMenu').querySelectorAll('.catalog-option')];const index=options.indexOf(document.activeElement);if(event.key==='Escape'){closeCatalogMenu();el('catalogButton').focus()}if(event.key==='ArrowDown'){event.preventDefault();(options[index+1]||options[0])?.focus()}if(event.key==='ArrowUp'){event.preventDefault();(options[index-1]||options.at(-1))?.focus()}});
-        el('catalog').addEventListener('change',()=>{qs.delete('event');qs.delete('source');history.replaceState(null,'','/watch-together?'+qs.toString());loadEvents().catch(showError)});
-        el('searchBtn').addEventListener('click',()=>loadEvents().catch(showError));
-        el('search').addEventListener('keydown',(event)=>{if(event.key==='Enter')loadEvents().catch(showError)});
-	        el('reloadFrame').addEventListener('click',()=>setPlayer(state.stream));
-        el('matchStatsToggle').addEventListener('click',()=>toggleMatchStats(!state.statsOpen));
-        el('multiViewToggle').addEventListener('click',()=>{state.multiView=!state.multiView;if(state.multiView&&state.event&&state.stream)addMultiItem(state.event,state.stream);else renderMultiView()});
-	        el('fullscreenPlayer').addEventListener('click',()=>{const target=el('player');const request=target.requestFullscreen||target.webkitRequestFullscreen||target.msRequestFullscreen;if(request)Promise.resolve(request.call(target)).catch(()=>{})});
-		        document.querySelectorAll('.tab').forEach((tab)=>tab.addEventListener('click',()=>openPanel(tab.dataset.panel)));
-	        const setRailActive=(action)=>document.querySelectorAll('[data-rail]').forEach((item)=>item.classList.toggle('active',item.dataset.rail===action));
-	        const switchCatalog=(id,action)=>{
-	          if(state.catalogs.some((catalog)=>catalog.id===id)){
-	            setCatalogValue(id);
-	            qs.delete('event');qs.delete('source');
-	            history.replaceState(null,'','/watch-together?'+qs.toString());
-	            loadEvents().catch(showError);
-	          }
-	          setRailActive(action);
-	        };
-	        document.querySelectorAll('[data-rail]').forEach((item)=>item.addEventListener('click',()=>{
-	          const action=item.dataset.rail;
-	          if(action==='live'){setRailActive(action);el('player').scrollIntoView({behavior:'smooth',block:'center'});return}
-	          if(action==='events'){setRailActive(action);openPanel('eventsPanel');document.querySelector('.side')?.scrollIntoView({behavior:'smooth',block:'nearest'});return}
-	          if(action==='today'){openPanel('eventsPanel');switchCatalog('streamed-events-today',action);return}
-	          if(action==='popular'){openPanel('eventsPanel');switchCatalog('streamed-events-popular',action);return}
-	          if(action==='multi'){setRailActive(action);el('multiViewToggle').click();el('player').scrollIntoView({behavior:'smooth',block:'center'});return}
-	        }));
-	        document.querySelectorAll('[data-sport-filter]').forEach((button)=>button.addEventListener('click',()=>{
-	          state.sportFilter=button.dataset.sportFilter||'all';
-	          document.querySelectorAll('[data-sport-filter]').forEach((entry)=>entry.classList.toggle('active',entry===button));
-	          if(state.sportFilter!=='all'&&el('catalog').value!=='streamed-events-today'&&state.catalogs.some((catalog)=>catalog.id==='streamed-events-today')){
-	            setCatalogValue('streamed-events-today');
-	            qs.set('catalog','streamed-events-today');qs.delete('event');qs.delete('source');
-	            history.replaceState(null,'','/watch-together?'+qs.toString());
-	            loadEvents().catch(showError);
-	          }else{
-	            renderEvents();
-	          }
-	          openPanel('eventsPanel');
-	        }));
-		        const showError=(error)=>{el('events').innerHTML='<div class="empty"><strong>Load failed</strong><span>'+esc(String(error.message||error).slice(0,220))+'</span></div>'};
-        const renderChat=(messages=[])=>{
-          el('chatCount').textContent=String(messages.length);
-          if(!messages.length){el('chatMessages').innerHTML='<div class="empty">No messages yet.</div>';return}
-	          el('chatMessages').innerHTML=messages.map((message)=>'<article class="chat-msg"><div class="chat-meta"><strong class="chat-name">'+esc(message.name||'Guest')+'</strong><time class="chat-time">'+esc(timeLabel(message.createdAt))+'</time></div><p class="chat-text">'+esc(message.text||'')+'</p></article>').join('');
-          el('chatMessages').scrollTop=el('chatMessages').scrollHeight;
-        };
-        const loadChat=async()=>{
-          if(!state.event?.id){renderChat([]);el('chatMessages').innerHTML='<div class="empty">Select an event to open its chat.</div>';return}
-          const data=await api('/watch-together/api/chat?eventId='+encodeURIComponent(state.event.id));
-          renderChat(data.messages||[]);
-        };
-        const lockChatName=()=>{
-          const savedName=(localStorage.getItem('nebula-chat-name')||'').trim();
-          if(savedName){
-            el('chatName').value=savedName;
-            el('chatName').disabled=true;
-            el('chatName').title='Username locked for this browser';
-            el('chatText').disabled=false;
-            el('chatStatus').textContent='Chatting as '+savedName+'.';
-          }else{
-            el('chatName').disabled=false;
-            el('chatText').disabled=true;
-            el('chatStatus').textContent='Set a username first. It locks for this browser.';
-          }
-        };
-        el('chatName').value=localStorage.getItem('nebula-chat-name')||'';
-        lockChatName();
-        el('chatName').addEventListener('input',()=>{el('chatText').disabled=!el('chatName').value.trim();el('chatStatus').textContent=el('chatText').disabled?'Set a username first. It locks for this browser.':'Username will lock after first message.'});
-        el('chatForm').addEventListener('submit',async(event)=>{
-          event.preventDefault();
-          const name=el('chatName').value.trim();
-          const text=el('chatText').value.trim();
-          if(!name){el('chatStatus').textContent='Set a username before chatting.';el('chatName').focus();return}
-          if(!text)return;
-          el('chatStatus').textContent='Sending...';
-          try{
-            localStorage.setItem('nebula-chat-name',name);
-            if(!state.event?.id){el('chatStatus').textContent='Select an event before chatting.';return}
-            const data=await postApi('/watch-together/api/chat',{eventId:state.event.id,name,text});
-            el('chatText').value='';
-            lockChatName();
-            renderChat(data.messages||[]);
-            el('chatStatus').textContent='Sent';
-            setTimeout(()=>{el('chatStatus').textContent='Chatting as '+(localStorage.getItem('nebula-chat-name')||name)+'.'},1200);
-          }catch(error){
-            el('chatStatus').textContent=String(error.message||error).slice(0,120);
-          }
+          player.appendChild(tile);
+          mountStreamGate(tile.querySelector(".multi-body"), item.stream);
         });
-        const getLiveSessionId=()=>{
-          try{
-            const existing=localStorage.getItem('nebula-watch-live-session');
-            if(existing)return existing;
-            const created=(crypto.randomUUID?.()||String(Date.now())+'-'+Math.random().toString(16).slice(2)).replace(/[^a-zA-Z0-9_-]/g,'').slice(0,80);
-            localStorage.setItem('nebula-watch-live-session',created);
-            return created;
-          }catch{
-            if(!window.__nebulaLiveSessionId)window.__nebulaLiveSessionId=(String(Date.now())+'-'+Math.random().toString(16).slice(2)).replace(/[^a-zA-Z0-9_-]/g,'').slice(0,80);
-            return window.__nebulaLiveSessionId;
-          }
-        };
-        const updateLiveCount=(count)=>{
-          const parsed=Number.parseInt(count,10);
-          if(!Number.isFinite(parsed)||parsed<1)return;
-          el('liveCountText').textContent=parsed+' live';
-          el('liveCountBadge').classList.add('is-ready');
-        };
-        const sendLiveHeartbeat=async()=>{
-          try{
-            const data=await api('/watch-together/api/live-count?sessionId='+encodeURIComponent(getLiveSessionId()));
-            updateLiveCount(data.count);
-          }catch{}
-        };
-        let deferredInstallPrompt=null;
-        const installButton=el('installApp');
-        const standalone=window.matchMedia?.('(display-mode: standalone)').matches||window.navigator.standalone;
-        const showIosInstallHint=()=>/iphone|ipad|ipod/i.test(navigator.userAgent)&&!standalone;
-        if(showIosInstallHint()){
-          installButton.classList.add('is-ready');
-          installButton.addEventListener('click',()=>alert('Tap Share, then Add to Home Screen.'));
+      };
+      const addMultiItem = (event, stream) => {
+        if (!(event == null ? void 0 : event.id) || !(stream == null ? void 0 : stream.embedUrl)) return;
+        const key = event.id;
+        state.multiItems = state.multiItems.filter((item) => item.key !== key);
+        state.multiItems.unshift({ key, event: { id: event.id, name: event.name }, stream });
+        state.multiItems = state.multiItems.slice(0, 4);
+        renderMultiView();
+        el("nowTitle").textContent = "Multiview";
+        el("nowMeta").textContent = state.multiItems.length + " streams loaded";
+        el("statusLine").textContent = "Multiview / " + state.multiItems.length + " streams";
+      };
+      const renderEvents = () => {
+        const box = el("events");
+        const visibleEvents = state.events.filter(matchesSportFilter);
+        el("eventCount").textContent = visibleEvents.length ? visibleEvents.length + " live" : "Empty";
+        el("heroCount").textContent = state.events.length ? state.events.length + " events" : "No events";
+        if (!state.events.length) {
+          box.innerHTML = '<div class="empty">No events in this catalog.</div>';
+          return;
         }
-        window.addEventListener('beforeinstallprompt',(event)=>{
-          event.preventDefault();
-          deferredInstallPrompt=event;
-          installButton.classList.add('is-ready');
-        });
-        installButton.addEventListener('click',async()=>{
-          if(!deferredInstallPrompt)return;
-          deferredInstallPrompt.prompt();
-          await deferredInstallPrompt.userChoice.catch(()=>null);
-          deferredInstallPrompt=null;
-          installButton.classList.remove('is-ready');
-        });
-        window.addEventListener('appinstalled',()=>installButton.classList.remove('is-ready'));
-        if(false && 'serviceWorker' in navigator){
-          window.addEventListener('load',()=>navigator.serviceWorker.register('/watch-together/sw.js',{scope:'/watch-together'}).catch(()=>{}));
+        if (!visibleEvents.length) {
+          box.innerHTML = '<div class="empty"><strong>No ' + esc(state.sportFilter) + " events here.</strong><span>Try All, Today, or Popular.</span></div>";
+          return;
         }
-        sendLiveHeartbeat();
-        setInterval(sendLiveHeartbeat,25000);
-        loadCatalogs().then(loadEvents).catch(showError);
-	        renderChat([]);
-	        el('chatMessages').innerHTML='<div class="empty">Select an event to open its chat.</div>';
-	        setInterval(()=>loadChat().catch(()=>{}),8000);
-	      </script>
+        box.innerHTML = visibleEvents.map((event) => {
+          var _a2, _b;
+          return '<button class="event ' + (((_a2 = state.event) == null ? void 0 : _a2.id) === event.id ? "active" : "") + '" data-id="' + esc(event.id) + '"><strong>' + esc(event.name) + "</strong><span>" + esc([event.releaseInfo, (_b = event.genres) == null ? void 0 : _b.filter((g) => g !== "Sports").join(", ")].filter(Boolean).join(" / ")) + "</span></button>";
+        }).join("");
+        box.querySelectorAll(".event").forEach((btn) => btn.addEventListener("click", () => loadStreams(btn.dataset.id)));
+      };
+      const renderStreams = () => {
+        const box = el("streams");
+        if (!state.streams.length) {
+          box.innerHTML = '<h3>Sources</h3><div class="empty">No sources for this event.</div>';
+          return;
+        }
+        box.innerHTML = "<h3>Sources</h3>" + state.streams.map((stream) => {
+          var _a2;
+          return '<button class="stream-btn ' + (((_a2 = state.stream) == null ? void 0 : _a2.id) === stream.id ? "active" : "") + '" data-id="' + esc(stream.id) + '"><span class="quality">' + esc(stream.source.toUpperCase() + " #" + stream.streamNo + " " + (stream.hd ? "HD" : "")) + '</span><span class="viewer">' + esc(stream.viewers ? stream.viewers + " watching" : stream.language || "Live") + "</span></button>";
+        }).join("");
+        box.querySelectorAll(".stream-btn").forEach((btn) => btn.addEventListener("click", () => {
+          state.stream = state.streams.find((s) => s.id === btn.dataset.id);
+          renderStreams();
+          setPlayer(state.stream);
+        }));
+      };
+      const setCatalogValue = (id) => {
+        const catalog = state.catalogs.find((entry) => entry.id === id) || state.catalogs[0];
+        if (!catalog) return;
+        el("catalog").value = catalog.id;
+        el("catalogLabel").textContent = catalog.name.replace(/^Sports Events:s*/, "");
+        el("catalogMenu").querySelectorAll(".catalog-option").forEach((option) => option.classList.toggle("active", option.dataset.id === catalog.id));
+      };
+      const closeCatalogMenu = () => {
+        el("catalogPicker").classList.remove("open");
+        el("catalogButton").setAttribute("aria-expanded", "false");
+      };
+      const openCatalogMenu = () => {
+        el("catalogPicker").classList.add("open");
+        el("catalogButton").setAttribute("aria-expanded", "true");
+      };
+      const renderCatalogMenu = () => {
+        el("catalogMenu").innerHTML = state.catalogs.map((catalog) => '<button class="catalog-option" type="button" role="option" data-id="' + esc(catalog.id) + '">' + esc(catalog.name.replace(/^Sports Events:\s*/, "")) + "</button>").join("");
+        el("catalogMenu").querySelectorAll(".catalog-option").forEach((option) => option.addEventListener("click", () => {
+          setCatalogValue(option.dataset.id);
+          closeCatalogMenu();
+          el("catalog").dispatchEvent(new Event("change"));
+        }));
+      };
+      const loadCatalogs = () => __async(null, null, function* () {
+        var _a2;
+        const data = yield api("/watch-together/api/catalogs");
+        state.catalogs = data.catalogs || [];
+        renderCatalogMenu();
+        const requested = qs.get("catalog");
+        setCatalogValue(requested && state.catalogs.some((c) => c.id === requested) ? requested : ((_a2 = state.catalogs[0]) == null ? void 0 : _a2.id) || "streamed-events-live");
+      });
+      const loadEvents = () => __async(null, null, function* () {
+        el("events").innerHTML = '<div class="empty">Loading events...</div>';
+        el("eventCount").textContent = "Loading";
+        el("heroCount").textContent = "Loading";
+        const catalog = el("catalog").value || "streamed-events-live";
+        qs.set("catalog", catalog);
+        const search = el("search").value.trim();
+        const data = yield api("/watch-together/api/events?catalog=" + encodeURIComponent(catalog) + "&search=" + encodeURIComponent(search));
+        state.events = data.events || [];
+        renderEvents();
+        const requested = qs.get("event");
+        if (requested && state.events.some((event) => event.id === requested)) yield loadStreams(requested, qs.get("source"));
+      });
+      const loadStreams = (id, preferredStreamId = "") => __async(null, null, function* () {
+        state.event = state.events.find((event) => event.id === id) || { id, name: "Live event" };
+        state.stream = null;
+        state.streams = [];
+        renderEvents();
+        renderStreams();
+        refreshStatsForEvent();
+        el("statusLine").textContent = "Loading sources";
+        el("streams").innerHTML = '<h3>Sources</h3><div class="empty">Loading sources...</div>';
+        const data = yield api("/watch-together/api/streams/" + encodeURIComponent(id));
+        state.streams = data.streams || [];
+        state.stream = state.streams.find((stream) => stream.id === preferredStreamId) || state.streams[0] || null;
+        renderStreams();
+        setPlayer(state.stream);
+        refreshStatsForEvent();
+        loadChat().catch(() => {
+          el("chatMessages").innerHTML = '<div class="empty">Chat unavailable.</div>';
+        });
+      });
+      el("catalogButton").addEventListener("click", () => el("catalogPicker").classList.contains("open") ? closeCatalogMenu() : openCatalogMenu());
+      document.addEventListener("click", (event) => {
+        if (!el("catalogPicker").contains(event.target)) closeCatalogMenu();
+      });
+      el("catalogButton").addEventListener("keydown", (event) => {
+        var _a2;
+        if (event.key === "Escape") closeCatalogMenu();
+        if (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          openCatalogMenu();
+          (_a2 = el("catalogMenu").querySelector(".catalog-option")) == null ? void 0 : _a2.focus();
+        }
+      });
+      el("catalogMenu").addEventListener("keydown", (event) => {
+        var _a2, _b;
+        const options = [...el("catalogMenu").querySelectorAll(".catalog-option")];
+        const index = options.indexOf(document.activeElement);
+        if (event.key === "Escape") {
+          closeCatalogMenu();
+          el("catalogButton").focus();
+        }
+        if (event.key === "ArrowDown") {
+          event.preventDefault();
+          (_a2 = options[index + 1] || options[0]) == null ? void 0 : _a2.focus();
+        }
+        if (event.key === "ArrowUp") {
+          event.preventDefault();
+          (_b = options[index - 1] || options[options.length-1]) == null ? void 0 : _b.focus();
+        }
+      });
+      el("catalog").addEventListener("change", () => {
+        qs.delete("event");
+        qs.delete("source");
+        history.replaceState(null, "", "/watch-together?" + qs.toString());
+        loadEvents().catch(showError);
+      });
+      el("searchBtn").addEventListener("click", () => loadEvents().catch(showError));
+      el("search").addEventListener("keydown", (event) => {
+        if (event.key === "Enter") loadEvents().catch(showError);
+      });
+      el("reloadFrame").addEventListener("click", () => setPlayer(state.stream));
+      el("matchStatsToggle").addEventListener("click", () => toggleMatchStats(!state.statsOpen));
+      el("multiViewToggle").addEventListener("click", () => {
+        state.multiView = !state.multiView;
+        if (state.multiView && state.event && state.stream) addMultiItem(state.event, state.stream);
+        else renderMultiView();
+      });
+      el("fullscreenPlayer").addEventListener("click", () => {
+        const target = el("player");
+        const request = target.requestFullscreen || target.webkitRequestFullscreen || target.msRequestFullscreen;
+        if (request) Promise.resolve(request.call(target)).catch(() => {
+        });
+      });
+      document.querySelectorAll(".tab").forEach((tab) => tab.addEventListener("click", () => openPanel(tab.dataset.panel)));
+      const setRailActive = (action) => document.querySelectorAll("[data-rail]").forEach((item) => item.classList.toggle("active", item.dataset.rail === action));
+      const switchCatalog = (id, action) => {
+        if (state.catalogs.some((catalog) => catalog.id === id)) {
+          setCatalogValue(id);
+          qs.delete("event");
+          qs.delete("source");
+          history.replaceState(null, "", "/watch-together?" + qs.toString());
+          loadEvents().catch(showError);
+        }
+        setRailActive(action);
+      };
+      document.querySelectorAll("[data-rail]").forEach((item) => item.addEventListener("click", () => {
+        var _a2;
+        const action = item.dataset.rail;
+        if (action === "live") {
+          setRailActive(action);
+          el("player").scrollIntoView({ behavior: "smooth", block: "center" });
+          return;
+        }
+        if (action === "events") {
+          setRailActive(action);
+          openPanel("eventsPanel");
+          (_a2 = document.querySelector(".side")) == null ? void 0 : _a2.scrollIntoView({ behavior: "smooth", block: "nearest" });
+          return;
+        }
+        if (action === "today") {
+          openPanel("eventsPanel");
+          switchCatalog("streamed-events-today", action);
+          return;
+        }
+        if (action === "popular") {
+          openPanel("eventsPanel");
+          switchCatalog("streamed-events-popular", action);
+          return;
+        }
+        if (action === "multi") {
+          setRailActive(action);
+          el("multiViewToggle").click();
+          el("player").scrollIntoView({ behavior: "smooth", block: "center" });
+          return;
+        }
+      }));
+      document.querySelectorAll("[data-sport-filter]").forEach((button) => button.addEventListener("click", () => {
+        state.sportFilter = button.dataset.sportFilter || "all";
+        document.querySelectorAll("[data-sport-filter]").forEach((entry) => entry.classList.toggle("active", entry === button));
+        if (state.sportFilter !== "all" && el("catalog").value !== "streamed-events-today" && state.catalogs.some((catalog) => catalog.id === "streamed-events-today")) {
+          setCatalogValue("streamed-events-today");
+          qs.set("catalog", "streamed-events-today");
+          qs.delete("event");
+          qs.delete("source");
+          history.replaceState(null, "", "/watch-together?" + qs.toString());
+          loadEvents().catch(showError);
+        } else {
+          renderEvents();
+        }
+        openPanel("eventsPanel");
+      }));
+      const showError = (error) => {
+        el("events").innerHTML = '<div class="empty"><strong>Load failed</strong><span>' + esc(String(error.message || error).slice(0, 220)) + "</span></div>";
+      };
+      const renderChat = (messages = []) => {
+        el("chatCount").textContent = String(messages.length);
+        if (!messages.length) {
+          el("chatMessages").innerHTML = '<div class="empty">No messages yet.</div>';
+          return;
+        }
+        el("chatMessages").innerHTML = messages.map((message) => '<article class="chat-msg"><div class="chat-meta"><strong class="chat-name">' + esc(message.name || "Guest") + '</strong><time class="chat-time">' + esc(timeLabel(message.createdAt)) + '</time></div><p class="chat-text">' + esc(message.text || "") + "</p></article>").join("");
+        el("chatMessages").scrollTop = el("chatMessages").scrollHeight;
+      };
+      const loadChat = () => __async(null, null, function* () {
+        var _a2;
+        if (!((_a2 = state.event) == null ? void 0 : _a2.id)) {
+          renderChat([]);
+          el("chatMessages").innerHTML = '<div class="empty">Select an event to open its chat.</div>';
+          return;
+        }
+        const data = yield api("/watch-together/api/chat?eventId=" + encodeURIComponent(state.event.id));
+        renderChat(data.messages || []);
+      });
+      const lockChatName = () => {
+        const savedName = (localStorage.getItem("nebula-chat-name") || "").trim();
+        if (savedName) {
+          el("chatName").value = savedName;
+          el("chatName").disabled = true;
+          el("chatName").title = "Username locked for this browser";
+          el("chatText").disabled = false;
+          el("chatStatus").textContent = "Chatting as " + savedName + ".";
+        } else {
+          el("chatName").disabled = false;
+          el("chatText").disabled = true;
+          el("chatStatus").textContent = "Set a username first. It locks for this browser.";
+        }
+      };
+      el("chatName").value = localStorage.getItem("nebula-chat-name") || "";
+      lockChatName();
+      el("chatName").addEventListener("input", () => {
+        el("chatText").disabled = !el("chatName").value.trim();
+        el("chatStatus").textContent = el("chatText").disabled ? "Set a username first. It locks for this browser." : "Username will lock after first message.";
+      });
+      el("chatForm").addEventListener("submit", (event) => __async(null, null, function* () {
+        var _a2;
+        event.preventDefault();
+        const name = el("chatName").value.trim();
+        const text = el("chatText").value.trim();
+        if (!name) {
+          el("chatStatus").textContent = "Set a username before chatting.";
+          el("chatName").focus();
+          return;
+        }
+        if (!text) return;
+        el("chatStatus").textContent = "Sending...";
+        try {
+          localStorage.setItem("nebula-chat-name", name);
+          if (!((_a2 = state.event) == null ? void 0 : _a2.id)) {
+            el("chatStatus").textContent = "Select an event before chatting.";
+            return;
+          }
+          const data = yield postApi("/watch-together/api/chat", { eventId: state.event.id, name, text });
+          el("chatText").value = "";
+          lockChatName();
+          renderChat(data.messages || []);
+          el("chatStatus").textContent = "Sent";
+          setTimeout(() => {
+            el("chatStatus").textContent = "Chatting as " + (localStorage.getItem("nebula-chat-name") || name) + ".";
+          }, 1200);
+        } catch (error) {
+          el("chatStatus").textContent = String(error.message || error).slice(0, 120);
+        }
+      }));
+      const getLiveSessionId = () => {
+        var _a2;
+        try {
+          const existing = localStorage.getItem("nebula-watch-live-session");
+          if (existing) return existing;
+          const created = (((_a2 = crypto.randomUUID) == null ? void 0 : _a2.call(crypto)) || String(Date.now()) + "-" + Math.random().toString(16).slice(2)).replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 80);
+          localStorage.setItem("nebula-watch-live-session", created);
+          return created;
+        } catch (e) {
+          if (!window.__nebulaLiveSessionId) window.__nebulaLiveSessionId = (String(Date.now()) + "-" + Math.random().toString(16).slice(2)).replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 80);
+          return window.__nebulaLiveSessionId;
+        }
+      };
+      const updateLiveCount = (count) => {
+        const parsed = Number.parseInt(count, 10);
+        if (!Number.isFinite(parsed) || parsed < 1) return;
+        el("liveCountText").textContent = parsed + " live";
+        el("liveCountBadge").classList.add("is-ready");
+      };
+      const sendLiveHeartbeat = () => __async(null, null, function* () {
+        try {
+          const data = yield api("/watch-together/api/live-count?sessionId=" + encodeURIComponent(getLiveSessionId()));
+          updateLiveCount(data.count);
+        } catch (e) {
+        }
+      });
+      let deferredInstallPrompt = null;
+      const installButton = el("installApp");
+      var _a;
+      const standalone = ((_a = window.matchMedia) == null ? void 0 : _a.call(window, "(display-mode: standalone)").matches) || window.navigator.standalone;
+      const showIosInstallHint = () => /iphone|ipad|ipod/i.test(navigator.userAgent) && !standalone;
+      if (showIosInstallHint()) {
+        installButton.classList.add("is-ready");
+        installButton.addEventListener("click", () => alert("Tap Share, then Add to Home Screen."));
+      }
+      window.addEventListener("beforeinstallprompt", (event) => {
+        event.preventDefault();
+        deferredInstallPrompt = event;
+        installButton.classList.add("is-ready");
+      });
+      installButton.addEventListener("click", () => __async(null, null, function* () {
+        if (!deferredInstallPrompt) return;
+        deferredInstallPrompt.prompt();
+        yield deferredInstallPrompt.userChoice.catch(() => null);
+        deferredInstallPrompt = null;
+        installButton.classList.remove("is-ready");
+      }));
+      window.addEventListener("appinstalled", () => installButton.classList.remove("is-ready"));
+      if (false) {
+        window.addEventListener("load", () => navigator.serviceWorker.register("/watch-together/sw.js", { scope: "/watch-together" }).catch(() => {
+        }));
+      }
+      sendLiveHeartbeat();
+      setInterval(sendLiveHeartbeat, 25e3);
+      loadCatalogs().then(loadEvents).catch(showError);
+      renderChat([]);
+      el("chatMessages").innerHTML = '<div class="empty">Select an event to open its chat.</div>';
+      setInterval(() => loadChat().catch(() => {
+      }), 8e3);
+    }
+  });
+  require_stdin();
+})();
+
+</script>
 	      <script>
-	        (() => {
-	          if (typeof window === 'undefined' || window.__nebulaKofiWidgetLoaded) return;
-	          window.__nebulaKofiWidgetLoaded = true;
-		          const drawWidget = () => {
-		            if (!window.kofiWidgetOverlay?.draw) return;
-		            window.kofiWidgetOverlay.draw('redx115775', {
-		              type: 'floating-chat',
-		              'floating-chat.donateButton.text': 'Support Us',
-			              'floating-chat.donateButton.background-color': '#e8113b',
-			              'floating-chat.donateButton.text-color': '#ffffff'
-		            });
-		            document.getElementById('kofiFallback')?.classList.add('is-hidden');
-		          };
-	          const existing = document.querySelector('script[data-nebula-kofi-widget]');
-	          if (existing) {
-	            existing.addEventListener('load', drawWidget, { once: true });
-	            drawWidget();
-	            return;
-	          }
-	          const script = document.createElement('script');
-	          script.src = 'https://storage.ko-fi.com/cdn/scripts/overlay-widget.js';
-	          script.async = true;
-	          script.defer = true;
-	          script.dataset.nebulaKofiWidget = 'true';
-	          script.addEventListener('load', drawWidget, { once: true });
-	          document.body.appendChild(script);
-	        })();
-	      </script>
+(() => {
+  (() => {
+    if (typeof window === "undefined" || window.__nebulaKofiWidgetLoaded) return;
+    window.__nebulaKofiWidgetLoaded = true;
+    const drawWidget = () => {
+      var _a, _b;
+      if (!((_a = window.kofiWidgetOverlay) == null ? void 0 : _a.draw)) return;
+      window.kofiWidgetOverlay.draw("redx115775", {
+        type: "floating-chat",
+        "floating-chat.donateButton.text": "Support Us",
+        "floating-chat.donateButton.background-color": "#e8113b",
+        "floating-chat.donateButton.text-color": "#ffffff"
+      });
+      (_b = document.getElementById("kofiFallback")) == null ? void 0 : _b.classList.add("is-hidden");
+    };
+    const existing = document.querySelector("script[data-nebula-kofi-widget]");
+    if (existing) {
+      existing.addEventListener("load", drawWidget, { once: true });
+      drawWidget();
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = "https://storage.ko-fi.com/cdn/scripts/overlay-widget.js";
+    script.async = true;
+    script.defer = true;
+    script.dataset.nebulaKofiWidget = "true";
+    script.addEventListener("load", drawWidget, { once: true });
+    document.body.appendChild(script);
+  })();
+})();
+
+</script>
 	    
   </body>
 </html>
