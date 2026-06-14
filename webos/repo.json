@@ -13,18 +13,18 @@
       "iconUri": "https://raw.githubusercontent.com/retrocodes12/NebulaSports/main/icon.png",
       "manifest": {
         "id": "com.nebulastreams.sports",
-        "version": "1.0.0",
+        "version": "1.0.4",
         "type": "web",
         "title": "Nebula Sports",
         "appDescription": "Live sports web app for webOS.",
         "iconUri": "https://raw.githubusercontent.com/retrocodes12/NebulaSports/main/icon.png",
         "sourceUrl": "https://github.com/retrocodes12/NebulaSports",
         "rootRequired": false,
-        "ipkUrl": "https://raw.githubusercontent.com/retrocodes12/NebulaSports/main/com.nebulastreams.sports_1.0.0_all.ipk",
+        "ipkUrl": "https://raw.githubusercontent.com/retrocodes12/NebulaSports/main/com.nebulastreams.sports_1.0.4_all.ipk",
         "ipkHash": {
-          "sha256": "f305fe81959128d3520f36908de2e5bc0f15e1c5abc968c042746f774743b105"
+          "sha256": "4c04d907a2655fac93923d31c111e77a0803a8ec519a270333b7920aa34a0570"
         },
-        "ipkSize": 271948
+        "ipkSize": 272046
       },
       "shortDescription": "Nebula Sports for webOS.",
       "fullDescriptionUrl": "https://github.com/retrocodes12/NebulaSports#install"
