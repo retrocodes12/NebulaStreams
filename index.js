@@ -8739,10 +8739,19 @@ render();
   app.get('/watch-together/api/streams/:id', async (req, res, next) => {
     try {
       const account = await getOptionalWatchTogetherAccount(req);
+      const baseUrl = `${req.protocol}://${req.get('host')}`;
       const result = await streamManager.streamedSportsAdapter.getEventEmbedStreams(req.params.id, {
-        baseUrl: `${req.protocol}://${req.get('host')}`,
+        baseUrl,
         signal: AbortSignal.timeout(8_000)
       });
+      const includeDirectPlayback = String(req.query?.webos || req.query?.direct || '').toLowerCase() === '1'
+        || String(req.query?.webos || req.query?.direct || '').toLowerCase() === 'true';
+      const streams = includeDirectPlayback
+        ? result.streams.map((stream) => ({
+          ...stream,
+          url: `${baseUrl}/watch-together/hls/${encodeURIComponent(stream.source)}/${encodeURIComponent(stream.streamId || stream.id)}/${encodeURIComponent(String(stream.streamNo || 1))}.m3u8`
+        }))
+        : result.streams;
       if (account) {
         await sportsSupporterService.increment(account.id, 'streams', 1).catch((error) => {
           logger.warn('watch together optional stream stat failed', {
@@ -8754,8 +8763,64 @@ render();
         .setHeader('Cache-Control', 'no-store')
         .json({
           event: result.match ? decorateSportsMeta(streamManager.streamedSportsAdapter.toEventMeta(result.match), req) : null,
-          streams: result.streams
+          streams
         });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/watch-together/hls/:source/:streamId/:streamNo.:extension', async (req, res, next) => {
+    try {
+      let hlsHeaders = null;
+      const routeSignal = req.signal && typeof AbortSignal.any === 'function'
+        ? AbortSignal.any([req.signal, AbortSignal.timeout(18_000)])
+        : AbortSignal.timeout(18_000);
+      const upstreamUrl = req.query.url
+        ? Buffer.from(String(req.query.url), 'base64url').toString('utf8')
+        : (await streamManager.streamedSportsAdapter.resolvePlayableHls({
+          source: req.params.source,
+          streamId: req.params.streamId,
+          streamNo: req.params.streamNo,
+          signal: routeSignal
+        }).then((hls) => {
+          hlsHeaders = hls?.headers || null;
+          return hls?.url;
+        }).catch(async (error) => {
+          logger.warn('watch together public hls primary failed; trying fallback', {
+            source: req.params.source,
+            streamNo: req.params.streamNo,
+            error: error?.message || String(error)
+          });
+          const fallback = await streamManager.streamedSportsAdapter.resolveFallbackPlayableHls({
+            source: req.params.source,
+            streamId: req.params.streamId,
+            streamNo: req.params.streamNo,
+            signal: routeSignal
+          });
+          hlsHeaders = fallback?.headers || null;
+          return fallback?.url;
+        }));
+
+      if (!/^https?:\/\//iu.test(String(upstreamUrl || ''))) {
+        throw new Error('Invalid watch together HLS URL');
+      }
+
+      const proxyReq = Object.create(req);
+      proxyReq.params = {
+        ...req.params,
+        privateConfigId: '__watch_together__'
+      };
+
+      await streamManager.proxyStreamedSportsUpstream({
+        req: proxyReq,
+        res,
+        upstreamUrl,
+        source: req.params.source,
+        streamId: req.params.streamId,
+        streamNo: req.params.streamNo,
+        hlsHeaders
+      });
     } catch (error) {
       next(error);
     }

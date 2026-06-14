@@ -11,7 +11,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Nebula Sports">
     <title>Nebula Sports Watch Together</title>
-    <meta name="nebula-webos-package" content="1.0.11">
+    <meta name="nebula-webos-package" content="1.0.12">
     <link rel="manifest" href="/watch-together/manifest.webmanifest">
     <link rel="icon" type="image/png" sizes="32x32" href="https://nebula.work.gd/assets/nebula-sports-favicon-32.png">
     <link rel="apple-touch-icon" href="https://nebula.work.gd/assets/nebula-sports-favicon.png">
@@ -453,6 +453,28 @@
       };
       const mountStreamGate = (target, stream) => {
         target.replaceChildren();
+        if (stream.url) {
+          const video = document.createElement("video");
+          video.controls = true;
+          video.autoplay = true;
+          video.playsInline = true;
+          video.preload = "auto";
+          video.style.width = "100%";
+          video.style.height = "100%";
+          video.style.background = "#050608";
+          video.src = stream.url;
+          video.addEventListener("error", () => {
+            if (stream.embedUrl) mountEmbedFrame(target, stream);
+            else target.innerHTML = '<div class="empty"><strong>Player failed</strong><span>Try another source.</span></div>';
+          }, { once: true });
+          target.appendChild(video);
+          video.play().catch(() => {});
+          return;
+        }
+        mountEmbedFrame(target, stream);
+      };
+      const mountEmbedFrame = (target, stream) => {
+        target.replaceChildren();
         const frame = document.createElement("iframe");
         frame.allow = "autoplay; fullscreen; encrypted-media; picture-in-picture";
         frame.allowFullscreen = true;
@@ -612,7 +634,7 @@
         refreshStatsForEvent();
         el("statusLine").textContent = "Loading sources";
         el("streams").innerHTML = '<h3>Sources</h3><div class="empty">Loading sources...</div>';
-        const data = yield api("/watch-together/api/streams/" + encodeURIComponent(id));
+        const data = yield api("/watch-together/api/streams/" + encodeURIComponent(id) + "?webos=1");
         state.streams = data.streams || [];
         state.stream = state.streams.find((stream) => stream.id === preferredStreamId) || state.streams[0] || null;
         renderStreams();

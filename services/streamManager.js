@@ -7262,6 +7262,9 @@ export class StreamManager {
         return absoluteUrl;
       }
       const encodedUrl = Buffer.from(absoluteUrl).toString('base64url');
+      if (String(privateConfigId) === '__watch_together__') {
+        return `${String(baseUrl || '').replace(/\/+$/u, '')}/watch-together/hls/${encodeURIComponent(String(source))}/${encodeURIComponent(String(streamId))}/${encodeURIComponent(String(streamNo || 1))}.${extension}?url=${encodedUrl}`;
+      }
       return `${String(baseUrl || '').replace(/\/+$/u, '')}/private/${encodeURIComponent(privateConfigId)}/streamed/${encodeURIComponent(String(source))}/${encodeURIComponent(String(streamId))}/${encodeURIComponent(String(streamNo || 1))}.${extension}?url=${encodedUrl}`;
     }).filter((line) => line !== null).join('\n');
   }
