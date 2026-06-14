@@ -8827,7 +8827,7 @@ render();
   });
 
   const renderHelloSportsPlayerPage = ({ source = null, errorMessage = '' } = {}) => {
-    const title = source ? `HelloSports #${source.streamNo}` : 'Live Stream';
+    const title = source ? `NebulaSports #${source.streamNo}` : 'Live Stream';
     const sourceUrl = source?.embedUrl || '';
     return `<!doctype html>
 <html lang="en">
@@ -8852,10 +8852,10 @@ render();
 </html>`;
   };
 
-  app.get('/watch-together/hellosports/:id', async (req, res) => {
+  const handleNebulaSportsExternalPlayer = async (req, res) => {
     try {
       const source = streamManager.streamedSportsAdapter.getLicensedExternalEmbedSource(req.params.id);
-      if (!source) throw new Error('Unknown HelloSports source');
+      if (!source) throw new Error('Unknown NebulaSports source');
       res
         .status(200)
         .setHeader('Cache-Control', 'no-store')
@@ -8872,7 +8872,10 @@ render();
         .type('html')
         .send(renderHelloSportsPlayerPage({ errorMessage: error?.message || 'Unable to load this source.' }));
     }
-  });
+  };
+
+  app.get('/watch-together/nebulasports/:id', handleNebulaSportsExternalPlayer);
+  app.get('/watch-together/hellosports/:id', handleNebulaSportsExternalPlayer);
 
   app.get('/watch-together/api/football-stats/:id', async (req, res) => {
     const event = {

@@ -28,6 +28,7 @@ const STREAM_SOURCE_RANK = new Map([
   ['delta', 1],
   ['echo', 2],
   ['golf', 3],
+  ['nebulasports', 4],
   ['hellosports', 4]
 ]);
 const LICENSED_EXTERNAL_EMBED_STREAMS = [
@@ -581,15 +582,15 @@ export class StreamedSportsAdapter {
   getLicensedExternalEmbedStreams({ baseUrl = '' } = {}) {
     return LICENSED_EXTERNAL_EMBED_STREAMS
       .map((stream) => ({
-        id: `hellosports:${stream.id}`,
-        source: 'hellosports',
+        id: `nebulasports:${stream.id}`,
+        source: 'nebulasports',
         streamId: stream.id,
         streamNo: stream.streamNo,
         language: stream.language,
         hd: Boolean(stream.hd),
         viewers: 0,
         embedUrl: baseUrl
-          ? `${String(baseUrl).replace(/\/+$/u, '')}/watch-together/hellosports/${encodeURIComponent(stream.id)}`
+          ? `${String(baseUrl).replace(/\/+$/u, '')}/watch-together/nebulasports/${encodeURIComponent(stream.id)}`
           : stream.embedUrl
       }))
       .filter((stream) => isHttpUrl(stream.embedUrl));
