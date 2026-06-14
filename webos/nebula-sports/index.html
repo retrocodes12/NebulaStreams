@@ -11,7 +11,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Nebula Sports">
     <title>Nebula Sports Watch Together</title>
-    <meta name="nebula-webos-package" content="1.0.10">
+    <meta name="nebula-webos-package" content="1.0.11">
     <link rel="manifest" href="/watch-together/manifest.webmanifest">
     <link rel="icon" type="image/png" sizes="32x32" href="https://nebula.work.gd/assets/nebula-sports-favicon-32.png">
     <link rel="apple-touch-icon" href="https://nebula.work.gd/assets/nebula-sports-favicon.png">
@@ -453,18 +453,15 @@
       };
       const mountStreamGate = (target, stream) => {
         target.replaceChildren();
-        const gate = document.createElement("div");
-        gate.className = "player-gate";
-        gate.innerHTML = '<div class="player-gate-card"><button class="play-gate-btn" type="button" aria-label="Play">\u25B6</button></div>';
-        gate.querySelector("button").addEventListener("click", () => {
-          const frame = document.createElement("iframe");
-          frame.allow = "autoplay; fullscreen; encrypted-media; picture-in-picture";
-          frame.allowFullscreen = true;
-          frame.referrerPolicy = "no-referrer-when-downgrade";
-          frame.src = withPlayerParams(stream.embedUrl);
-          target.replaceChildren(frame);
-        }, { once: true });
-        target.appendChild(gate);
+        const frame = document.createElement("iframe");
+        frame.allow = "autoplay; fullscreen; encrypted-media; picture-in-picture";
+        frame.allowFullscreen = true;
+        frame.referrerPolicy = "no-referrer-when-downgrade";
+        frame.src = withPlayerParams(stream.embedUrl);
+        frame.addEventListener("error", () => {
+          target.innerHTML = '<div class="empty"><strong>Player failed</strong><span>Try another source.</span></div>';
+        });
+        target.appendChild(frame);
       };
       const setPlayer = (stream) => {
         var _a2, _b, _c;
