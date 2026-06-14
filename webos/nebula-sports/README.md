@@ -17,5 +17,5 @@ ares-install --device <tv-name> dist/webos/com.nebulastreams.sports_1.0.3_all.ip
 Homebrew Channel custom repository:
 
 ```text
-https://raw.githubusercontent.com/retrocodes12/NebulaSports/main/stable.json
+https://raw.githubusercontent.com/retrocodes12/NebulaSports/main/stable-v2.json
 ```

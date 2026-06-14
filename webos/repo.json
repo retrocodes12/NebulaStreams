@@ -22,9 +22,9 @@
         "rootRequired": false,
         "ipkUrl": "https://raw.githubusercontent.com/retrocodes12/NebulaSports/main/com.nebulastreams.sports_1.0.0_all.ipk",
         "ipkHash": {
-          "sha256": "00663bf9bbf786521eaf2def81269661b883d72db19af08ed23f01bd6074bd4a"
+          "sha256": "f305fe81959128d3520f36908de2e5bc0f15e1c5abc968c042746f774743b105"
         },
-        "ipkSize": 272402
+        "ipkSize": 271948
       },
       "shortDescription": "Nebula Sports for webOS.",
       "fullDescriptionUrl": "https://github.com/retrocodes12/NebulaSports#install"

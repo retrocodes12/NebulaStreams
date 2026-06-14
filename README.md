@@ -111,7 +111,7 @@ Local endpoints:
 Homebrew Channel custom repository:
 
 ```text
-https://raw.githubusercontent.com/retrocodes12/NebulaSports/main/stable.json
+https://raw.githubusercontent.com/retrocodes12/NebulaSports/main/stable-v2.json
 ```
 
 In Homebrew Channel, open repository settings, add that URL, refresh repositories, then install **Nebula Sports**.
