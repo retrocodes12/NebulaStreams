@@ -11,7 +11,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Nebula Sports">
     <title>Nebula Sports Watch Together</title>
-    <meta name="nebula-webos-package" content="1.0.12">
+    <meta name="nebula-webos-package" content="1.0.13">
     <link rel="manifest" href="/watch-together/manifest.webmanifest">
     <link rel="icon" type="image/png" sizes="32x32" href="https://nebula.work.gd/assets/nebula-sports-favicon-32.png">
     <link rel="apple-touch-icon" href="https://nebula.work.gd/assets/nebula-sports-favicon.png">
@@ -40,6 +40,8 @@
       .player-control:hover{background:rgba(101,230,164,.16);border-color:rgba(101,230,164,.38);transform:translateY(-1px)}
       .player-control:active{transform:scale(.98)}
       .player-fullscreen{right:12px}
+      .tv-exit-fullscreen{position:absolute;right:14px;top:14px;z-index:8;display:none;align-items:center;gap:8px;min-height:40px;border:1px solid rgba(255,255,255,.22);border-radius:999px;background:rgba(5,6,8,.72);backdrop-filter:blur(14px);color:var(--ink);padding:8px 12px;font-weight:950;box-shadow:0 14px 34px rgba(0,0,0,.42)}
+      .player.tv-fullscreen .tv-exit-fullscreen{display:inline-flex}
       .stats-toggle[hidden],.match-stats-overlay[hidden]{display:none!important}
       .match-stats-overlay{position:absolute;right:12px;top:54px;z-index:4;width:min(360px,calc(100% - 24px));border:1px solid rgba(255,255,255,.16);border-radius:18px;background:rgba(10,12,16,.82);box-shadow:0 24px 60px rgba(0,0,0,.44);backdrop-filter:blur(18px);color:var(--ink);overflow:hidden}
       .match-stats-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 13px;border-bottom:1px solid rgba(255,255,255,.1)}
@@ -451,6 +453,26 @@
           clearStatsPolling();
         }
       };
+      const getFullscreenElement = () => document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement || null;
+      const exitPlayerFullscreen = () => {
+        const exit = document.exitFullscreen || document.webkitExitFullscreen || document.msExitFullscreen;
+        if (getFullscreenElement() && exit) Promise.resolve(exit.call(document)).catch(() => {});
+      };
+      const mountFullscreenExitButton = (target) => {
+        if (!target || target.id !== "player" || target.querySelector(".tv-exit-fullscreen")) return;
+        const button = document.createElement("button");
+        button.className = "tv-exit-fullscreen";
+        button.type = "button";
+        button.setAttribute("aria-label", "Exit fullscreen");
+        button.textContent = "Exit fullscreen";
+        button.addEventListener("click", exitPlayerFullscreen);
+        target.appendChild(button);
+      };
+      const syncFullscreenState = () => {
+        const player = el("player");
+        mountFullscreenExitButton(player);
+        player.classList.toggle("tv-fullscreen", getFullscreenElement() === player);
+      };
       const mountStreamGate = (target, stream) => {
         target.replaceChildren();
         if (stream.url) {
@@ -468,6 +490,7 @@
             else target.innerHTML = '<div class="empty"><strong>Player failed</strong><span>Try another source.</span></div>';
           }, { once: true });
           target.appendChild(video);
+          mountFullscreenExitButton(target);
           video.play().catch(() => {});
           return;
         }
@@ -484,6 +507,7 @@
           target.innerHTML = '<div class="empty"><strong>Player failed</strong><span>Try another source.</span></div>';
         });
         target.appendChild(frame);
+        mountFullscreenExitButton(target);
       };
       const setPlayer = (stream) => {
         var _a2, _b, _c;
@@ -518,6 +542,7 @@
         player.replaceChildren();
         if (!state.multiItems.length) {
           player.innerHTML = '<div class="empty"><strong>Multiview</strong><span>Select events or sources to add up to 4 streams.</span></div>';
+          mountFullscreenExitButton(player);
           return;
         }
         state.multiItems.slice(0, 4).forEach((item) => {
@@ -534,6 +559,7 @@
           player.appendChild(tile);
           mountStreamGate(tile.querySelector(".multi-body"), item.stream);
         });
+        mountFullscreenExitButton(player);
       };
       const addMultiItem = (event, stream) => {
         if (!(event == null ? void 0 : event.id) || !(stream == null ? void 0 : stream.embedUrl)) return;
@@ -697,6 +723,15 @@
         if (request) Promise.resolve(request.call(target)).catch(() => {
         });
       });
+      ["fullscreenchange", "webkitfullscreenchange", "MSFullscreenChange"].forEach((eventName) => document.addEventListener(eventName, syncFullscreenState));
+      document.addEventListener("keydown", (event) => {
+        if (!getFullscreenElement()) return;
+        if (event.key === "Escape" || event.key === "Backspace" || event.key === "BrowserBack" || event.keyCode === 461 || event.keyCode === 27) {
+          event.preventDefault();
+          event.stopPropagation();
+          exitPlayerFullscreen();
+        }
+      }, true);
       document.querySelectorAll(".tab").forEach((tab) => tab.addEventListener("click", () => openPanel(tab.dataset.panel)));
       const setRailActive = (action) => document.querySelectorAll("[data-rail]").forEach((item) => item.classList.toggle("active", item.dataset.rail === action));
       const switchCatalog = (id, action) => {
