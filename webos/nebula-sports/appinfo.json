@@ -1,0 +1,16 @@
+{
+  "id": "com.nebulastreams.sports",
+  "version": "1.0.0",
+  "vendor": "NebulaStreams",
+  "type": "web",
+  "main": "index.html",
+  "title": "Nebula Sports",
+  "icon": "icon.png",
+  "largeIcon": "largeIcon.png",
+  "bgColor": "#050608",
+  "iconColor": "#050608",
+  "resolution": "1920x1080",
+  "uiRevision": 2,
+  "requiredPermissions": [],
+  "disableBackHistoryAPI": false
+}

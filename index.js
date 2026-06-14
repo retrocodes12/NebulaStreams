@@ -6210,11 +6210,16 @@ const renderWatchTogetherPage = ({ baseUrl, account = null, errorMessage = '' })
           }
         });
         const getLiveSessionId=()=>{
-          const existing=localStorage.getItem('nebula-watch-live-session');
-          if(existing)return existing;
-          const created=crypto.randomUUID?.()||String(Date.now())+'-'+Math.random().toString(16).slice(2);
-          localStorage.setItem('nebula-watch-live-session',created);
-          return created;
+          try{
+            const existing=localStorage.getItem('nebula-watch-live-session');
+            if(existing)return existing;
+            const created=(crypto.randomUUID?.()||String(Date.now())+'-'+Math.random().toString(16).slice(2)).replace(/[^a-zA-Z0-9_-]/g,'').slice(0,80);
+            localStorage.setItem('nebula-watch-live-session',created);
+            return created;
+          }catch{
+            if(!window.__nebulaLiveSessionId)window.__nebulaLiveSessionId=(String(Date.now())+'-'+Math.random().toString(16).slice(2)).replace(/[^a-zA-Z0-9_-]/g,'').slice(0,80);
+            return window.__nebulaLiveSessionId;
+          }
         };
         const updateLiveCount=(count)=>{
           const parsed=Number.parseInt(count,10);
@@ -8108,6 +8113,7 @@ const bootstrap = async () => {
   let watchChatIdentityWriteChain = Promise.resolve();
   const watchChatResponseCache = new Map();
   const watchTogetherLiveSessions = new Map();
+  const WATCH_TOGETHER_LIVE_DIR = path.join(config.CACHE_DIR, 'watch-together-live');
   const WATCH_TOGETHER_LIVE_TTL_MS = 70_000;
 
   const sanitizeWatchChatText = (value, maxLength) => String(value || '')
@@ -8227,6 +8233,58 @@ const bootstrap = async () => {
     return watchTogetherLiveSessions.size;
   };
 
+  const persistWatchTogetherLiveSession = async (sessionId, lastSeen = Date.now()) => {
+    const safeSessionId = sanitizeWatchLiveSessionId(sessionId);
+    if (!safeSessionId) return;
+    try {
+      await fsPromises.mkdir(WATCH_TOGETHER_LIVE_DIR, { recursive: true });
+      await fsPromises.writeFile(
+        path.join(WATCH_TOGETHER_LIVE_DIR, `${safeSessionId}.json`),
+        JSON.stringify({ lastSeen }),
+        { mode: 0o600 }
+      );
+    } catch (error) {
+      logger.debug?.('watch together live session persist failed', {
+        error: error?.message || String(error)
+      });
+    }
+  };
+
+  const getWatchTogetherLiveCountShared = async () => {
+    const now = Date.now();
+    pruneWatchTogetherLiveSessions(now);
+    let entries = [];
+    try {
+      entries = await fsPromises.readdir(WATCH_TOGETHER_LIVE_DIR, { withFileTypes: true });
+    } catch {
+      return watchTogetherLiveSessions.size;
+    }
+
+    await Promise.allSettled(entries.map(async (entry) => {
+      if (!entry.isFile() || !entry.name.endsWith('.json')) return;
+      const sessionId = sanitizeWatchLiveSessionId(entry.name.replace(/\.json$/u, ''));
+      if (!sessionId) return;
+      const filePath = path.join(WATCH_TOGETHER_LIVE_DIR, entry.name);
+      let lastSeen = 0;
+      try {
+        const stat = await fsPromises.stat(filePath);
+        const payload = JSON.parse(await fsPromises.readFile(filePath, 'utf8'));
+        lastSeen = Math.max(Number(stat.mtimeMs || 0), Number(payload?.lastSeen || 0));
+      } catch {
+        lastSeen = 0;
+      }
+      if (!lastSeen || now - lastSeen > WATCH_TOGETHER_LIVE_TTL_MS) {
+        await fsPromises.rm(filePath, { force: true }).catch(() => {});
+        watchTogetherLiveSessions.delete(sessionId);
+        return;
+      }
+      watchTogetherLiveSessions.set(sessionId, lastSeen);
+    }));
+
+    pruneWatchTogetherLiveSessions(now);
+    return watchTogetherLiveSessions.size;
+  };
+
   const WATCH_ADMIN_HISTORY_LIMIT = 360;
   const WATCH_ADMIN_SAMPLE_MIN_MS = 15_000;
   const watchTogetherAdminSamples = [];
@@ -8311,6 +8369,7 @@ const bootstrap = async () => {
     const now = Date.now();
     pruneWatchTogetherLiveSessions(now);
     watchTogetherLiveSessions.set(sessionId, now);
+    void persistWatchTogetherLiveSession(sessionId, now);
     return watchTogetherLiveSessions.size;
   };
 
@@ -8333,7 +8392,7 @@ const bootstrap = async () => {
       .sort((left, right) => right.messages - left.messages)
       .slice(0, 10);
     const stats = {
-      liveVisitors: getWatchTogetherLiveCount(),
+      liveVisitors: await getWatchTogetherLiveCountShared(),
       liveTtlSeconds: Math.round(WATCH_TOGETHER_LIVE_TTL_MS / 1000),
       chatEvents,
       chatMessages,
@@ -8351,6 +8410,12 @@ const bootstrap = async () => {
     recordWatchTogetherAdminSample(stats);
     return { ...stats, history: watchTogetherAdminSamples };
   };
+
+  const getWatchTogetherAdminLiveStats = async () => ({
+    at: Date.now(),
+    liveVisitors: await getWatchTogetherLiveCountShared(),
+    liveTtlSeconds: Math.round(WATCH_TOGETHER_LIVE_TTL_MS / 1000)
+  });
 
   const renderWatchTogetherAdminLogin = ({ errorMessage = '' } = {}) => `<!doctype html>
 <html lang="en">
@@ -8479,6 +8544,8 @@ function select(page){current=page;document.querySelectorAll('.nav button[data-p
 document.querySelectorAll('.nav button[data-page]').forEach((button)=>button.addEventListener('click',()=>select(button.dataset.page)));
 document.getElementById('range').addEventListener('click',(event)=>{const button=event.target.closest('button');if(!button)return;days=Number(button.dataset.days||30);document.querySelectorAll('#range button').forEach((item)=>item.classList.toggle('active',item===button));render();});
 document.getElementById('refresh').addEventListener('click',async()=>{const response=await fetch('/watch-together/admin/api/stats',{cache:'no-store'});if(response.ok){SERVER=await response.json();render();}});
+async function refreshLiveOnly(){try{const response=await fetch('/watch-together/admin/api/live',{cache:'no-store'});if(!response.ok)return;const live=await response.json();SERVER.liveVisitors=Number(live.liveVisitors||0);SERVER.liveTtlSeconds=Number(live.liveTtlSeconds||SERVER.liveTtlSeconds||0);const sample=nowSample();sample.at=Number(live.at||Date.now());if(!Array.isArray(SERVER.history))SERVER.history=[];const last=SERVER.history[SERVER.history.length-1];if(!last||sample.at-Number(last.at||0)>=10000){SERVER.history.push(sample);}else{SERVER.history[SERVER.history.length-1]=Object.assign({},last,{liveVisitors:sample.liveVisitors});}while(SERVER.history.length>360)SERVER.history.shift();render();}catch{}}
+setInterval(()=>{if(!document.hidden)refreshLiveOnly();},10000);
 render();
 </script>
 </body>
@@ -8556,6 +8623,12 @@ render();
     }
   });
 
+  app.get('/watch-together/admin/api/live', requireWatchTogetherAdminAuth, (_req, res) => {
+    res
+      .setHeader('Cache-Control', 'no-store')
+      .json(getWatchTogetherAdminLiveStats());
+  });
+
   app.get('/watch-together/admin', requireWatchTogetherAdminAuth, async (_req, res, next) => {
     try {
       res
@@ -8595,6 +8668,7 @@ render();
 
   app.get('/watch-together', async (req, res, next) => {
     try {
+      touchWatchTogetherLiveSession(req);
       const account = await getWatchTogetherAccountFromRequest(req);
       res
         .status(200)
@@ -8754,19 +8828,22 @@ render();
     }
   });
 
-  app.get('/watch-together/api/live-count', (req, res) => {
-    const count = req.query?.sessionId
-      ? touchWatchTogetherLiveSession(req, req.query.sessionId)
-      : getWatchTogetherLiveCount();
+  app.get('/watch-together/api/live-count', async (req, res) => {
+    if (req.query?.sessionId) {
+      touchWatchTogetherLiveSession(req, req.query.sessionId);
+    }
+    const count = await getWatchTogetherLiveCountShared();
     res
       .setHeader('Cache-Control', 'no-store')
       .json({ count });
   });
 
-  app.post('/watch-together/api/live-count', (req, res) => {
+  app.post('/watch-together/api/live-count', async (req, res) => {
+    touchWatchTogetherLiveSession(req);
+    const count = await getWatchTogetherLiveCountShared();
     res
       .setHeader('Cache-Control', 'no-store')
-      .json({ count: touchWatchTogetherLiveSession(req) });
+      .json({ count });
   });
 
   app.get('/watch-together/api/chat', async (req, res, next) => {
