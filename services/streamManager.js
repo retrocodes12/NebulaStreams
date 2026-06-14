@@ -5397,6 +5397,11 @@ export class StreamManager {
       return;
     }
 
+    if (this.shouldSkipBackgroundRefresh()) {
+      this.pruneStaleStremioBackgroundRefreshQueue();
+      return;
+    }
+
     if (this.stremioBackgroundRefreshes.has(input.resultCacheKey) || this.stremioResultInFlight.has(input.resultCacheKey)) {
       return;
     }

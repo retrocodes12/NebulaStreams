@@ -4154,6 +4154,36 @@ export class ProviderService {
         return [];
       }
 
+      if (
+        error?.code === 'SCRAPLING_SERVICE_UNAVAILABLE'
+        || (
+          String(error?.message || '').includes('Scrapling service unavailable')
+          && (providerId === 'scrapling-4khdhub' || providerId === 'scrapling-hdhub4u' || providerId === 'uhdmovies')
+        )
+      ) {
+        const unavailableRuntime = this.providerRuntime.get(providerId) || {};
+        const unavailableDurationMs = Date.now() - startedAt;
+        this.updateProviderRuntime(providerId, {
+          running: false,
+          lastFinishedAt: Date.now(),
+          lastDurationMs: unavailableDurationMs,
+          lastResultCount: 0,
+          lastError: error.message || 'Scrapling service unavailable',
+          totalFailures: unavailableRuntime.totalFailures || 0,
+          totalDurationMs: (unavailableRuntime.totalDurationMs || 0) + unavailableDurationMs,
+          consecutiveFailures: unavailableRuntime.consecutiveFailures || 0
+        });
+        logger.info('scrapling-backed provider skipped because sidecar is unavailable', {
+          provider: providerId,
+          hostKey: providerHostKey,
+          tmdbId: normalizedTmdbId,
+          mediaType: normalizedMediaType,
+          durationMs: unavailableDurationMs
+        });
+        await this.setCachedResult(cacheKey, [], providerId);
+        return [];
+      }
+
       this.recordProviderFailure(providerId);
       this.recordProviderHostFailure(providerHostKey);
       const failureRuntime = this.providerRuntime.get(providerId) || {};

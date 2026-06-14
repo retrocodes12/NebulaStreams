@@ -13,6 +13,8 @@ const execFileAsync = promisify(execFile);
 const { mkdir, open, readFile, rm } = fsPromises;
 const VIDEO_GEN_HOSTS = new Set(['cdn.video-gen.xyz', 'video-gen.xyz']);
 const START_LOCK_STALE_MS = 45_000;
+const HEALTH_CHECK_TIMEOUT_MS = 750;
+const UNAVAILABLE_COOLDOWN_MS = 60_000;
 
 const wait = (ms, signal = null) => new Promise((resolve, reject) => {
   if (signal?.aborted) {
@@ -50,7 +52,15 @@ const isVideoGenUrl = (value) => {
 const sharedState = {
   child: null,
   startPromise: null,
+  healthyUntil: 0,
+  unavailableUntil: 0,
   shutdownHandlerRegistered: false
+};
+
+const createUnavailableError = () => {
+  const error = new Error('Scrapling service unavailable');
+  error.code = 'SCRAPLING_SERVICE_UNAVAILABLE';
+  return error;
 };
 
 export class ScraplingServiceAdapter extends PluginProviderAdapter {
@@ -211,12 +221,23 @@ export class ScraplingServiceAdapter extends PluginProviderAdapter {
   }
 
   async ensureService(signal = null) {
-    if (await this.isHealthy()) {
+    if (Date.now() < sharedState.healthyUntil) {
       return;
     }
 
+    if (Date.now() < sharedState.unavailableUntil) {
+      throw createUnavailableError();
+    }
+
     if (!this.autoStart) {
-      throw new Error('Scrapling service unavailable');
+      sharedState.unavailableUntil = Date.now() + UNAVAILABLE_COOLDOWN_MS;
+      throw createUnavailableError();
+    }
+
+    if (await this.isHealthy(signal)) {
+      sharedState.healthyUntil = Date.now() + 5_000;
+      sharedState.unavailableUntil = 0;
+      return;
     }
 
     await this.startService(signal);
@@ -224,7 +245,7 @@ export class ScraplingServiceAdapter extends PluginProviderAdapter {
 
   async isHealthy(signal = null) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5_000);
+    const timeout = setTimeout(() => controller.abort(), HEALTH_CHECK_TIMEOUT_MS);
     timeout.unref?.();
 
     const onAbort = () => controller.abort(signal.reason);

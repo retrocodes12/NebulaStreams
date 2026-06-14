@@ -78,7 +78,7 @@ const LICENSED_EXTERNAL_EMBED_STREAMS = [
     streamNo: 7,
     language: 'Malayalam',
     hd: false,
-    embedUrl: 'https://helloxsports.in/worldcup/dsports.html'
+    embedUrl: 'https://ok.ru/videoembed/15300699889403'
   }
 ];
 const LICENSED_EXTERNAL_EMBED_STREAM_BY_ID = new Map(

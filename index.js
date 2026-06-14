@@ -4701,6 +4701,24 @@ const renderAdminPage = ({ stats, createdSupporterCode = '' }) => `<!doctype htm
       </section>
 
       <section class="section">
+        <h2>Nebula Sports Webapp</h2>
+        <div class="meta-grid">
+          <div><div class="label">Live Visitors</div><code>${escapeHtml(String(stats.watchTogether.liveVisitors))}</code></div>
+          <div><div class="label">Live TTL</div><code>${escapeHtml(`${stats.watchTogether.liveTtlSeconds}s`)}</code></div>
+          <div><div class="label">Chat Events</div><code>${escapeHtml(String(stats.watchTogether.chatEvents))}</code></div>
+          <div><div class="label">Chat Messages</div><code>${escapeHtml(String(stats.watchTogether.chatMessages))}</code></div>
+          <div><div class="label">Locked Chat Names</div><code>${escapeHtml(String(stats.watchTogether.lockedChatNames))}</code></div>
+          <div><div class="label">Chat Cache Entries</div><code>${escapeHtml(String(stats.watchTogether.chatResponseCacheEntries))}</code></div>
+          <div><div class="label">Chat Rate Buckets</div><code>${escapeHtml(String(stats.watchTogether.chatRateLimitClients))}</code></div>
+          <div><div class="label">Sports Accounts</div><code>${escapeHtml(String(stats.watchTogether.sportsAccounts))}</code></div>
+          <div><div class="label">Sports Active</div><code>${escapeHtml(String(stats.watchTogether.sportsActive))}</code></div>
+          <div><div class="label">Sports Trials</div><code>${escapeHtml(String(stats.watchTogether.sportsTrials))}</code></div>
+          <div><div class="label">Sports Tokens</div><code>${escapeHtml(String(stats.watchTogether.sportsTokens))}</code></div>
+          <div><div class="label">Sports Payments</div><code>${escapeHtml(String(stats.watchTogether.sportsPayments))}</code></div>
+        </div>
+      </section>
+
+      <section class="section">
         <h2>Supporters</h2>
         ${createdSupporterCode ? `<div class="meta-grid"><div><div class="label">New Code - show once</div><code>${escapeHtml(createdSupporterCode)}</code></div></div>` : ''}
         <form method="post" action="/admin/supporters/create" style="display:grid;gap:12px;margin:12px 0;grid-template-columns:2fr 1fr 1fr auto;align-items:end">
@@ -5494,6 +5512,154 @@ const renderWatchTogetherNoticeBanner = (notice = WATCH_TOGETHER_NOTICE) => `
     <span>${escapeHtml(notice.textBeforeLink)}<a href="${escapeHtml(notice.linkUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(notice.linkText)}</a>${escapeHtml(notice.textAfterLink)}</span>
   </div>`;
 
+const renderWatchTogetherWebManifest = (baseUrl) => {
+  const safeBaseUrl = String(baseUrl || '').replace(/\/+$/u, '');
+  return {
+    name: 'Nebula Sports',
+    short_name: 'Nebula Sports',
+    description: 'Live sports events in one installable web app.',
+    id: '/watch-together',
+    start_url: '/watch-together',
+    scope: '/watch-together',
+    display: 'standalone',
+    display_override: ['window-controls-overlay', 'standalone', 'browser'],
+    orientation: 'any',
+    background_color: '#0a0b0d',
+    theme_color: '#e8113b',
+    categories: ['sports', 'entertainment'],
+    icons: [
+      {
+        src: `${safeBaseUrl}/assets/nebula-sports-favicon-32.png`,
+        sizes: '32x32',
+        type: 'image/png'
+      },
+      {
+        src: `${safeBaseUrl}/assets/nebula-sports-favicon.png`,
+        sizes: '128x128',
+        type: 'image/png'
+      },
+      {
+        src: `${safeBaseUrl}/assets/nebula-sports-logo.png`,
+        sizes: '512x512',
+        type: 'image/png',
+        purpose: 'any maskable'
+      }
+    ],
+    shortcuts: [
+      {
+        name: 'Live Events',
+        short_name: 'Live',
+        url: '/watch-together?catalog=streamed-events-live'
+      },
+      {
+        name: 'Popular Events',
+        short_name: 'Popular',
+        url: '/watch-together?catalog=streamed-events-popular'
+      }
+    ]
+  };
+};
+
+const renderWatchTogetherServiceWorker = () => `
+const CACHE_NAME = 'nebula-sports-app-v1';
+const APP_SHELL = [
+  '/watch-together',
+  '/watch-together/offline',
+  '/watch-together/manifest.webmanifest',
+  '/assets/nebula-sports-logo.png',
+  '/assets/nebula-sports-favicon.png',
+  '/assets/nebula-sports-favicon-32.png'
+];
+
+self.addEventListener('install', (event) => {
+  event.waitUntil(
+    caches.open(CACHE_NAME)
+      .then((cache) => cache.addAll(APP_SHELL))
+      .then(() => self.skipWaiting())
+      .catch(() => undefined)
+  );
+});
+
+self.addEventListener('activate', (event) => {
+  event.waitUntil(
+    caches.keys()
+      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))))
+      .then(() => self.clients.claim())
+  );
+});
+
+const isSameOrigin = (url) => url.origin === self.location.origin;
+const isAppRequest = (url) => url.pathname === '/watch-together' || url.pathname.startsWith('/watch-together/');
+const isStaticAsset = (url) => url.pathname.startsWith('/assets/');
+const isLiveApi = (url) => url.pathname.startsWith('/watch-together/api/');
+
+self.addEventListener('fetch', (event) => {
+  const request = event.request;
+  if (request.method !== 'GET') return;
+  const url = new URL(request.url);
+  if (!isSameOrigin(url)) return;
+
+  if (isLiveApi(url)) {
+    event.respondWith(fetch(request).catch(() => caches.match('/watch-together/offline')));
+    return;
+  }
+
+  if (request.mode === 'navigate' && isAppRequest(url)) {
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put('/watch-together', copy)).catch(() => undefined);
+          return response;
+        })
+        .catch(() => caches.match('/watch-together').then((cached) => cached || caches.match('/watch-together/offline')))
+    );
+    return;
+  }
+
+  if (isStaticAsset(url) || isAppRequest(url)) {
+    event.respondWith(
+      caches.match(request)
+        .then((cached) => cached || fetch(request).then((response) => {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(request, copy)).catch(() => undefined);
+          return response;
+        }))
+    );
+  }
+});
+`;
+
+const renderWatchTogetherOfflinePage = (baseUrl) => {
+  const safeBaseUrl = String(baseUrl || '').replace(/\/+$/u, '');
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#e8113b">
+  <title>Nebula Sports Offline</title>
+  <style>
+    :root{color-scheme:dark;background:#0a0b0d;color:#f2f4f7;font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    body{margin:0;min-height:100dvh;display:grid;place-items:center;background:radial-gradient(circle at 50% 0,rgba(232,17,59,.16),transparent 32%),#0a0b0d}
+    main{width:min(420px,calc(100% - 32px));display:grid;justify-items:center;gap:14px;text-align:center}
+    img{width:74px;height:74px;border-radius:18px}
+    h1{margin:0;font-size:28px;letter-spacing:-.04em}
+    p{margin:0;color:#aab2bd;line-height:1.5}
+    a{margin-top:6px;border:1px solid #2c333c;border-radius:12px;background:#14171b;color:#f2f4f7;padding:11px 14px;text-decoration:none;font-weight:800}
+  </style>
+</head>
+<body>
+  <main>
+    <img src="${escapeHtml(safeBaseUrl)}/assets/nebula-sports-logo.png" alt="">
+    <h1>Offline</h1>
+    <p>Nebula Sports needs internet for live events. Open again when connection returns.</p>
+    <a href="/watch-together">Retry</a>
+  </main>
+</body>
+</html>`;
+};
+
 const renderWatchTogetherPage = ({ baseUrl, account = null, errorMessage = '' }) => {
   const safeBaseUrl = String(baseUrl || '').replace(/\/+$/u, '');
   const kofiPageName = escapeHtml(getKofiPageName(config.DONATION_PRIMARY_URL || 'https://ko-fi.com/redx115775'));
@@ -5502,8 +5668,16 @@ const renderWatchTogetherPage = ({ baseUrl, account = null, errorMessage = '' })
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#e8113b">
+    <meta name="description" content="Installable Nebula Sports web app for live events.">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Nebula Sports">
     <title>Nebula Sports Watch Together</title>
+    <link rel="manifest" href="/watch-together/manifest.webmanifest">
     <link rel="icon" type="image/png" sizes="32x32" href="${escapeHtml(safeBaseUrl)}/assets/nebula-sports-favicon-32.png">
+    <link rel="apple-touch-icon" href="${escapeHtml(safeBaseUrl)}/assets/nebula-sports-favicon.png">
     <style>
       :root{color-scheme:dark;--page:#0b0b0e;--surface:#0f0f12;--surface-2:#18181c;--surface-3:#232328;--ink:#f6f7fb;--muted:#9ca3af;--soft:#c7ccd6;--line:rgba(255,255,255,.105);--line-strong:rgba(255,255,255,.18);--accent:#65e6a4;--accent-2:#78d7ff;--accent-ink:#06100b;--danger:#fecdd3;--shadow:0 24px 80px rgba(0,0,0,.48)}
 	      *{box-sizing:border-box}html{background:var(--page)}body{margin:0;min-height:100vh;background:radial-gradient(circle at 12% -8%,rgba(120,215,255,.12),transparent 34%),radial-gradient(circle at 88% 6%,rgba(101,230,164,.1),transparent 30%),linear-gradient(180deg,#0b0b0e 0%,#0f1115 100%);color:var(--ink);font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:13px;letter-spacing:0}button,input,select{font:inherit}button{cursor:pointer}a{color:inherit;text-decoration:none}.app{min-height:100dvh;display:grid;grid-template-rows:auto 1fr}.top{height:58px;display:flex;align-items:center;justify-content:space-between;gap:14px;padding:0 18px;border-bottom:1px solid var(--line);background:rgba(11,11,14,.78);backdrop-filter:blur(18px);position:sticky;top:0;z-index:5}.brand{display:flex;align-items:center;gap:10px;font-weight:900}.brand img{width:34px;height:34px;border-radius:13px;box-shadow:0 0 0 1px rgba(255,255,255,.12),0 10px 24px rgba(101,230,164,.15)}.brand-copy{display:grid;line-height:1.02}.brand-copy span{font-size:15px;letter-spacing:-.025em;background:linear-gradient(90deg,#f8fbff 0%,#78d7ff 52%,#65e6a4 100%);-webkit-background-clip:text;background-clip:text;color:transparent}.brand-copy small{margin-top:4px;color:var(--muted);font-size:10px;font-weight:800}.actions{display:flex;gap:7px;align-items:center}.btn{min-height:32px;border:1px solid var(--line);border-radius:999px;background:rgba(255,255,255,.035);color:var(--soft);padding:6px 10px;font-weight:800;display:inline-flex;align-items:center;justify-content:center;gap:7px;white-space:nowrap;transition:background .18s ease,border-color .18s ease,color .18s ease,transform .18s ease,box-shadow .18s ease}.btn:hover{border-color:var(--line-strong);background:rgba(255,255,255,.07);color:var(--ink)}.btn:active{transform:translateY(1px) scale(.99)}.btn.primary{border-color:transparent;background:linear-gradient(135deg,var(--accent),#8df6bf);color:var(--accent-ink);box-shadow:0 10px 28px rgba(101,230,164,.2)}.btn.primary:hover{box-shadow:0 14px 36px rgba(101,230,164,.28)}.btn-icon{opacity:.86;font-weight:900}.layout{width:min(1280px,100%);margin:0 auto;display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:14px;padding:12px 16px 16px}.stage{min-width:0;display:grid;gap:12px}.intro{min-height:84px;border:1px solid var(--line);border-radius:20px;background:linear-gradient(180deg,rgba(24,24,28,.82),rgba(15,15,18,.82));display:flex;align-items:center;justify-content:space-between;gap:14px;padding:16px 18px;box-shadow:0 14px 46px rgba(0,0,0,.22)}.intro h1{margin:0;max-width:660px;font-size:clamp(26px,3vw,40px);font-weight:950;line-height:1;letter-spacing:-.04em}.intro p{margin:7px 0 0;max-width:520px;color:var(--muted);font-size:14px;line-height:1.45}.signal{display:flex;align-items:center;gap:9px;white-space:nowrap;padding:7px 9px 7px 11px;border:1px solid rgba(101,230,164,.22);border-radius:999px;background:rgba(101,230,164,.06)}.signal span{color:#d8f8e2;font-size:11px;font-weight:900}.pill{border:1px solid rgba(101,230,164,.24);border-radius:999px;padding:5px 10px;color:#d8f8e2;background:rgba(101,230,164,.08);font-size:11px;font-weight:900}.live-dot,.dot{position:relative;width:8px;height:8px;border-radius:99px;background:var(--accent);box-shadow:0 0 0 4px rgba(101,230,164,.14)}.live-dot::after,.dot::after{content:"";position:absolute;inset:-6px;border-radius:99px;border:1px solid rgba(101,230,164,.58);animation:pulse 1.8s ease-out infinite}@keyframes pulse{0%{transform:scale(.65);opacity:.9}100%{transform:scale(1.75);opacity:0}}.player-shell{border:1px solid var(--line-strong);border-radius:18px;background:#07080a;box-shadow:0 14px 44px rgba(0,0,0,.38);overflow:hidden}.player-head{min-height:42px;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 8px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,rgba(35,35,40,.86),rgba(18,18,22,.92));color:#eef2f0}.status{display:inline-flex;align-items:center;gap:8px;min-height:30px;border:1px solid rgba(101,230,164,.22);border-radius:999px;background:rgba(101,230,164,.06);padding:5px 9px;color:#d8f8e2;font-size:10px;font-weight:900;letter-spacing:.02em}.player{aspect-ratio:16/9;width:100%;min-height:328px;background:#050608;display:grid;place-items:center;overflow:hidden;border-radius:0 0 19px 19px}.player iframe{display:block;width:100%;height:100%;border:0;background:#050608}.empty{display:grid;place-items:center;text-align:center;gap:6px;padding:20px;color:#8d949f}.empty strong{display:block;color:var(--soft);font-size:16px;font-weight:900}.empty span{max-width:320px;line-height:1.45}.now{border:1px solid var(--line);border-radius:16px;background:linear-gradient(180deg,rgba(24,24,28,.8),rgba(15,15,18,.88));display:grid;grid-template-columns:minmax(0,1fr) minmax(280px,42%);gap:10px;padding:10px;box-shadow:0 8px 34px rgba(0,0,0,.2)}.now-copy h1{margin:0;font-size:18px;font-weight:950;line-height:1.15;letter-spacing:-.025em}.now-copy p{margin:5px 0 0;color:var(--muted);font-size:12px}.streams{display:flex;align-items:center;gap:7px;overflow:auto;padding:2px 2px 3px}.streams h3{display:none}.stream-btn{min-height:34px;display:flex;align-items:center;justify-content:space-between;gap:9px;border:1px solid var(--line);border-radius:999px;background:rgba(255,255,255,.04);color:var(--ink);padding:6px 9px 6px 10px;white-space:nowrap;transition:background .18s ease,border-color .18s ease,transform .18s ease}.stream-btn:hover{border-color:rgba(120,215,255,.32);background:rgba(120,215,255,.075);transform:translateY(-1px)}.stream-btn.active{border-color:rgba(101,230,164,.5);background:rgba(101,230,164,.12)}.quality{font-size:11px;font-weight:950;letter-spacing:.02em;color:#e9fff2}.viewer{display:inline-flex;align-items:center;gap:5px;font-size:10px;color:#b9c1ca;font-weight:850}.viewer::before{content:"";width:10px;height:6px;border:1px solid currentColor;border-radius:999px;box-shadow:inset 0 0 0 2px rgba(255,255,255,.03)}.badge{font-size:11px;color:#d8f8e2;font-weight:900}.side{min-height:0;border:1px solid var(--line);border-radius:18px;background:linear-gradient(180deg,rgba(24,24,28,.88),rgba(15,15,18,.92));overflow:hidden;box-shadow:0 14px 46px rgba(0,0,0,.26);display:grid;grid-template-rows:auto 1fr}.tabs{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin:8px;padding:5px;border:1px solid var(--line);border-radius:999px;background:rgba(0,0,0,.22)}.tab{height:34px;border:0;border-radius:999px;background:transparent;color:var(--muted);font-weight:900;display:flex;align-items:center;justify-content:center;gap:6px;transition:background .2s ease,color .2s ease,box-shadow .2s ease,transform .2s ease}.tab:hover{color:var(--ink);background:rgba(255,255,255,.045)}.tab.active{background:linear-gradient(180deg,rgba(255,255,255,.12),rgba(255,255,255,.07));color:var(--ink);box-shadow:inset 0 0 0 1px rgba(255,255,255,.08),0 7px 18px rgba(0,0,0,.22)}.tab-icon{color:var(--accent);font-size:11px}.panel{display:none;min-height:0}.panel.active{display:grid}.events-panel{grid-template-rows:auto 1fr}.side-head{padding:12px 14px 14px;border-bottom:1px solid var(--line);display:grid;gap:10px}.side-title{display:flex;align-items:center;justify-content:space-between;gap:10px}.side-title h2{margin:0;font-size:17px;font-weight:950;letter-spacing:-.025em}.search{display:grid;grid-template-columns:1fr auto;gap:8px}.search input,.side select,.chat input{width:100%;height:34px;border:1px solid var(--line);background:rgba(255,255,255,.045);color:var(--ink);border-radius:999px;padding:0 13px;outline:none;transition:border-color .18s ease,background .18s ease,box-shadow .18s ease}.search input::placeholder,.chat input::placeholder{color:#737b86}.search input:focus,.side select:focus,.chat input:focus{border-color:rgba(101,230,164,.48);background:rgba(255,255,255,.065);box-shadow:0 0 0 4px rgba(101,230,164,.1)}.filters{display:grid;gap:8px}.catalog-picker{position:relative}.catalog-trigger{width:100%;height:34px;border:1px solid var(--line);background:rgba(255,255,255,.045);color:var(--ink);border-radius:999px;padding:0 13px;display:flex;align-items:center;justify-content:space-between;gap:10px;font-weight:850;text-align:left;outline:none;transition:border-color .18s ease,background .18s ease,box-shadow .18s ease}.catalog-trigger:hover,.catalog-trigger[aria-expanded="true"]{border-color:rgba(101,230,164,.48);background:rgba(255,255,255,.065);box-shadow:0 0 0 4px rgba(101,230,164,.1)}.catalog-menu{position:absolute;z-index:30;top:calc(100% + 6px);left:0;right:0;display:none;max-height:260px;overflow:auto;padding:6px;border:1px solid var(--line-strong);border-radius:14px;background:#101116;box-shadow:0 18px 42px rgba(0,0,0,.48)}.catalog-picker.open .catalog-menu{display:grid;gap:3px}.catalog-option{width:100%;min-height:32px;border:0;border-radius:10px;background:transparent;color:#e7edf4;padding:7px 10px;text-align:left;font-size:12px;font-weight:850}.catalog-option:hover,.catalog-option:focus{background:rgba(120,215,255,.12);color:#fff;outline:none}.catalog-option.active{background:rgba(101,230,164,.15);color:#d8f8e2}.list{overflow:auto;padding:8px;display:grid;gap:7px;align-content:start}.event{width:100%;text-align:left;border:1px solid transparent;border-radius:14px;background:rgba(255,255,255,.035);color:var(--ink);padding:11px 12px;display:grid;gap:6px;transition:background .18s ease,border-color .18s ease,transform .18s ease}.event:hover{border-color:var(--line-strong);background:rgba(255,255,255,.06);transform:translateY(-1px)}.event.active{border-color:rgba(101,230,164,.44);background:rgba(101,230,164,.1)}.event strong{display:block;font-size:13px;line-height:1.32;font-weight:900}.event span{display:block;color:var(--muted);font-size:11px;line-height:1.35}.chat{padding:12px;grid-template-rows:auto 1fr auto auto;gap:8px;min-height:440px}.chat-list{overflow:auto;display:grid;gap:8px;align-content:start;padding-right:2px}.chat-msg{position:relative;border:1px solid var(--line);border-radius:16px;background:rgba(255,255,255,.045);padding:10px 11px;box-shadow:0 7px 20px rgba(0,0,0,.12);display:grid;gap:6px}.chat-msg::before,.chat-msg::after,.chat-meta::before,.chat-meta::after{content:none!important;display:none!important}.chat-meta{display:flex;align-items:center;justify-content:space-between;gap:10px;color:var(--muted);font-size:10px;min-width:0}.chat-name{display:block;min-width:0;max-width:70%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#d8f8e2;font-size:11px;font-weight:950;background:transparent!important;border:0!important;border-radius:0!important;padding:0!important}.chat-time{flex:0 0 auto;color:#858d98}.chat-text{margin:0;color:#e4e8ee;line-height:1.38;overflow-wrap:anywhere;background:transparent!important;border:0!important;border-radius:0!important;padding:0!important}.chat-form{display:grid;grid-template-columns:86px 1fr auto;gap:7px}.chat-status{min-height:16px;color:var(--muted);font-size:11px}.error{color:var(--danger);border:1px solid #7f1d1d;background:#2a1014;border-radius:14px;padding:10px;margin-top:12px}.floatingchat-container-wrap{right:18px!important;bottom:18px!important;z-index:20!important;background:transparent!important;box-shadow:none!important}.floatingchat-container-wrap iframe,.floatingchat-container-wrap-mobi iframe{background:transparent!important;box-shadow:none!important}.floatingchat-container-wrap-mobi{right:12px!important;bottom:12px!important;z-index:20!important}@media(min-width:1081px){body{font-size:12px}.top{height:54px;padding:0 16px}.brand img{width:31px;height:31px}.brand-copy span{font-size:14px}.layout{width:min(1200px,100%);grid-template-columns:minmax(0,1fr) 300px;gap:12px;padding:10px 14px 14px}.stage{gap:10px}.intro{min-height:74px;padding:13px 15px;border-radius:18px}.intro h1{font-size:clamp(24px,2.55vw,35px)}.intro p{font-size:13px}.player-head{min-height:38px}.player{min-height:296px}.now{padding:9px}.now-copy h1{font-size:16px}.side{border-radius:16px}.tabs{margin:7px}.side-head{padding:10px 12px 12px}.chat{min-height:400px;padding:10px}.event{padding:9px 10px}.btn{min-height:30px;padding:5px 9px}}@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}@media(max-width:1080px){.layout{grid-template-columns:1fr}.player{min-height:auto}.side{min-height:480px}.intro{align-items:flex-start}.now{grid-template-columns:1fr}.streams{padding-top:4px}.signal{align-self:flex-start}}@media(max-width:680px){.top{height:auto;padding:12px;align-items:flex-start;flex-direction:column}.actions{width:100%;overflow:auto}.layout{padding:12px 12px 80px;gap:14px}.intro{min-height:0;padding:16px;align-items:flex-start;flex-direction:column}.intro h1{font-size:30px}.player-head{align-items:flex-start;flex-direction:column}.now{padding:12px}.side{min-height:540px}.brand-copy small{display:none}.btn{min-height:36px;padding:7px 12px}.chat{min-height:500px}.chat-form{grid-template-columns:1fr}.tabs{border-radius:20px}.tab{height:38px}.player{border-radius:0 0 19px 19px}}
@@ -5512,6 +5686,8 @@ const renderWatchTogetherPage = ({ baseUrl, account = null, errorMessage = '' })
       .watch-notice{width:100%;display:flex;align-items:center;justify-content:center;gap:8px;padding:8px 14px;border-bottom:1px solid rgba(240,160,32,.2);background:#2a1b04;color:#f0a020;font-size:12px;font-weight:800;text-align:center}
       .watch-notice a{color:#ffbd4a;text-decoration:underline;text-underline-offset:2px}
       .watch-notice-icon{font-size:13px;line-height:1}
+      .install-app-btn{display:none}
+      .install-app-btn.is-ready{display:inline-flex}
       .intro-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
       .live-count-pill{display:none;align-items:center;gap:8px;border:1px solid rgba(101,230,164,.24);border-radius:999px;background:rgba(101,230,164,.08);color:#d8f8e2;padding:5px 10px;font-size:11px;font-weight:900}
       .live-count-pill.is-ready{display:inline-flex}
@@ -5653,7 +5829,7 @@ const renderWatchTogetherPage = ({ baseUrl, account = null, errorMessage = '' })
       .kofi-fallback{position:fixed;right:18px;bottom:18px;z-index:79;display:inline-flex;align-items:center;justify-content:center;min-height:42px;padding:10px 14px;border-radius:10px;background:var(--accent);color:#fff;font-size:13px;font-weight:900;box-shadow:0 14px 34px rgba(0,0,0,.36),0 10px 30px -8px rgba(232,17,59,.72)}
       .kofi-fallback.is-hidden{display:none}
       @media(max-width:1180px){.layout{grid-template-columns:1fr}.side{position:static;height:min(680px,72dvh);max-height:none}}
-      @media(max-width:720px){.app,.watch-shell,.workspace,.layout,.stage,.side{width:100%;max-width:100vw;min-width:0}.watch-shell{grid-template-columns:1fr}.rail{display:none}.top{height:auto;align-items:flex-start;flex-direction:column;padding:12px}.sport-tabs{width:100%;margin-left:0}.top>.actions{margin-left:0;width:100%;overflow:auto}.layout{padding:12px 12px 80px}.player{min-height:auto}.player-head{align-items:flex-start;flex-direction:column}.now-copy{align-items:flex-start;flex-direction:column}.now-copy p{margin-left:0}.chat-form{grid-template-columns:1fr}}
+      @media(max-width:720px){.app,.watch-shell,.workspace,.layout,.stage,.side{width:100%;max-width:100vw;min-width:0}.watch-shell{display:block;min-height:100dvh}.rail{position:fixed;left:10px;right:10px;bottom:10px;top:auto;width:auto;height:58px;z-index:90;display:flex;flex-direction:row;justify-content:space-around;align-items:center;gap:2px;padding:6px;border:1px solid var(--border-2);border-radius:18px;background:rgba(15,17,20,.92);box-shadow:0 18px 44px rgba(0,0,0,.46);backdrop-filter:blur(18px)}.rail-logo,.rail-avatar,.rail-spacer{display:none}.nav-item{width:44px;height:44px;border-radius:14px;font-size:18px}.nav-item.active::before{left:12px;right:12px;top:auto;bottom:-6px;width:auto;height:3px;border-radius:3px}.nav-item .label{display:none}.top{height:auto;min-height:64px;align-items:center;flex-direction:row;flex-wrap:wrap;padding:10px 10px 8px;gap:8px}.brand{order:1;flex:1 1 auto}.brand img{width:34px;height:34px}.brand-copy span{font-size:14px}.brand-copy small{display:none}.top>.actions{order:2;margin-left:0;width:auto;max-width:48%;overflow:auto;justify-content:flex-end}.top>.actions .btn{min-height:34px;padding:7px 10px;font-size:12px}.sport-tabs{order:3;width:100%;margin-left:0;padding:2px 0 0;gap:6px}.sport-tab{min-height:34px;padding:7px 12px;border-radius:10px;background:var(--surface);font-size:12px}.sport-tab.active{background:var(--surface-3)}.layout{padding:8px 10px 88px;gap:12px}.player-shell{border-radius:16px}.player-head{min-height:46px;align-items:center;flex-direction:row;padding:8px 10px}.player-head>.actions{overflow:auto;justify-content:flex-end}.player-head .btn{min-height:34px;padding:7px 10px}.status{min-width:0;max-width:52%;overflow:hidden}.status span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.player{min-height:auto;aspect-ratio:16/9}.play-gate-btn{width:62px;height:62px;font-size:28px}.now-copy{align-items:flex-start;flex-direction:column;padding:12px}.now-copy h1{font-size:15px}.now-copy p{margin-left:0}.streams{padding:10px 12px;gap:8px}.streams::before{display:none}.stream-btn{max-width:78vw;min-height:38px}.side{position:static;height:min(620px,66dvh);max-height:none;border-radius:16px}.tabs{padding:10px}.side-head{padding:12px}.event{padding:13px 14px}.chat{padding:10px}.chat-form{grid-template-columns:1fr}.chat input{height:42px}.floatingchat-container-wrap,.floatingchat-container-wrap-mobi{right:12px!important;bottom:78px!important}.kofi-fallback{right:12px;bottom:78px}}
     </style>
 	  </head>
   <body>
@@ -5685,6 +5861,7 @@ const renderWatchTogetherPage = ({ baseUrl, account = null, errorMessage = '' })
 		            <button class="sport-tab" type="button" data-sport-filter="more">More</button>
 		          </nav>
 		          <div class="actions">
+		            <button class="btn primary install-app-btn" id="installApp" type="button"><span class="btn-icon">▣</span>Install webapp</button>
 		            <a class="btn" href="/sports"><span class="btn-icon">□</span>Stremio addon</a>
 	          </div>
         </header>
@@ -6051,6 +6228,30 @@ const renderWatchTogetherPage = ({ baseUrl, account = null, errorMessage = '' })
             updateLiveCount(data.count);
           }catch{}
         };
+        let deferredInstallPrompt=null;
+        const installButton=el('installApp');
+        const standalone=window.matchMedia?.('(display-mode: standalone)').matches||window.navigator.standalone;
+        const showIosInstallHint=()=>/iphone|ipad|ipod/i.test(navigator.userAgent)&&!standalone;
+        if(showIosInstallHint()){
+          installButton.classList.add('is-ready');
+          installButton.addEventListener('click',()=>alert('Tap Share, then Add to Home Screen.'));
+        }
+        window.addEventListener('beforeinstallprompt',(event)=>{
+          event.preventDefault();
+          deferredInstallPrompt=event;
+          installButton.classList.add('is-ready');
+        });
+        installButton.addEventListener('click',async()=>{
+          if(!deferredInstallPrompt)return;
+          deferredInstallPrompt.prompt();
+          await deferredInstallPrompt.userChoice.catch(()=>null);
+          deferredInstallPrompt=null;
+          installButton.classList.remove('is-ready');
+        });
+        window.addEventListener('appinstalled',()=>installButton.classList.remove('is-ready'));
+        if('serviceWorker' in navigator){
+          window.addEventListener('load',()=>navigator.serviceWorker.register('/watch-together/sw.js',{scope:'/watch-together'}).catch(()=>{}));
+        }
         sendLiveHeartbeat();
         setInterval(sendLiveHeartbeat,25000);
         loadCatalogs().then(loadEvents).catch(showError);
@@ -8037,6 +8238,29 @@ const bootstrap = async () => {
     return watchTogetherLiveSessions.size;
   };
 
+  const getWatchTogetherAdminStats = async () => {
+    const messagesByEvent = await loadWatchChatMessages();
+    const identities = await loadWatchChatIdentities();
+    const sportsStats = sportsSupporterService.getStats();
+    const chatEvents = Object.keys(messagesByEvent || {}).length;
+    const chatMessages = Object.values(messagesByEvent || {})
+      .reduce((total, messages) => total + (Array.isArray(messages) ? messages.length : 0), 0);
+    return {
+      liveVisitors: getWatchTogetherLiveCount(),
+      liveTtlSeconds: Math.round(WATCH_TOGETHER_LIVE_TTL_MS / 1000),
+      chatEvents,
+      chatMessages,
+      lockedChatNames: Object.keys(identities || {}).length,
+      chatResponseCacheEntries: watchChatResponseCache.size,
+      chatRateLimitClients: watchChatPostTimes.size,
+      sportsAccounts: sportsStats.accounts || 0,
+      sportsActive: sportsStats.active || 0,
+      sportsTrials: sportsStats.trials || 0,
+      sportsTokens: sportsStats.tokens || 0,
+      sportsPayments: sportsStats.payments || 0
+    };
+  };
+
   const checkWatchChatRateLimit = (req) => {
     const key = getClientAddress(req);
     const now = Date.now();
@@ -8057,6 +8281,31 @@ const bootstrap = async () => {
     }
     return '';
   };
+
+  app.get('/watch-together/manifest.webmanifest', (req, res) => {
+    res
+      .status(200)
+      .setHeader('Cache-Control', 'public, max-age=3600')
+      .type('application/manifest+json')
+      .send(JSON.stringify(renderWatchTogetherWebManifest(getPublicBaseUrl(req))));
+  });
+
+  app.get('/watch-together/sw.js', (req, res) => {
+    res
+      .status(200)
+      .setHeader('Cache-Control', 'no-store')
+      .setHeader('Service-Worker-Allowed', '/watch-together')
+      .type('application/javascript')
+      .send(renderWatchTogetherServiceWorker());
+  });
+
+  app.get('/watch-together/offline', (req, res) => {
+    res
+      .status(200)
+      .setHeader('Cache-Control', 'public, max-age=3600')
+      .type('html')
+      .send(renderWatchTogetherOfflinePage(getPublicBaseUrl(req)));
+  });
 
   app.get('/watch-together', async (req, res, next) => {
     try {
@@ -8967,6 +9216,7 @@ const bootstrap = async () => {
       const systemStats = await getSystemStats();
       const cacheStats = await cacheManager.getCacheStats(torrentEngine.getActiveCachePaths());
       const streamStats = streamManager.getStats();
+      const watchTogetherStats = await getWatchTogetherAdminStats();
       const stats = {
         runtime: {
           uptimeSeconds: Math.round(process.uptime()),
@@ -8987,6 +9237,7 @@ const bootstrap = async () => {
         cache: cacheStats,
         providers: providerService.getStats(),
         sourceRegistry: sourceRegistry.getStats(),
+        watchTogether: watchTogetherStats,
         supporters: supporterService.getStats()
       };
 
