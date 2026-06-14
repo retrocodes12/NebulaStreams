@@ -7302,11 +7302,11 @@ const bootstrap = async () => {
       .setHeader('Cache-Control', 'public, max-age=300')
       .sendFile(path.resolve('webos/repo.json'));
   });
-  app.get('/webos/com.nebulastreams.sports_1.0.2_all.ipk', (_req, res) => {
+  app.get('/webos/com.nebulastreams.sports_1.0.3_all.ipk', (_req, res) => {
     res
       .type('application/vnd.palm.ipk')
       .setHeader('Cache-Control', 'public, max-age=86400')
-      .sendFile(path.resolve('dist/webos/com.nebulastreams.sports_1.0.2_all.ipk'));
+      .sendFile(path.resolve('dist/webos/com.nebulastreams.sports_1.0.3_all.ipk'));
   });
   app.get('/favicon.ico', (_req, res) => {
     res.redirect(301, '/assets/nebula-sports-favicon-32.png');
