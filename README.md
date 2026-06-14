@@ -106,6 +106,24 @@ Local endpoints:
 - `http://127.0.0.1:3000/configure`
 - `http://127.0.0.1:3000/health`
 
+## Nebula Sports webOS
+
+Homebrew Channel custom repository:
+
+```text
+https://raw.githubusercontent.com/retrocodes12/NebulaStreams/main/webos/repo.json
+```
+
+In Homebrew Channel, open repository settings, add that URL, refresh repositories, then install **Nebula Sports**.
+
+Direct IPK:
+
+```text
+https://raw.githubusercontent.com/retrocodes12/NebulaStreams/main/dist/webos/com.nebulastreams.sports_1.0.2_all.ipk
+```
+
+If an older IPK is already installed and update fails, uninstall `com.nebulastreams.sports` from Homebrew Channel or Developer Mode first, then install again.
+
 ## Verification
 
 Before or after a VPS update:
