@@ -7291,6 +7291,9 @@ const bootstrap = async () => {
     maxAge: '7d',
     immutable: true
   }));
+  app.get('/favicon.ico', (_req, res) => {
+    res.redirect(301, '/assets/nebula-sports-favicon-32.png');
+  });
   app.use(createRateLimiter({
     name: 'public',
     windowMs: config.PUBLIC_RATE_LIMIT_WINDOW_SECONDS * 1000,
@@ -8224,6 +8227,79 @@ const bootstrap = async () => {
     return watchTogetherLiveSessions.size;
   };
 
+  const WATCH_ADMIN_HISTORY_LIMIT = 360;
+  const WATCH_ADMIN_SAMPLE_MIN_MS = 15_000;
+  const watchTogetherAdminSamples = [];
+
+  const parseWatchAdminAmount = (value) => {
+    const parsed = Number.parseFloat(String(value || '').replace(/[^0-9.-]/gu, ''));
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+
+  const summarizeWatchAdminSportsStore = () => {
+    const accounts = Object.values(sportsSupporterService.store?.accounts || {});
+    const payments = Object.values(sportsSupporterService.store?.payments || {});
+    const tokenRecords = Object.values(sportsSupporterService.store?.tokens || {});
+    const totals = accounts.reduce((next, account) => {
+      const stats = account?.stats || {};
+      next.installs += Number(stats.installs || 0);
+      next.manifests += Number(stats.manifests || 0);
+      next.catalogs += Number(stats.catalogs || 0);
+      next.streams += Number(stats.streams || 0);
+      return next;
+    }, { installs: 0, manifests: 0, catalogs: 0, streams: 0 });
+    const activeAccounts = accounts.filter((account) => sportsSupporterService.isAccountActive(account));
+    const trialAccounts = accounts.filter((account) => String(account?.tier || '') === 'trial');
+    const paymentTotal = payments.reduce((total, payment) => total + parseWatchAdminAmount(payment?.amount), 0);
+    const claimedTokens = tokenRecords.filter((token) => token?.claimedBy).length;
+    return {
+      activeAccounts: activeAccounts.length,
+      trialAccounts: trialAccounts.length,
+      accountStreams: totals.streams,
+      accountCatalogs: totals.catalogs,
+      accountManifests: totals.manifests,
+      accountInstalls: totals.installs,
+      claimedTokens,
+      paymentTotal,
+      paymentCurrency: payments.find((payment) => payment?.currency)?.currency || 'USD',
+      paymentEmailCount: payments.filter((payment) => payment?.emailSentAt).length
+    };
+  };
+
+  const buildWatchTogetherAdminSample = (stats) => ({
+    at: Date.now(),
+    liveVisitors: Number(stats.liveVisitors || 0),
+    chatMessages: Number(stats.chatMessages || 0),
+    chatEvents: Number(stats.chatEvents || 0),
+    lockedChatNames: Number(stats.lockedChatNames || 0),
+    chatResponseCacheEntries: Number(stats.chatResponseCacheEntries || 0),
+    chatRateLimitClients: Number(stats.chatRateLimitClients || 0),
+    sportsAccounts: Number(stats.sportsAccounts || 0),
+    sportsActive: Number(stats.sportsActive || 0),
+    sportsTrials: Number(stats.sportsTrials || 0),
+    sportsTokens: Number(stats.sportsTokens || 0),
+    sportsPayments: Number(stats.sportsPayments || 0),
+    paymentTotal: Number(stats.paymentTotal || 0),
+    accountStreams: Number(stats.accountStreams || 0),
+    accountCatalogs: Number(stats.accountCatalogs || 0),
+    accountManifests: Number(stats.accountManifests || 0),
+    accountInstalls: Number(stats.accountInstalls || 0)
+  });
+
+  const recordWatchTogetherAdminSample = (stats) => {
+    const now = Date.now();
+    const last = watchTogetherAdminSamples[watchTogetherAdminSamples.length - 1];
+    const sample = buildWatchTogetherAdminSample(stats);
+    if (!last || now - Number(last.at || 0) >= WATCH_ADMIN_SAMPLE_MIN_MS) {
+      watchTogetherAdminSamples.push(sample);
+      while (watchTogetherAdminSamples.length > WATCH_ADMIN_HISTORY_LIMIT) {
+        watchTogetherAdminSamples.shift();
+      }
+      return;
+    }
+    watchTogetherAdminSamples[watchTogetherAdminSamples.length - 1] = { ...sample, at: last.at };
+  };
+
   const touchWatchTogetherLiveSession = (req, rawSessionId = req.body?.sessionId) => {
     const bodySessionId = sanitizeWatchLiveSessionId(rawSessionId);
     const fallbackSessionId = crypto
@@ -8242,10 +8318,21 @@ const bootstrap = async () => {
     const messagesByEvent = await loadWatchChatMessages();
     const identities = await loadWatchChatIdentities();
     const sportsStats = sportsSupporterService.getStats();
+    const sportsStoreStats = summarizeWatchAdminSportsStore();
     const chatEvents = Object.keys(messagesByEvent || {}).length;
     const chatMessages = Object.values(messagesByEvent || {})
       .reduce((total, messages) => total + (Array.isArray(messages) ? messages.length : 0), 0);
-    return {
+    const chatEventRows = Object.entries(messagesByEvent || {})
+      .map(([eventId, messages]) => ({
+        eventId,
+        messages: Array.isArray(messages) ? messages.length : 0,
+        lastMessageAt: Array.isArray(messages) && messages.length
+          ? messages[messages.length - 1]?.createdAt || null
+          : null
+      }))
+      .sort((left, right) => right.messages - left.messages)
+      .slice(0, 10);
+    const stats = {
       liveVisitors: getWatchTogetherLiveCount(),
       liveTtlSeconds: Math.round(WATCH_TOGETHER_LIVE_TTL_MS / 1000),
       chatEvents,
@@ -8257,8 +8344,145 @@ const bootstrap = async () => {
       sportsActive: sportsStats.active || 0,
       sportsTrials: sportsStats.trials || 0,
       sportsTokens: sportsStats.tokens || 0,
-      sportsPayments: sportsStats.payments || 0
+      sportsPayments: sportsStats.payments || 0,
+      ...sportsStoreStats,
+      chatEventRows
     };
+    recordWatchTogetherAdminSample(stats);
+    return { ...stats, history: watchTogetherAdminSamples };
+  };
+
+  const renderWatchTogetherAdminLogin = ({ errorMessage = '' } = {}) => `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Nebula Sports Admin</title>
+  <style>
+    :root{color-scheme:dark;--bg:#0b0d11;--surface:#151820;--line:rgba(255,255,255,.11);--text:#f7f8fb;--muted:#8f97a6;--accent:#4f9cff;--bad:#ff6b7a}
+    *{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:radial-gradient(circle at 25% 10%,rgba(79,156,255,.18),transparent 35%),linear-gradient(180deg,#0b0d11,#08090c);color:var(--text);font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    .box{width:min(420px,calc(100% - 32px));border:1px solid var(--line);border-radius:16px;background:rgba(21,24,32,.9);box-shadow:0 24px 90px rgba(0,0,0,.42);padding:26px}
+    h1{margin:0 0 6px;font-size:25px;letter-spacing:-.03em}p{margin:0 0 20px;color:var(--muted)}form{display:grid;gap:12px}label{display:grid;gap:6px;color:var(--muted);font-size:13px;font-weight:750}input{width:100%;height:42px;border:1px solid var(--line);border-radius:10px;background:#0c0f15;color:var(--text);padding:0 12px;font:inherit}input:focus{outline:0;border-color:rgba(79,156,255,.7);box-shadow:0 0 0 4px rgba(79,156,255,.12)}button{height:42px;border:0;border-radius:10px;background:var(--accent);color:white;font-weight:850;cursor:pointer}.err{margin-bottom:14px;color:#fecdd3;border:1px solid rgba(255,107,122,.4);background:rgba(255,107,122,.08);border-radius:10px;padding:10px 12px;font-size:13px}
+  </style>
+</head>
+<body><main class="box"><h1>Nebula Sports Admin</h1><p>Watch-together analytics console.</p>${errorMessage ? `<div class="err">${escapeHtml(errorMessage)}</div>` : ''}<form method="post" action="/watch-together/admin/login"><label>Username<input name="username" autocomplete="username" required></label><label>Password<input name="password" type="password" autocomplete="current-password" required></label><button type="submit">Open console</button></form></main></body>
+</html>`;
+
+  const renderWatchTogetherAdminConsole = (stats = {}) => {
+    const snapshot = JSON.stringify({
+      liveVisitors: Number(stats.liveVisitors || 0),
+      liveTtlSeconds: Number(stats.liveTtlSeconds || 0),
+      chatEvents: Number(stats.chatEvents || 0),
+      chatMessages: Number(stats.chatMessages || 0),
+      lockedChatNames: Number(stats.lockedChatNames || 0),
+      chatResponseCacheEntries: Number(stats.chatResponseCacheEntries || 0),
+      chatRateLimitClients: Number(stats.chatRateLimitClients || 0),
+      sportsAccounts: Number(stats.sportsAccounts || 0),
+      sportsActive: Number(stats.sportsActive || 0),
+      sportsTrials: Number(stats.sportsTrials || 0),
+      trialAccounts: Number(stats.trialAccounts || 0),
+      sportsTokens: Number(stats.sportsTokens || 0),
+      sportsPayments: Number(stats.sportsPayments || 0),
+      accountStreams: Number(stats.accountStreams || 0),
+      accountCatalogs: Number(stats.accountCatalogs || 0),
+      accountManifests: Number(stats.accountManifests || 0),
+      accountInstalls: Number(stats.accountInstalls || 0),
+      claimedTokens: Number(stats.claimedTokens || 0),
+      paymentTotal: Number(stats.paymentTotal || 0),
+      paymentCurrency: String(stats.paymentCurrency || 'USD'),
+      paymentEmailCount: Number(stats.paymentEmailCount || 0),
+      chatEventRows: Array.isArray(stats.chatEventRows) ? stats.chatEventRows : [],
+      history: Array.isArray(stats.history) ? stats.history : []
+    }).replace(/</gu, '\\u003c');
+    return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>NebulaSports - Admin Analytics Console</title>
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/nebula-sports-favicon-32.png">
+  <style>
+    :root{color-scheme:dark;--bg:#191918;--side:#151514;--surface:#191918;--hover:#242423;--text:#fff;--soft:rgba(255,255,255,.58);--faint:rgba(255,255,255,.32);--line:rgba(255,255,255,.14);--line-soft:rgba(255,255,255,.08);--blue:#5e9fe8;--green:#72bc8f;--yellow:#eac26b;--orange:#de9255;--red:#e97366;--cyan:#4fb9c9;--radius:8px;--page:900px}
+    *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--text);font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;font-size:14px;line-height:1.45}.app{display:grid;grid-template-columns:174px 1fr;min-height:100vh}.sidebar{position:sticky;top:0;height:100vh;background:var(--side);border-right:1px solid var(--line);padding:18px 12px;display:flex;flex-direction:column}.brand{display:flex;align-items:center;gap:9px;margin-bottom:22px}.logo{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;overflow:hidden;background:#0c1014;box-shadow:0 0 0 1px var(--line-soft)}.logo img{width:100%;height:100%;object-fit:cover}.brand strong{display:block;font-size:12px;line-height:1.1}.brand span{display:block;color:var(--faint);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin-top:2px}.nav{display:grid;gap:8px}.nav button{height:28px;border:0;border-radius:6px;background:transparent;color:var(--soft);font:inherit;font-size:12px;font-weight:650;text-align:left;padding:0 12px;display:flex;align-items:center;gap:8px;cursor:pointer}.nav button:hover{background:var(--hover);color:var(--text)}.nav button.active{background:rgba(94,159,232,.13);color:var(--blue)}.nav .group{margin:6px 0 -2px;color:var(--faint);font-size:11px;font-weight:800}.foot{margin-top:auto;color:var(--faint);font-size:10px;line-height:1.35}.logout{margin-top:10px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--soft);height:28px;padding:0 10px;font:inherit;font-size:11px;cursor:pointer}.main{min-width:0}.topbar{height:54px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 22px;position:sticky;top:0;z-index:5;background:rgba(25,25,24,.94);backdrop-filter:blur(8px)}.crumb{font-size:10px;color:var(--faint);font-weight:750}.topbar h1{margin:0;font-size:17px;line-height:1.1}.tools{display:flex;align-items:center;gap:8px}.live{height:25px;border:1px solid var(--line);border-radius:999px;padding:0 12px;display:flex;align-items:center;gap:8px;font-size:11px;font-weight:800}.dot{width:6px;height:6px;border-radius:50%;background:var(--green)}.seg{height:26px;background:var(--hover);border-radius:6px;padding:2px;display:flex}.seg button,.refresh{border:0;background:transparent;color:var(--soft);border-radius:5px;padding:0 11px;font:inherit;font-size:11px;font-weight:800;cursor:pointer}.seg button.active{background:#111;color:var(--text)}.refresh{height:26px;border:1px solid var(--line);color:var(--text)}.content{max-width:var(--page);padding:26px 22px 58px}.page{display:none}.page.active{display:block}.kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:20px}.kpi,.card{border:1px solid var(--line);border-radius:var(--radius);background:var(--surface)}.kpi{min-height:74px;padding:14px 14px 10px}.label{font-size:11px;color:var(--soft);font-weight:750}.value{font-size:20px;font-weight:850;letter-spacing:-.02em;margin-top:8px;font-variant-numeric:tabular-nums}.sub{font-size:10px;color:var(--faint);margin-top:5px}.delta{display:inline-flex;margin-top:8px;border-radius:999px;padding:1px 6px;font-size:10px;font-weight:800}.up{background:rgba(114,188,143,.12);color:var(--green)}.down{background:rgba(233,115,102,.12);color:var(--red)}.flat{background:rgba(255,255,255,.08);color:var(--soft)}.section-title{display:flex;align-items:baseline;gap:10px;margin:0 0 10px}.section-title h2{margin:0;font-size:13px}.hint{font-size:10px;color:var(--faint);font-weight:650}.grid{display:grid;gap:10px;margin-bottom:10px}.g2{grid-template-columns:1fr 1fr}.card{padding:14px}.card h3{margin:0;font-size:12px}.card p{margin:2px 0 0;color:var(--faint);font-size:10px}.chart{width:100%;display:block}.grid-line{stroke:var(--line-soft);stroke-width:1}.axis{fill:var(--faint);font-size:9px;font-weight:650}.ln{fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}.area{opacity:.14}.bar-row{display:grid;grid-template-columns:116px 1fr 44px;gap:10px;align-items:center;margin:10px 0;font-size:11px}.bar-row strong{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.track{height:7px;border-radius:999px;background:rgba(255,255,255,.14);overflow:hidden}.fill{height:100%;border-radius:999px}.num{text-align:right;color:var(--soft);font-variant-numeric:tabular-nums}.tbl{width:100%;border-collapse:collapse;font-size:11px}.tbl th,.tbl td{border-bottom:1px solid var(--line-soft);padding:9px 10px;text-align:left}.tbl th{color:var(--soft);font-weight:750}.badge{display:inline-flex;border-radius:999px;padding:2px 7px;font-size:10px;font-weight:800}.badge.b{background:rgba(94,159,232,.12);color:var(--blue)}.badge.g{background:rgba(114,188,143,.12);color:var(--green)}.empty{color:var(--faint);font-size:12px;padding:20px 0}.note{color:var(--faint);font-size:10px;border-top:1px solid var(--line-soft);padding-top:14px;margin-top:16px}a{color:inherit}@media(max-width:920px){.app{grid-template-columns:1fr}.sidebar{position:static;height:auto}.nav{grid-template-columns:repeat(2,minmax(0,1fr))}.foot{display:none}.kpis,.g2{grid-template-columns:1fr}.topbar{height:auto;gap:12px;align-items:flex-start;flex-direction:column;padding:14px 16px}.content{padding:18px 16px}.bar-row{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand"><div class="logo"><img src="/assets/nebula-sports-logo.png" alt=""></div><div><strong>NebulaSports</strong><span>Admin Console</span></div></div>
+      <nav class="nav">
+        <button class="active" data-page="overview">📊 Overview</button>
+        <button data-page="viewership">👁️ Live Viewership</button>
+        <div class="group">💳 Subscriptions & Revenue</div>
+        <button data-page="revenue">💳 Revenue</button>
+        <button data-page="health">📡 Stream Health</button>
+        <button data-page="content">🏆 Top Content</button>
+        <button data-page="growth">📈 User Growth</button>
+      </nav>
+      <form class="foot" method="post" action="/watch-together/admin/logout">
+        <div>Real counters from this server. History starts when this process samples stats.</div>
+        <button class="logout" type="submit">Logout</button>
+      </form>
+    </aside>
+    <section class="main">
+      <header class="topbar">
+        <div><div class="crumb">NebulaSports › Analytics</div><h1 id="title">Overview</h1></div>
+        <div class="tools">
+          <span class="live"><span class="dot"></span><span id="liveNow">0</span> watching now</span>
+          <div class="seg" id="range"><button data-days="7">7d</button><button class="active" data-days="30">30d</button><button data-days="90">90d</button></div>
+          <button class="refresh" id="refresh" type="button">↻ Refresh</button>
+        </div>
+      </header>
+      <main class="content">
+        <section class="page active" id="page-overview"></section>
+        <section class="page" id="page-viewership"></section>
+        <section class="page" id="page-revenue"></section>
+        <section class="page" id="page-health"></section>
+        <section class="page" id="page-content"></section>
+        <section class="page" id="page-growth"></section>
+        <p class="note">No demo data. Values come from live sessions, chat storage, supporter storage, and runtime samples. Last refreshed: <span id="refreshed"></span>.</p>
+      </main>
+    </section>
+  </div>
+<script>
+let SERVER=${snapshot};
+let current='overview';
+let days=30;
+const titles={overview:'Overview',viewership:'Live Viewership & Concurrency',revenue:'Subscriptions & Revenue',health:'Stream Health & Quality',content:'Top Content',growth:'User Growth & Engagement'};
+const colors={blue:'#5e9fe8',green:'#72bc8f',yellow:'#eac26b',orange:'#de9255',red:'#e97366',cyan:'#4fb9c9'};
+const esc=(v)=>String(v==null?'':v).replace(/[&<>"']/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt=(n)=>{n=Number(n||0);return n>=1e6?(n/1e6).toFixed(2)+'M':n>=1e3?(n/1e3).toFixed(1)+'k':Math.round(n).toLocaleString();};
+const money=(n,c)=>new Intl.NumberFormat('en-US',{style:'currency',currency:c||'USD',maximumFractionDigits:2}).format(Number(n||0));
+const pct=(n)=>Number(n||0).toFixed(1)+'%';
+function nowSample(){return {at:Date.now(),liveVisitors:SERVER.liveVisitors,chatMessages:SERVER.chatMessages,chatEvents:SERVER.chatEvents,lockedChatNames:SERVER.lockedChatNames,chatResponseCacheEntries:SERVER.chatResponseCacheEntries,chatRateLimitClients:SERVER.chatRateLimitClients,sportsAccounts:SERVER.sportsAccounts,sportsActive:SERVER.sportsActive,sportsTrials:SERVER.sportsTrials,sportsTokens:SERVER.sportsTokens,sportsPayments:SERVER.sportsPayments,paymentTotal:SERVER.paymentTotal,accountStreams:SERVER.accountStreams,accountCatalogs:SERVER.accountCatalogs,accountManifests:SERVER.accountManifests,accountInstalls:SERVER.accountInstalls};}
+function series(){const cutoff=Date.now()-days*86400000;let rows=(SERVER.history||[]).filter((x)=>Number(x.at||0)>=cutoff);if(!rows.length)rows=[nowSample()];return rows.map((x)=>Object.assign({},x,{date:new Date(Number(x.at||Date.now()))}));}
+function firstLastDelta(rows,key){if(rows.length<2)return '<span class="delta flat">0%</span>';const a=Number(rows[0][key]||0),b=Number(rows[rows.length-1][key]||0);if(!a&&!b)return '<span class="delta flat">0%</span>';const d=a?((b-a)/a)*100:(b>0?100:0);return '<span class="delta '+(d>=0?'up':'down')+'">'+(d>=0?'↗ ':'↘ ')+pct(Math.abs(d))+'</span>';}
+function kpi(label,value,sub,delta){return '<article class="kpi"><div class="label">'+esc(label)+'</div><div class="value">'+value+'</div><div class="sub">'+esc(sub||'')+'</div>'+(delta||'')+'</article>';}
+function pageHtml(kpis,body){return '<div class="kpis">'+kpis.join('')+'</div>'+body;}
+function sum(rows,key){return rows.reduce((t,x)=>t+Number(x[key]||0),0);}
+function avg(rows,key){return rows.length?sum(rows,key)/rows.length:0;}
+function max(rows,key){return rows.reduce((m,x)=>Math.max(m,Number(x[key]||0)),0);}
+const NS='http://www.w3.org/2000/svg';
+function svgEl(t,a,p){const e=document.createElementNS(NS,t);Object.keys(a||{}).forEach((k)=>e.setAttribute(k,a[k]));if(p)p.appendChild(e);return e;}
+function lineChart(host,rows,key,color,opts){opts=opts||{};host.innerHTML='';const W=host.clientWidth||620,H=opts.h||190,L=42,R=12,T=14,B=24;const svg=svgEl('svg',{viewBox:'0 0 '+W+' '+H,height:H,class:'chart'},host);const vals=rows.map((x)=>Number(x[key]||0));const hi=Math.max(1,Math.max.apply(null,vals));const lo=opts.zero===false?Math.min.apply(null,vals):0;const span=hi-lo||1;const X=(i)=>L+(W-L-R)*(rows.length<=1?.5:i/(rows.length-1));const Y=(v)=>T+(H-T-B)*(1-(v-lo)/span);for(let i=0;i<4;i++){const y=T+(H-T-B)*i/3;svgEl('line',{x1:L,x2:W-R,y1:y,y2:y,class:'grid-line'},svg);svgEl('text',{x:8,y:y+3,class:'axis'},svg).textContent=fmt(hi-(span*i/3));}let d='',area='';rows.forEach((row,i)=>{const x=X(i),y=Y(Number(row[key]||0));d+=(i?'L':'M')+x.toFixed(1)+' '+y.toFixed(1)+' ';area+=(i?'L':'M')+x.toFixed(1)+' '+y.toFixed(1)+' ';svgEl('circle',{cx:x,cy:y,r:2,fill:color},svg);});if(rows.length){area+='L '+X(rows.length-1).toFixed(1)+' '+(H-B)+' L '+X(0).toFixed(1)+' '+(H-B)+' Z';svgEl('path',{d:area,fill:color,class:'area'},svg);svgEl('path',{d:d,stroke:color,class:'ln'},svg);[0,Math.floor((rows.length-1)/2),rows.length-1].forEach((i)=>svgEl('text',{x:X(i),y:H-7,'text-anchor':'middle',class:'axis'},svg).textContent=rows[i].date.toLocaleDateString('en-US',{month:'short',day:'numeric'}));}}
+function bars(items){const top=Math.max(1,...items.map((x)=>Number(x.v||0)));return items.map((x)=>'<div class="bar-row"><strong>'+esc(x.n)+'</strong><div class="track"><div class="fill" style="width:'+((Number(x.v||0)/top)*100).toFixed(1)+'%;background:'+esc(x.c||colors.blue)+'"></div></div><span class="num">'+(x.f?x.f(x.v):fmt(x.v))+'</span></div>').join('');}
+function chartCard(id,title,sub){return '<div class="section-title"><h2>'+esc(title)+'</h2>'+(sub?'<span class="hint">'+esc(sub)+'</span>':'')+'</div><div class="card"><div id="'+id+'"></div></div>';}
+function renderOverview(){const rows=series();document.getElementById('page-overview').innerHTML=pageHtml([kpi('Peak concurrency',fmt(max(rows,'liveVisitors')),'Highest sampled live sessions',firstLastDelta(rows,'liveVisitors')),kpi('Subscribers',fmt(SERVER.sportsAccounts),'Supporter accounts',firstLastDelta(rows,'sportsAccounts')),kpi('Payments',money(SERVER.paymentTotal,SERVER.paymentCurrency),fmt(SERVER.sportsPayments)+' recorded payments',firstLastDelta(rows,'paymentTotal')),kpi('Chat messages',fmt(SERVER.chatMessages),'Stored watch chat messages',firstLastDelta(rows,'chatMessages')),kpi('Avg session TTL',fmt(SERVER.liveTtlSeconds)+'s','Live viewer expiry window','<span class="delta flat">server</span>')],chartCard('ovLive','Concurrent viewers','Daily runtime samples')+'<div class="grid g2"><div class="card"><h3>Usage by feature</h3>'+bars([{n:'Streams opened',v:SERVER.accountStreams,c:colors.blue},{n:'Catalog loads',v:SERVER.accountCatalogs,c:colors.green},{n:'Manifest loads',v:SERVER.accountManifests,c:colors.yellow},{n:'Installs',v:SERVER.accountInstalls,c:colors.orange}])+'</div><div class="card"><h3>Audience accounts</h3>'+bars([{n:'Active',v:SERVER.sportsActive,c:colors.green},{n:'Trials',v:SERVER.sportsTrials,c:colors.yellow},{n:'Claimed tokens',v:SERVER.claimedTokens,c:colors.blue},{n:'Chat names',v:SERVER.lockedChatNames,c:colors.cyan}])+'</div></div>');lineChart(document.getElementById('ovLive'),rows,'liveVisitors',colors.blue);}
+function renderViewership(){const rows=series();document.getElementById('page-viewership').innerHTML=pageHtml([kpi('Peak concurrency',fmt(max(rows,'liveVisitors')),'Runtime high in selected range',firstLastDelta(rows,'liveVisitors')),kpi('Avg concurrency',fmt(avg(rows,'liveVisitors')),'Average sampled live sessions','<span class="delta flat">sampled</span>'),kpi('Watching now',fmt(SERVER.liveVisitors),'Live browser sessions','<span class="delta up">live</span>'),kpi('Stream opens',fmt(SERVER.accountStreams),'Authenticated stream requests',firstLastDelta(rows,'accountStreams')),kpi('Total samples',fmt(rows.length),'Runtime data points','<span class="delta flat">real</span>')],'<div class="section-title"><h2>Peak vs average concurrency</h2><span class="hint">Sampled from live-count API</span></div><div class="grid g2"><div class="card"><div id="vwLive"></div></div><div class="card"><div id="vwStreams"></div></div></div>');lineChart(document.getElementById('vwLive'),rows,'liveVisitors',colors.blue);lineChart(document.getElementById('vwStreams'),rows,'accountStreams',colors.yellow);}
+function renderRevenue(){const rows=series();document.getElementById('page-revenue').innerHTML=pageHtml([kpi('Payment total',money(SERVER.paymentTotal,SERVER.paymentCurrency),'Recorded Ko-fi sports revenue',firstLastDelta(rows,'paymentTotal')),kpi('Payments',fmt(SERVER.sportsPayments),'Recorded transactions',firstLastDelta(rows,'sportsPayments')),kpi('Accounts',fmt(SERVER.sportsAccounts),'Total supporter accounts',firstLastDelta(rows,'sportsAccounts')),kpi('Active',fmt(SERVER.sportsActive),'Currently active access',firstLastDelta(rows,'sportsActive')),kpi('Trials',fmt(SERVER.sportsTrials),'Trial tokens issued',firstLastDelta(rows,'sportsTrials'))],chartCard('revPay','Recurring revenue signal','Real payment total over runtime samples')+'<div class="grid g2"><div class="card"><h3>Account state</h3>'+bars([{n:'Active accounts',v:SERVER.sportsActive,c:colors.green},{n:'Trial accounts',v:SERVER.trialAccounts,c:colors.yellow},{n:'All accounts',v:SERVER.sportsAccounts,c:colors.blue}])+'</div><div class="card"><h3>Token funnel</h3>'+bars([{n:'Tokens issued',v:SERVER.sportsTokens,c:colors.blue},{n:'Claimed tokens',v:SERVER.claimedTokens,c:colors.green},{n:'Payment emails',v:SERVER.paymentEmailCount,c:colors.orange}])+'</div></div>');lineChart(document.getElementById('revPay'),rows,'paymentTotal',colors.green);}
+function renderHealth(){const rows=series();document.getElementById('page-health').innerHTML=pageHtml([kpi('Cache entries',fmt(SERVER.chatResponseCacheEntries),'Chat response cache',firstLastDelta(rows,'chatResponseCacheEntries')),kpi('Rate buckets',fmt(SERVER.chatRateLimitClients),'Active chat rate clients',firstLastDelta(rows,'chatRateLimitClients')),kpi('Locked names',fmt(SERVER.lockedChatNames),'Chat identities',firstLastDelta(rows,'lockedChatNames')),kpi('Catalog loads',fmt(SERVER.accountCatalogs),'Authenticated catalog requests',firstLastDelta(rows,'accountCatalogs')),kpi('Manifests',fmt(SERVER.accountManifests),'Authenticated manifest requests',firstLastDelta(rows,'accountManifests'))],'<div class="section-title"><h2>Server health counters</h2><span class="hint">No synthetic CDN or error-rate data</span></div><div class="grid g2"><div class="card"><div id="hlCache"></div></div><div class="card"><div id="hlRate"></div></div></div><div class="card"><h3>Delivered quality distribution</h3>'+bars([{n:'Streams',v:SERVER.accountStreams,c:colors.blue},{n:'Catalogs',v:SERVER.accountCatalogs,c:colors.green},{n:'Manifests',v:SERVER.accountManifests,c:colors.yellow},{n:'Installs',v:SERVER.accountInstalls,c:colors.orange}])+'</div>');lineChart(document.getElementById('hlCache'),rows,'chatResponseCacheEntries',colors.orange);lineChart(document.getElementById('hlRate'),rows,'chatRateLimitClients',colors.red);}
+function renderContent(){const rows=SERVER.chatEventRows||[];const table=rows.length?rows.map((row,i)=>'<tr><td><strong>'+String(i+1)+'</strong></td><td>'+esc(row.eventId)+'</td><td><span class="badge b">Watch room</span></td><td>'+fmt(row.messages)+'</td><td>'+esc(row.lastMessageAt?new Date(row.lastMessageAt).toLocaleString():'-')+'</td><td><span class="badge g">Real</span></td></tr>').join(''):'<tr><td colspan="6"><div class="empty">No chat activity tracked yet.</div></td></tr>';document.getElementById('page-content').innerHTML=pageHtml([kpi('Events tracked',fmt(SERVER.chatEvents),'Watch rooms with chat storage',''),kpi('Total messages',fmt(SERVER.chatMessages),'Stored chat messages',''),kpi('Stream opens',fmt(SERVER.accountStreams),'Authenticated stream requests',''),kpi('Catalog loads',fmt(SERVER.accountCatalogs),'Authenticated catalog requests',''),kpi('Live now',fmt(SERVER.liveVisitors),'Current browser sessions','')],'<div class="section-title"><h2>Top matches & events</h2><span class="hint">Ranked by stored chat activity</span></div><div class="card"><table class="tbl"><thead><tr><th>#</th><th>Event ID</th><th>Type</th><th>Messages</th><th>Last activity</th><th>Source</th></tr></thead><tbody>'+table+'</tbody></table></div><div class="grid g2"><div class="card"><h3>Views by system area</h3>'+bars([{n:'Streams',v:SERVER.accountStreams,c:colors.blue},{n:'Catalogs',v:SERVER.accountCatalogs,c:colors.green},{n:'Manifests',v:SERVER.accountManifests,c:colors.yellow},{n:'Installs',v:SERVER.accountInstalls,c:colors.orange}])+'</div><div class="card"><h3>Chat by event</h3>'+bars((rows.length?rows:[{eventId:'No events yet',messages:0}]).slice(0,5).map((row)=>({n:row.eventId,v:row.messages,c:colors.cyan})))+'</div></div>');}
+function renderGrowth(){const rows=series();document.getElementById('page-growth').innerHTML=pageHtml([kpi('Accounts',fmt(SERVER.sportsAccounts),'Total supporter accounts',firstLastDelta(rows,'sportsAccounts')),kpi('Active accounts',fmt(SERVER.sportsActive),'Valid access now',firstLastDelta(rows,'sportsActive')),kpi('Trial tokens',fmt(SERVER.sportsTrials),'Trials issued',firstLastDelta(rows,'sportsTrials')),kpi('Tokens',fmt(SERVER.sportsTokens),'All sports tokens',firstLastDelta(rows,'sportsTokens')),kpi('Chat identities',fmt(SERVER.lockedChatNames),'Named chat users',firstLastDelta(rows,'lockedChatNames'))],'<div class="section-title"><h2>Daily active users</h2><span class="hint">Runtime sampled accounts and chat identity growth</span></div><div class="grid g2"><div class="card"><div id="grAccounts"></div></div><div class="card"><div id="grChat"></div></div></div><div class="card"><h3>Retention cohort proxy</h3>'+bars([{n:'Active / total',v:SERVER.sportsAccounts?SERVER.sportsActive/SERVER.sportsAccounts*100:0,c:colors.green,f:pct},{n:'Claimed / tokens',v:SERVER.sportsTokens?SERVER.claimedTokens/SERVER.sportsTokens*100:0,c:colors.blue,f:pct},{n:'Trials / tokens',v:SERVER.sportsTokens?SERVER.sportsTrials/SERVER.sportsTokens*100:0,c:colors.yellow,f:pct}])+'</div>');lineChart(document.getElementById('grAccounts'),rows,'sportsAccounts',colors.cyan);lineChart(document.getElementById('grChat'),rows,'lockedChatNames',colors.orange);}
+const renderers={overview:renderOverview,viewership:renderViewership,revenue:renderRevenue,health:renderHealth,content:renderContent,growth:renderGrowth};
+function render(){document.getElementById('liveNow').textContent=fmt(SERVER.liveVisitors);document.getElementById('refreshed').textContent=new Date().toLocaleTimeString();renderers[current]();}
+function select(page){current=page;document.querySelectorAll('.nav button[data-page]').forEach((button)=>button.classList.toggle('active',button.dataset.page===page));document.querySelectorAll('.page').forEach((el)=>el.classList.toggle('active',el.id==='page-'+page));document.getElementById('title').textContent=titles[page];render();}
+document.querySelectorAll('.nav button[data-page]').forEach((button)=>button.addEventListener('click',()=>select(button.dataset.page)));
+document.getElementById('range').addEventListener('click',(event)=>{const button=event.target.closest('button');if(!button)return;days=Number(button.dataset.days||30);document.querySelectorAll('#range button').forEach((item)=>item.classList.toggle('active',item===button));render();});
+document.getElementById('refresh').addEventListener('click',async()=>{const response=await fetch('/watch-together/admin/api/stats',{cache:'no-store'});if(response.ok){SERVER=await response.json();render();}});
+render();
+</script>
+</body>
+</html>`;
   };
 
   const checkWatchChatRateLimit = (req) => {
@@ -8281,6 +8505,68 @@ const bootstrap = async () => {
     }
     return '';
   };
+
+  const hasWatchTogetherAdminSession = (req) => hasValidAdminSession(req);
+
+  const requireWatchTogetherAdminAuth = (req, res, next) => {
+    if (hasWatchTogetherAdminSession(req)) {
+      next();
+      return;
+    }
+    res.redirect(302, '/watch-together/admin/login');
+  };
+
+  app.get('/watch-together/admin/login', (req, res) => {
+    if (hasWatchTogetherAdminSession(req)) {
+      res.redirect(302, '/watch-together/admin');
+      return;
+    }
+    res
+      .status(200)
+      .setHeader('Cache-Control', 'no-store')
+      .type('html')
+      .send(renderWatchTogetherAdminLogin({
+        errorMessage: req.query.error === 'invalid' ? 'Invalid admin credentials.' : ''
+      }));
+  });
+
+  app.post('/watch-together/admin/login', (req, res) => {
+    const username = String(req.body?.username || '').trim();
+    const password = String(req.body?.password || '');
+    if (username !== config.ADMIN_USERNAME || password !== config.ADMIN_PASSWORD) {
+      res.redirect(302, '/watch-together/admin/login?error=invalid');
+      return;
+    }
+    setAdminSessionCookie(req, res);
+    res.redirect(302, '/watch-together/admin');
+  });
+
+  app.post('/watch-together/admin/logout', (_req, res) => {
+    clearAdminSessionCookie(res);
+    res.redirect(302, '/watch-together/admin/login');
+  });
+
+  app.get('/watch-together/admin/api/stats', requireWatchTogetherAdminAuth, async (_req, res, next) => {
+    try {
+      res
+        .setHeader('Cache-Control', 'no-store')
+        .json(await getWatchTogetherAdminStats());
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/watch-together/admin', requireWatchTogetherAdminAuth, async (_req, res, next) => {
+    try {
+      res
+        .status(200)
+        .setHeader('Cache-Control', 'no-store')
+        .type('html')
+        .send(renderWatchTogetherAdminConsole(await getWatchTogetherAdminStats()));
+    } catch (error) {
+      next(error);
+    }
+  });
 
   app.get('/watch-together/manifest.webmanifest', (req, res) => {
     res
