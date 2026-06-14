@@ -7296,6 +7296,18 @@ const bootstrap = async () => {
     maxAge: '7d',
     immutable: true
   }));
+  app.get('/webos/repo.json', (_req, res) => {
+    res
+      .type('application/json')
+      .setHeader('Cache-Control', 'public, max-age=300')
+      .sendFile(path.resolve('webos/repo.json'));
+  });
+  app.get('/webos/com.nebulastreams.sports_1.0.2_all.ipk', (_req, res) => {
+    res
+      .type('application/vnd.palm.ipk')
+      .setHeader('Cache-Control', 'public, max-age=86400')
+      .sendFile(path.resolve('dist/webos/com.nebulastreams.sports_1.0.2_all.ipk'));
+  });
   app.get('/favicon.ico', (_req, res) => {
     res.redirect(301, '/assets/nebula-sports-favicon-32.png');
   });
