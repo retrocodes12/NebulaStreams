@@ -55,6 +55,144 @@ const escapeHtml = (value) =>
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#39;');
 
+const VIDKING_BASE_URL = 'https://www.vidking.net';
+const CINEMETA_BASE_URL = 'https://v3-cinemeta.strem.io';
+const AIO_METADATA_BASE_URL = 'https://aiometadata.viren070.me/stremio/ed602812-df91-4c90-a697-be9b911ebb28';
+const CATALOG_SOURCES = Object.freeze({
+  cinemeta: {
+    id: 'cinemeta',
+    name: 'Cinemeta',
+    baseUrl: CINEMETA_BASE_URL
+  },
+  aio: {
+    id: 'aio',
+    name: 'AIOMetadata',
+    baseUrl: AIO_METADATA_BASE_URL
+  }
+});
+
+const getCatalogSource = (value) => CATALOG_SOURCES[String(value || '').trim().toLowerCase()] || CATALOG_SOURCES.cinemeta;
+
+const toPositiveIntegerString = (value, fallback = '') => {
+  const normalized = String(value ?? fallback).trim();
+  return /^[1-9]\d*$/u.test(normalized) ? normalized : '';
+};
+
+const toBooleanQuery = (value) => String(value ?? '').trim().toLowerCase() === 'true';
+
+const buildVidkingEmbedUrl = ({
+  type = 'movie',
+  tmdbId,
+  season,
+  episode,
+  color = '4F9EFF',
+  autoPlay = false,
+  nextEpisode = false,
+  episodeSelector = false,
+  progress
+} = {}) => {
+  const mediaType = type === 'tv' || type === 'series' ? 'tv' : 'movie';
+  const id = toPositiveIntegerString(tmdbId);
+  if (!id) {
+    throw new HttpError(400, 'Valid tmdbId is required');
+  }
+
+  const seasonId = toPositiveIntegerString(season, '1') || '1';
+  const episodeId = toPositiveIntegerString(episode, '1') || '1';
+  const embedPath = mediaType === 'tv'
+    ? `/embed/tv/${id}/${seasonId}/${episodeId}`
+    : `/embed/movie/${id}`;
+  const url = new URL(embedPath, VIDKING_BASE_URL);
+  const cleanColor = String(color || '4F9EFF').replace(/^#/u, '').trim();
+
+  if (/^[0-9a-f]{6}$/iu.test(cleanColor)) {
+    url.searchParams.set('color', cleanColor);
+  }
+  if (autoPlay) url.searchParams.set('autoPlay', 'true');
+  if (mediaType === 'tv' && nextEpisode) url.searchParams.set('nextEpisode', 'true');
+  if (mediaType === 'tv' && episodeSelector) url.searchParams.set('episodeSelector', 'true');
+
+  const startAt = Number(progress);
+  if (Number.isFinite(startAt) && startAt > 0) {
+    url.searchParams.set('progress', String(Math.floor(startAt)));
+  }
+
+  return {
+    url: url.toString(),
+    embedPath,
+    mediaType,
+    tmdbId: id,
+    season: mediaType === 'tv' ? seasonId : null,
+    episode: mediaType === 'tv' ? episodeId : null
+  };
+};
+
+const fetchJsonWithTimeout = async (url, timeoutMs = 12_000) => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: { 'Accept': 'application/json' }
+    });
+    if (!response.ok) {
+      throw new HttpError(response.status, `Upstream request failed: ${response.status}`);
+    }
+    return await response.json();
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+const extractTmdbId = (meta = {}) => {
+  const direct = String(meta._tmdbId || meta.tmdb_id || meta.moviedb_id || '').trim();
+  if (/^[1-9]\d*$/u.test(direct)) return direct;
+  const slugMatch = String(meta.slug || '').match(/tmdb:(\d+)/u);
+  return slugMatch ? slugMatch[1] : '';
+};
+
+const normalizeCatalogMeta = (meta = {}) => {
+  const mediaType = meta.type === 'series' ? 'tv' : 'movie';
+  const genres = Array.isArray(meta.genres)
+    ? meta.genres
+    : (Array.isArray(meta.genre) ? meta.genre : [meta.genre].filter(Boolean));
+  return {
+    id: String(meta.id || meta.imdb_id || '').trim(),
+    type: mediaType,
+    catalogType: meta.type === 'series' ? 'series' : 'movie',
+    tmdbId: extractTmdbId(meta),
+    imdbId: String(meta.imdb_id || meta._imdbId || meta.id || '').trim(),
+    name: String(meta.name || '').trim(),
+    description: String(meta.description || '').trim(),
+    year: String(meta.year || meta.releaseInfo || '').trim(),
+    runtime: String(meta.runtime || '').trim(),
+    rating: String(meta.imdbRating || '').trim(),
+    genres: genres.slice(0, 3).map(String),
+    poster: String(meta.poster || meta._rawPosterUrl || '').trim(),
+    background: String(meta.landscapePoster || meta.background || meta.poster || '').trim(),
+    season: mediaType === 'tv' ? '1' : null,
+    episode: mediaType === 'tv' ? '1' : null
+  };
+};
+
+const normalizeAioCatalog = (catalog = {}) => ({
+  id: String(catalog.id || '').trim(),
+  type: catalog.type === 'series' ? 'series' : 'movie',
+  name: String(catalog.name || catalog.id || '').trim(),
+  pageSize: Number(catalog.pageSize || 20),
+  showInHome: catalog.showInHome !== false,
+  extras: Array.isArray(catalog.extra) ? catalog.extra : []
+});
+
+const normalizeAddonCatalog = normalizeAioCatalog;
+
+const encodeCatalogExtra = (name, value) => {
+  const cleanName = String(name || '').trim();
+  const cleanValue = String(value || '').trim();
+  if (!cleanName || !cleanValue) return '';
+  return `${encodeURIComponent(cleanName)}=${encodeURIComponent(cleanValue)}`;
+};
+
 const PROJECT_SUPPORTERS = [
   'Devon Durham'
 ];
@@ -7203,6 +7341,7 @@ const requireAdminAuth = (req, res, next) => {
 
 const bootstrap = async () => {
   const app = express();
+  const landingPagePath = path.join(process.cwd(), 'public', 'nebulastreams.html');
 
   app.disable('x-powered-by');
   app.set('trust proxy', true);
@@ -7448,7 +7587,16 @@ const bootstrap = async () => {
       .send(html);
   };
 
-  app.get('/', renderConfigureResponse);
+  const sendLandingPage = (_req, res) => {
+    res
+      .status(200)
+      .set('Cache-Control', 'public, max-age=300')
+      .type('html')
+      .sendFile(landingPagePath);
+  };
+  app.get('/', sendLandingPage);
+  app.get('/movies', sendLandingPage);
+  app.get('/series', sendLandingPage);
   app.get('/configure', renderConfigureResponse);
 
   const getSupporterAccountFromRequest = async (req) => {
@@ -9808,6 +9956,89 @@ render();
   app.get('/configured/:providerConfig/:qualityConfig/:optionConfig/stremio/meta/:type/:id.json', streamManager.handleStremioMeta.bind(streamManager));
   app.get('/configured/:providerConfig/:qualityConfig/:optionConfig/preview/:type/:id.json', streamManager.handleStremioPreview.bind(streamManager));
   app.get('/configured/:providerConfig/:qualityConfig/:optionConfig/stremio/preview/:type/:id.json', streamManager.handleStremioPreview.bind(streamManager));
+  app.get('/api/vidking/embed', (req, res, next) => {
+    try {
+      res
+        .set('Cache-Control', 'public, max-age=300')
+        .json(buildVidkingEmbedUrl({
+          type: req.query.type,
+          tmdbId: req.query.tmdbId,
+          season: req.query.season,
+          episode: req.query.episode,
+          color: req.query.color,
+          autoPlay: toBooleanQuery(req.query.autoPlay),
+          nextEpisode: toBooleanQuery(req.query.nextEpisode),
+          episodeSelector: toBooleanQuery(req.query.episodeSelector),
+          progress: req.query.progress
+        }));
+    } catch (error) {
+      next(error);
+    }
+  });
+  const sendAddonCatalogs = async (req, res, next) => {
+    try {
+      const source = getCatalogSource(req.catalogSource || req.query.source);
+      const manifest = await fetchJsonWithTimeout(`${source.baseUrl}/manifest.json`);
+      const catalogs = Array.isArray(manifest.catalogs)
+        ? manifest.catalogs.map(normalizeAddonCatalog).filter((catalog) => catalog.id && catalog.showInHome)
+        : [];
+      res
+        .set('Cache-Control', 'public, max-age=1800, stale-while-revalidate=3600')
+        .json({
+          addon: {
+            id: manifest.id || source.id,
+            name: manifest.name || source.name,
+            source: source.id
+          },
+          catalogs
+        });
+    } catch (error) {
+      next(error);
+    }
+  };
+  const sendAddonCatalog = async (req, res, next) => {
+    try {
+      const source = getCatalogSource(req.catalogSource || req.query.source);
+      const type = req.params.type === 'series' ? 'series' : 'movie';
+      const catalogId = String(req.params.id || '').trim();
+      if (!catalogId || !/^[a-z0-9._-]+$/iu.test(catalogId)) {
+        throw new HttpError(400, 'Valid catalog id is required');
+      }
+
+      const extras = [
+        encodeCatalogExtra('genre', req.query.genre),
+        encodeCatalogExtra('skip', req.query.skip)
+      ].filter(Boolean);
+      const extraPath = extras.length ? `/${extras.join('&')}` : '';
+      const upstreamUrl = `${source.baseUrl}/catalog/${encodeURIComponent(type)}/${encodeURIComponent(catalogId)}${extraPath}.json`;
+      const payload = await fetchJsonWithTimeout(upstreamUrl);
+      const items = Array.isArray(payload.metas)
+        ? payload.metas.map(normalizeCatalogMeta).filter((item) => item.tmdbId && item.name)
+        : [];
+
+      res
+        .set('Cache-Control', 'public, max-age=600, stale-while-revalidate=1800')
+        .json({
+          source: source.name,
+          sourceId: source.id,
+          type,
+          catalogId,
+          items
+        });
+    } catch (error) {
+      next(error);
+    }
+  };
+  app.get('/api/catalogs', sendAddonCatalogs);
+  app.get('/api/catalog/:type/:id', sendAddonCatalog);
+  app.get('/api/aio/catalogs', (req, res, next) => {
+    req.catalogSource = 'aio';
+    return sendAddonCatalogs(req, res, next);
+  });
+  app.get('/api/aio/catalog/:type/:id', (req, res, next) => {
+    req.catalogSource = 'aio';
+    return sendAddonCatalog(req, res, next);
+  });
   app.get('/providers', (_req, res) => {
     res.json({
       providers: providerService.listProviders()
