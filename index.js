@@ -7450,6 +7450,13 @@ const bootstrap = async () => {
   app.get('/favicon.ico', (_req, res) => {
     res.redirect(301, '/assets/nebula-sports-favicon-32.png');
   });
+  app.get('/sw.js', (_req, res) => {
+    res
+      .type('application/javascript')
+      .set('Cache-Control', 'no-cache')
+      .set('Service-Worker-Allowed', '/')
+      .sendFile(path.resolve('public/sw.js'));
+  });
   app.use(createRateLimiter({
     name: 'public',
     windowMs: config.PUBLIC_RATE_LIMIT_WINDOW_SECONDS * 1000,
