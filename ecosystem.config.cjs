@@ -25,6 +25,7 @@ module.exports = {
         STREAMED_SPORTS_BROWSER_IDLE_MS: '10000',
         STREAMED_SPORTS_HLS_PROBE_ENABLED: 'true',
         STREAMED_SPORTS_HLS_BROWSER_FALLBACK_ENABLED: 'true',
+        WATCH_TOGETHER_CBOX_URL: 'https://www5.cbox.ws/box/?boxid=963947&boxtag=kceLWF',
         API_FOOTBALL_KEY: process.env.API_FOOTBALL_KEY || '',
         SCRAPLING_SERVICE_AUTOSTART: 'false',
         PROVIDER_GLOBAL_MAX_INFLIGHT: '16',

@@ -4,6 +4,7 @@ import { promises as fs } from 'node:fs';
 import { freemem } from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { SportzXStreamSource } from './SportzXStreamSource.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -29,7 +30,8 @@ const STREAM_SOURCE_RANK = new Map([
   ['echo', 2],
   ['golf', 3],
   ['nebulasports', 4],
-  ['hellosports', 4]
+  ['hellosports', 4],
+  ['sportzx', 6]
 ]);
 const LICENSED_EXTERNAL_EMBED_STREAMS = [
   {
@@ -78,8 +80,22 @@ const LICENSED_EXTERNAL_EMBED_STREAMS = [
     id: 'l7',
     streamNo: 7,
     language: 'Malayalam',
-    hd: false,
-    embedUrl: 'https://ok.ru/videoembed/15300699889403'
+    hd: true,
+    embedUrl: 'https://masszipp3.github.io/hls2.html?url=https://ts.sptck.cfd/hls/tist1.m3u8'
+  },
+  {
+    id: 'l8',
+    streamNo: 8,
+    language: 'Malayalam',
+    hd: true,
+    embedUrl: 'https://ok.ru/videoembed/15174081388058'
+  },
+  {
+    id: '4k',
+    streamNo: 9,
+    language: '4K',
+    hd: true,
+    embedUrl: 'https://lordatomic.github.io/uefa/ceng.html'
   }
 ];
 const LICENSED_EXTERNAL_EMBED_STREAM_BY_ID = new Map(
@@ -144,6 +160,14 @@ const FIFA_WC_TEAM_ALIASES = new Set([
 
 const toString = (value) => String(value ?? '').trim();
 
+const toBoolean = (value, fallback = false) => {
+  if (value === undefined || value === null || value === '') return fallback;
+  const normalized = String(value).trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return fallback;
+};
+
 const normalizeIdPart = (value) =>
   toString(value).toLowerCase().replace(/[^a-z0-9-]+/gu, '-').replace(/^-+|-+$/gu, '') || 'other';
 
@@ -203,6 +227,34 @@ const isHttpUrl = (value) => {
   }
 };
 
+const extractDirectHlsUrl = (value) => {
+  const normalized = toString(value);
+  if (!normalized) return null;
+  const candidates = [];
+  try {
+    const parsed = new URL(normalized);
+    for (const paramValue of parsed.searchParams.values()) {
+      if (paramValue) candidates.push(paramValue);
+    }
+  } catch {
+    // Fall through to regex extraction below.
+  }
+  candidates.push(normalized);
+
+  for (const candidate of candidates) {
+    const decoded = (() => {
+      try {
+        return decodeURIComponent(candidate);
+      } catch {
+        return candidate;
+      }
+    })();
+    const match = decoded.match(/https?:\/\/[^\s"'<>]+?\.m3u8(?:[^\s"'<>]*)?/iu);
+    if (match?.[0] && isHttpUrl(match[0])) return match[0];
+  }
+  return null;
+};
+
 const toAbsoluteStreamedUrl = (value) => {
   const normalized = toString(value);
   if (!normalized) return null;
@@ -227,7 +279,10 @@ export class StreamedSportsAdapter {
     browserTimeoutMs = DEFAULT_BROWSER_TIMEOUT_MS,
     hlsCacheMs = DEFAULT_HLS_CACHE_MS,
     browserIdleMs = DEFAULT_BROWSER_IDLE_MS,
-    cacheDir = path.join(process.cwd(), 'cache', 'streamed-sports')
+    cacheDir = path.join(process.cwd(), 'cache', 'streamed-sports'),
+    sportzXStreamsEnabled = toBoolean(process.env.SPORTZX_STREAMS_ENABLED, false),
+    sportzXBaseUrl = process.env.SPORTZX_BASE_URL || 'https://modiii.top/',
+    sportzXFallbackUrl = process.env.SPORTZX_FALLBACK_URL || 'https://anshulajoy10.github.io/mygaja/'
   } = {}) {
     this.logger = logger;
     this.fetchImpl = fetchImpl;
@@ -262,6 +317,14 @@ export class StreamedSportsAdapter {
     ).toLowerCase() === 'true';
     this.hlsProbeFailures = 0;
     this.hlsProbeDisabledUntil = 0;
+    this.sportzXStreamSource = sportzXStreamsEnabled
+      ? new SportzXStreamSource({
+        logger,
+        fetchImpl,
+        baseUrl: sportzXBaseUrl,
+        fallbackUrl: sportzXFallbackUrl
+      })
+      : null;
   }
 
   async fetchJson(path, signal = null) {
@@ -450,6 +513,13 @@ export class StreamedSportsAdapter {
         id: toString(source?.id)
       }))
       .filter((source) => source.source && source.id);
+    const sportzXChannelId = toString(entry?.sportzxId || entry?.sportzxChannelId || entry?.sportzx_channel_id);
+    if (sportzXChannelId && !sources.some((source) => source.source === 'sportzx' && source.id === sportzXChannelId)) {
+      sources.push({
+        source: 'sportzx',
+        id: sportzXChannelId
+      });
+    }
     if (!sourceId || !title || sources.length === 0) return null;
 
     const poster = toAbsoluteStreamedUrl(entry?.poster);
@@ -547,6 +617,15 @@ export class StreamedSportsAdapter {
     }
 
     try {
+      if (normalizeIdPart(source.source) === 'sportzx') {
+        if (!this.sportzXStreamSource) return [];
+        const streams = await this.sportzXStreamSource.getChannelStreams(source.id, signal);
+        this.streamCache.set(key, {
+          value: streams,
+          expiresAt: Date.now() + CACHE_TTL_MS
+        });
+        return streams;
+      }
       const payload = await this.fetchJson(`/api/stream/${encodeURIComponent(source.source)}/${encodeURIComponent(source.id)}`, signal);
       const streams = (Array.isArray(payload) ? payload : [])
         .map((entry) => ({
@@ -589,6 +668,7 @@ export class StreamedSportsAdapter {
         language: stream.language,
         hd: Boolean(stream.hd),
         viewers: 0,
+        directHlsUrl: extractDirectHlsUrl(stream.embedUrl),
         embedUrl: baseUrl
           ? `${String(baseUrl).replace(/\/+$/u, '')}/watch-together/nebulasports/${encodeURIComponent(stream.id)}`
           : stream.embedUrl
@@ -631,7 +711,7 @@ export class StreamedSportsAdapter {
       .map((stream) => ({
         id: `${stream.source}:${stream.id}:${stream.streamNo || 1}`,
         source: stream.source,
-        streamId: stream.id,
+        streamId: stream.streamId || stream.id,
         streamNo: Number(stream.streamNo || 1),
         language: stream.language,
         hd: Boolean(stream.hd),
@@ -719,10 +799,28 @@ export class StreamedSportsAdapter {
           }
         };
       });
+    const externalCards = isFifaWorldCupMatch(match)
+      ? this.getLicensedExternalEmbedStreams({ baseUrl })
+        .filter((stream) => toString(stream.directHlsUrl) && isHttpUrl(stream.directHlsUrl))
+        .map((stream) => ({
+          name: 'NebulaStreams Streamed',
+          title: [
+            match.title,
+            'Sports Event',
+            `${stream.source.toUpperCase()} #${stream.streamNo}${stream.hd ? ' HD' : ''}`,
+            'Plays in Stremio',
+            stream.language || ''
+          ].filter(Boolean).join('\n'),
+          url: stream.directHlsUrl,
+          behaviorHints: {
+            bingeGroup: `streamed-${match.normalizedTitle}`
+          }
+        }))
+      : [];
     if (baseUrl && privateConfigId && this.hlsCacheMs > 0) {
       this.prewarmStreams(streams.slice(0, 2), signal);
     }
-    return cards;
+    return [...cards, ...externalCards];
   }
 
   getEmbedUrl({ source, streamId, streamNo }) {

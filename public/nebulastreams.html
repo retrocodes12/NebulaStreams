@@ -651,7 +651,7 @@
     .player-close { top: 10px; right: 10px; }
     nav { padding: 0 14px; gap: 14px; }
     .nav-links { display: none; }
-    .catalog-source { min-width: 124px; }
+    .catalog-source { min-width: 116px; max-width: 128px; }
   }
 </style>
 </head>
@@ -681,6 +681,9 @@
     <select class="catalog-source" id="catalogSource" title="Catalog source">
       <option value="cinemeta">Cinemeta</option>
       <option value="aio">AIOMetadata</option>
+    </select>
+    <select class="catalog-source" id="streamSource" title="Stream source">
+      <option value="vidking">VidKing</option>
     </select>
     <button class="nav-icon-btn" onclick="openSearch()" title="Search">
       <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -881,6 +884,7 @@
   const playerFrame = document.getElementById('playerFrame');
   const playerStatus = document.getElementById('playerStatus');
   const playerClose = document.getElementById('playerClose');
+  const streamSourceSelect = document.getElementById('streamSource');
 
   function closePlayer() {
     playerFrame.src = 'about:blank';
@@ -987,6 +991,32 @@
     return document.getElementById('catalogSource')?.value || 'cinemeta';
   }
 
+  function getStreamSource() {
+    return streamSourceSelect?.value || 'vidking';
+  }
+
+  async function hydrateStreamSources() {
+    if (!streamSourceSelect) return;
+    const savedSource = localStorage.getItem('nebula-stream-source') || 'vidking';
+    try {
+      const response = await fetch('/api/movie/embed-providers', { cache: 'force-cache' });
+      if (!response.ok) throw new Error(`Provider request failed: ${response.status}`);
+      const data = await response.json();
+      const providers = Array.isArray(data.providers) ? data.providers : [];
+      if (!providers.length) return;
+      streamSourceSelect.innerHTML = providers
+        .map((provider) => `<option value="${escapeText(provider.id)}">${escapeText(provider.name)}</option>`)
+        .join('');
+      streamSourceSelect.value = providers.some((provider) => provider.id === savedSource)
+        ? savedSource
+        : (data.defaultProvider || providers[0].id);
+      localStorage.setItem('nebula-stream-source', streamSourceSelect.value);
+    } catch (error) {
+      console.warn('Stream source hydration failed', error);
+      streamSourceSelect.value = savedSource;
+    }
+  }
+
   async function loadCatalogRow({ sectionTitle, type, id, genre, variant }, source) {
     const row = getSectionRow(sectionTitle);
     if (!row) return;
@@ -1036,6 +1066,7 @@
       nextEpisode: 'true',
       episodeSelector: 'true'
     });
+    params.set('provider', getStreamSource());
 
     if (item.dataset.season) params.set('season', item.dataset.season);
     if (item.dataset.episode) params.set('episode', item.dataset.episode);
@@ -1057,11 +1088,11 @@
     playerModal.setAttribute('aria-hidden', 'false');
 
     try {
-      const response = await fetch(`/api/vidking/embed?${params.toString()}`, { cache: 'no-store' });
+      const response = await fetch(`/api/movie/embed?${params.toString()}`, { cache: 'no-store' });
       if (!response.ok) throw new Error(`Embed request failed: ${response.status}`);
       const data = await response.json();
       playerFrame.src = data.url;
-      playerStatus.textContent = '';
+      playerStatus.textContent = data.provider?.name ? `Source: ${data.provider.name}` : '';
     } catch (error) {
       playerStatus.textContent = error.message || 'Unable to load stream.';
     }
@@ -1118,6 +1149,12 @@
       localStorage.setItem('nebula-catalog-source', catalogSource.value);
       hydrateCatalogs();
     });
+  }
+  if (streamSourceSelect) {
+    streamSourceSelect.addEventListener('change', function() {
+      localStorage.setItem('nebula-stream-source', streamSourceSelect.value);
+    });
+    hydrateStreamSources();
   }
 
   applyRouteView();

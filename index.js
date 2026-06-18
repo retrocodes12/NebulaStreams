@@ -56,6 +56,130 @@ const escapeHtml = (value) =>
     .replaceAll("'", '&#39;');
 
 const VIDKING_BASE_URL = 'https://www.vidking.net';
+const MOVIE_EMBED_PROVIDERS = Object.freeze({
+  vidking: {
+    id: 'vidking',
+    name: 'VidKing',
+    movieUrl: 'https://vidking.net/embed/movie/{id}',
+    tvUrl: 'https://vidking.net/embed/tv/{id}/{s}/{e}',
+    supportsVidkingOptions: true
+  },
+  videasy: {
+    id: 'videasy',
+    name: 'Videasy',
+    movieUrl: 'https://player.videasy.net/movie/{id}',
+    tvUrl: 'https://player.videasy.net/tv/{id}/{s}/{e}'
+  },
+  vidsrcCc: {
+    id: 'vidsrcCc',
+    name: 'VidSrc CC',
+    movieUrl: 'https://vsembed.ru/embed/movie/{id}',
+    tvUrl: 'https://vsembed.ru/embed/tv/{id}/{s}/{e}'
+  },
+  twoEmbed: {
+    id: 'twoEmbed',
+    name: '2Embed',
+    movieUrl: 'https://2embed.cc/embed/movie/{id}',
+    tvUrl: 'https://2embed.cc/embed/tv/{id}?s={s}&e={e}'
+  },
+  vidfast: {
+    id: 'vidfast',
+    name: 'VidFast',
+    movieUrl: 'https://vidfast.pro/movie/{id}',
+    tvUrl: 'https://vidfast.pro/tv/{id}/{s}/{e}'
+  },
+  vidcore: {
+    id: 'vidcore',
+    name: 'VidCore',
+    movieUrl: 'https://vidcore.net/embed/movie/{id}',
+    tvUrl: 'https://vidcore.net/embed/tv/{id}/{s}/{e}'
+  },
+  rive: {
+    id: 'rive',
+    name: 'Rive',
+    movieUrl: 'https://rivestream.org/embed?type=movie&id={id}',
+    tvUrl: 'https://rivestream.org/embed?type=tv&id={id}&season={s}&episode={e}'
+  },
+  vidzee: {
+    id: 'vidzee',
+    name: 'VidZee',
+    movieUrl: 'https://player.vidzee.wtf/embed/movie/{id}',
+    tvUrl: 'https://player.vidzee.wtf/embed/tv/{id}?season={s}&episode={e}'
+  },
+  airflix: {
+    id: 'airflix',
+    name: 'Airflix',
+    movieUrl: 'https://airflix1.com/movie/{id}',
+    tvUrl: 'https://airflix1.com/tv/{id}/{s}/{e}'
+  },
+  vidsync: {
+    id: 'vidsync',
+    name: 'VidSync',
+    movieUrl: 'https://vidsync.xyz/embed/movie/{id}',
+    tvUrl: 'https://vidsync.xyz/embed/tv/{id}/{s}/{e}'
+  },
+  vidrock: {
+    id: 'vidrock',
+    name: 'VidRock',
+    movieUrl: 'https://vidrock.net/embed/movie/{id}',
+    tvUrl: 'https://vidrock.net/embed/tv/{id}/{s}/{e}'
+  },
+  hexa: {
+    id: 'hexa',
+    name: 'Hexa',
+    movieUrl: 'https://hexa.su/embed/movie/{id}',
+    tvUrl: 'https://hexa.su/embed/tv/{id}/{s}/{e}'
+  },
+  vidora: {
+    id: 'vidora',
+    name: 'VidOra',
+    movieUrl: 'https://vidora.su/embed/movie/{id}',
+    tvUrl: 'https://vidora.su/embed/tv/{id}/{s}/{e}'
+  },
+  peachify: {
+    id: 'peachify',
+    name: 'Peachify',
+    movieUrl: 'https://peachify.top/embed/movie/{id}',
+    tvUrl: 'https://peachify.top/embed/tv/{id}?season={s}&episode={e}'
+  },
+  mapple: {
+    id: 'mapple',
+    name: 'Mapple TV',
+    movieUrl: 'https://mappletv.uk/embed/movie/{id}',
+    tvUrl: 'https://mappletv.uk/embed/tv/{id}/{s}/{e}'
+  },
+  toustream: {
+    id: 'toustream',
+    name: 'TouStream',
+    movieUrl: 'https://toustream-play.chickenkiller.com/movie/{id}',
+    tvUrl: 'https://toustream-play.chickenkiller.com/tv/{id}/{s}/{e}'
+  },
+  vidsrcEmbed: {
+    id: 'vidsrcEmbed',
+    name: 'VidSrc Embed',
+    movieUrl: 'https://vidsrc-embed.ru/embed/movie/{id}',
+    tvUrl: 'https://vidsrc-embed.ru/embed/tv/{id}/{s}/{e}'
+  },
+  oneElevenMovies: {
+    id: 'oneElevenMovies',
+    name: '111Movies',
+    movieUrl: 'https://111movies.net/movie/{id}',
+    tvUrl: 'https://111movies.net/tv/{id}?s={s}&e={e}'
+  },
+  fmovies: {
+    id: 'fmovies',
+    name: 'FMovies',
+    movieUrl: 'https://fmovies.gd/movie/{id}',
+    tvUrl: 'https://fmovies.gd/tv/{id}?s={s}&e={e}'
+  },
+  cinemaos: {
+    id: 'cinemaos',
+    name: 'CinemaOS',
+    movieUrl: 'https://cinemaos.tech/embed/movie/{id}',
+    tvUrl: 'https://cinemaos.tech/embed/tv/{id}?s={s}&e={e}'
+  }
+});
+const MOVIE_EMBED_PROVIDER_LIST = Object.freeze(Object.values(MOVIE_EMBED_PROVIDERS));
 const CINEMETA_BASE_URL = 'https://v3-cinemeta.strem.io';
 const AIO_METADATA_BASE_URL = 'https://aiometadata.viren070.me/stremio/ed602812-df91-4c90-a697-be9b911ebb28';
 const CATALOG_SOURCES = Object.freeze({
@@ -80,7 +204,17 @@ const toPositiveIntegerString = (value, fallback = '') => {
 
 const toBooleanQuery = (value) => String(value ?? '').trim().toLowerCase() === 'true';
 
+const getMovieEmbedProvider = (value) =>
+  MOVIE_EMBED_PROVIDERS[String(value || '').trim()] || MOVIE_EMBED_PROVIDERS.vidking;
+
+const applyEmbedTemplate = (template, replacements) =>
+  template
+    .replaceAll('{id}', replacements.id)
+    .replaceAll('{s}', replacements.seasonId)
+    .replaceAll('{e}', replacements.episodeId);
+
 const buildVidkingEmbedUrl = ({
+  provider,
   type = 'movie',
   tmdbId,
   season,
@@ -99,27 +233,31 @@ const buildVidkingEmbedUrl = ({
 
   const seasonId = toPositiveIntegerString(season, '1') || '1';
   const episodeId = toPositiveIntegerString(episode, '1') || '1';
-  const embedPath = mediaType === 'tv'
-    ? `/embed/tv/${id}/${seasonId}/${episodeId}`
-    : `/embed/movie/${id}`;
-  const url = new URL(embedPath, VIDKING_BASE_URL);
+  const embedProvider = getMovieEmbedProvider(provider);
+  const template = mediaType === 'tv' ? embedProvider.tvUrl : embedProvider.movieUrl;
+  const embedUrl = applyEmbedTemplate(template, { id, seasonId, episodeId });
+  const url = new URL(embedUrl);
   const cleanColor = String(color || '4F9EFF').replace(/^#/u, '').trim();
 
-  if (/^[0-9a-f]{6}$/iu.test(cleanColor)) {
+  if (embedProvider.supportsVidkingOptions && /^[0-9a-f]{6}$/iu.test(cleanColor)) {
     url.searchParams.set('color', cleanColor);
   }
-  if (autoPlay) url.searchParams.set('autoPlay', 'true');
-  if (mediaType === 'tv' && nextEpisode) url.searchParams.set('nextEpisode', 'true');
-  if (mediaType === 'tv' && episodeSelector) url.searchParams.set('episodeSelector', 'true');
+  if (embedProvider.supportsVidkingOptions && autoPlay) url.searchParams.set('autoPlay', 'true');
+  if (embedProvider.supportsVidkingOptions && mediaType === 'tv' && nextEpisode) url.searchParams.set('nextEpisode', 'true');
+  if (embedProvider.supportsVidkingOptions && mediaType === 'tv' && episodeSelector) url.searchParams.set('episodeSelector', 'true');
 
   const startAt = Number(progress);
-  if (Number.isFinite(startAt) && startAt > 0) {
+  if (embedProvider.supportsVidkingOptions && Number.isFinite(startAt) && startAt > 0) {
     url.searchParams.set('progress', String(Math.floor(startAt)));
   }
 
   return {
     url: url.toString(),
-    embedPath,
+    embedPath: url.pathname,
+    provider: {
+      id: embedProvider.id,
+      name: embedProvider.name
+    },
     mediaType,
     tmdbId: id,
     season: mediaType === 'tv' ? seasonId : null,
@@ -194,7 +332,8 @@ const encodeCatalogExtra = (name, value) => {
 };
 
 const PROJECT_SUPPORTERS = [
-  'Devon Durham'
+  'Devon Durham',
+  'Shadow'
 ];
 
 const renderSupporterPills = (supporters = PROJECT_SUPPORTERS) => supporters
@@ -738,6 +877,71 @@ const renderConfigurePage = ({ baseUrl, providers, supporterStats = {}, userStat
         display: flex;
         gap: 8px;
         align-items: center;
+      }
+
+      .movie-redirect-banner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        margin: 18px 0 0;
+        padding: 14px 16px;
+        border-radius: var(--radius-md);
+        border: 1px solid rgba(34, 211, 238, 0.24);
+        background:
+          linear-gradient(135deg, rgba(34, 211, 238, 0.11), rgba(124, 92, 255, 0.09)),
+          rgba(255, 255, 255, 0.035);
+        color: var(--text);
+        text-decoration: none;
+        box-shadow: 0 14px 36px rgba(0, 0, 0, 0.24);
+        transition: border-color 0.2s ease, transform 0.2s ease, background 0.2s ease;
+      }
+
+      .movie-redirect-banner:hover {
+        border-color: rgba(34, 211, 238, 0.42);
+        transform: translateY(-1px);
+        background:
+          linear-gradient(135deg, rgba(34, 211, 238, 0.15), rgba(124, 92, 255, 0.12)),
+          rgba(255, 255, 255, 0.05);
+      }
+
+      .movie-redirect-copy {
+        display: grid;
+        gap: 2px;
+      }
+
+      .movie-redirect-copy strong {
+        font-size: 14px;
+        font-weight: 850;
+      }
+
+      .movie-redirect-copy span {
+        color: var(--text-dim);
+        font-size: 12px;
+      }
+
+      .movie-redirect-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-shrink: 0;
+      }
+
+      .movie-redirect-pill {
+        padding: 7px 10px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 999px;
+        color: var(--text);
+        background: rgba(255, 255, 255, 0.07);
+        font-size: 12px;
+        font-weight: 750;
+        white-space: nowrap;
+      }
+
+      .movie-redirect-pill.accent {
+        border-color: transparent;
+        color: #06131a;
+        background: linear-gradient(135deg, var(--accent-2), #8cf0ff);
       }
 
       .pill {
@@ -1672,49 +1876,13 @@ const renderConfigurePage = ({ baseUrl, providers, supporterStats = {}, userStat
 
       .support-hero {
         display: grid;
-        grid-template-columns: minmax(0, 1.45fr) minmax(300px, 0.85fr);
-        gap: 18px;
+        grid-template-columns: 1fr;
         align-items: stretch;
-      }
-
-      .support-hero-copy {
-        min-height: 188px;
-        padding: 26px;
-        border: 1px solid rgba(148, 163, 184, 0.18);
-        border-radius: var(--radius-lg);
-        background:
-          linear-gradient(180deg, rgba(255,255,255,0.055), rgba(255,255,255,0.025)),
-          radial-gradient(circle at top right, rgba(34,211,238,0.12), transparent 36%);
-      }
-
-      .support-hero-copy h3 {
-        margin: 0 0 10px;
-        font-size: clamp(24px, 4vw, 36px);
-        line-height: 1.04;
-        letter-spacing: 0;
-      }
-
-      .support-hero-copy p {
-        max-width: 660px;
-        margin: 0;
-        color: var(--text-dim);
-        font-size: 15px;
-      }
-
-      .support-kicker {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        margin-bottom: 18px;
-        color: #8ee7ff;
-        font-size: 12px;
-        font-weight: 850;
-        letter-spacing: 0.1em;
-        text-transform: uppercase;
       }
 
       .support-hero-stats {
         display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
         gap: 1px;
         overflow: hidden;
         border: 1px solid rgba(148, 163, 184, 0.18);
@@ -2450,8 +2618,121 @@ const renderConfigurePage = ({ baseUrl, providers, supporterStats = {}, userStat
         display: block;
       }
 
+      .simple-section-nav {
+        display: none;
+      }
+
+      body[data-config-mode="simple"] .simple-section-nav {
+        position: sticky;
+        top: 10px;
+        z-index: 12;
+        display: flex;
+        gap: 6px;
+        margin: 0 0 14px;
+        padding: 6px;
+        overflow-x: auto;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+        background: rgba(8, 11, 22, 0.9);
+        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.3);
+        backdrop-filter: blur(16px);
+      }
+
+      .simple-section-nav button {
+        min-height: 34px;
+        padding: 7px 12px;
+        border: 0;
+        border-radius: 8px;
+        background: transparent;
+        color: var(--text-dim);
+        font-size: 12px;
+        font-weight: 750;
+        white-space: nowrap;
+      }
+
+      .simple-section-nav button:hover,
+      .simple-section-nav button:focus-visible {
+        background: var(--surface-2);
+        color: var(--text);
+        outline: none;
+      }
+
+      .simple-settings-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.2fr) minmax(220px, 0.8fr);
+        gap: 12px;
+      }
+
+      .simple-setting-group {
+        min-width: 0;
+        padding: 16px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+        background: rgba(255, 255, 255, 0.025);
+      }
+
+      .simple-setting-group.wide {
+        grid-row: span 2;
+      }
+
+      .simple-setting-group h4 {
+        margin: 0 0 4px;
+        font-size: 14px;
+      }
+
+      .simple-setting-group > p {
+        margin: 0 0 14px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .simple-setting-group .field:last-child {
+        margin-bottom: 0;
+      }
+
+      .simple-head-actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .simple-collapse-toggle {
+        display: none;
+      }
+
+      body[data-config-mode="simple"] .simple-collapse-toggle {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 32px;
+        padding: 6px 10px;
+        border: 1px solid var(--border-strong);
+        border-radius: 8px;
+        background: var(--surface-2);
+        color: var(--text-dim);
+        font-size: 12px;
+        font-weight: 750;
+      }
+
+      body[data-config-mode="simple"] .simple-collapsible.simple-collapsed .torbox-head ~ * {
+        display: none;
+      }
+
+      body[data-config-mode="simple"] .simple-collapsible.simple-collapsed {
+        margin-bottom: 12px;
+      }
+
       body[data-config-mode="simple"] .advanced-only {
         display: none;
+      }
+
+      body[data-config-mode="simple"] .sidebar,
+      body[data-config-mode="simple"] .hero {
+        display: none;
+      }
+
+      body[data-config-mode="simple"] .layout {
+        grid-template-columns: minmax(0, 1fr);
       }
 
       body[data-config-mode="support"] .workspace > :not(#support-section),
@@ -2759,13 +3040,11 @@ const renderConfigurePage = ({ baseUrl, providers, supporterStats = {}, userStat
 
       @media (max-width: 900px) {
         .support-hero,
+        .support-hero-stats,
         .support-pledge,
         .tier-grid,
         .support-manage-card {
           grid-template-columns: 1fr;
-        }
-        .support-hero-copy {
-          min-height: auto;
         }
         .support-faq-grid {
           grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2780,8 +3059,29 @@ const renderConfigurePage = ({ baseUrl, providers, supporterStats = {}, userStat
         .topbar-actions {
           display: none;
         }
+        .movie-redirect-banner {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+        .movie-redirect-actions {
+          width: 100%;
+          flex-wrap: wrap;
+        }
         .card-inner {
           padding: 12px;
+        }
+        .simple-settings-grid {
+          grid-template-columns: 1fr;
+        }
+        .simple-setting-group.wide {
+          grid-row: auto;
+        }
+        .simple-section-nav {
+          top: 6px;
+        }
+        .simple-head-actions {
+          width: 100%;
+          justify-content: space-between;
         }
         .meta-grid,
         .stat-grid,
@@ -2795,7 +3095,6 @@ const renderConfigurePage = ({ baseUrl, providers, supporterStats = {}, userStat
         .support-faq-grid {
           grid-template-columns: 1fr;
         }
-        .support-hero-copy,
         .support-card,
         .tier-card,
         .support-manage-card {
@@ -2826,6 +3125,17 @@ const renderConfigurePage = ({ baseUrl, providers, supporterStats = {}, userStat
           <span class="pill">${providers.length} providers</span>
         </div>
       </div>
+
+      <a class="movie-redirect-banner" href="${escapeHtml(baseUrl)}/movies" aria-label="Open NebulaStreams movie site">
+        <span class="movie-redirect-copy">
+          <strong>Open NebulaStreams Movie Site</strong>
+          <span>Browse movies and series with selectable stream sources. Watch WC and live sports from Nebula Sports too.</span>
+        </span>
+        <span class="movie-redirect-actions" aria-hidden="true">
+          <span class="movie-redirect-pill accent">Movies & Series</span>
+          <span class="movie-redirect-pill">WC & Sports</span>
+        </span>
+      </a>
 
       <div class="mode-switch" role="tablist" aria-label="Configuration mode">
         <button type="button" class="mode-button is-active" data-config-mode="simple">Simple</button>
@@ -2936,6 +3246,13 @@ const renderConfigurePage = ({ baseUrl, providers, supporterStats = {}, userStat
             </div>
           </div>
 
+          <nav class="simple-section-nav" aria-label="Simple settings sections">
+            <button type="button" data-simple-section="overview-section">Install</button>
+            <button type="button" data-simple-section="simple-section">Playback</button>
+            <button type="button" data-simple-section="torbox-section">TorBox</button>
+            <button type="button" data-simple-section="xtream-section">IPTV</button>
+          </nav>
+
           <!-- PRESETS -->
           <section class="card simple-settings" id="simple-section">
             <div class="card-inner">
@@ -2946,58 +3263,66 @@ const renderConfigurePage = ({ baseUrl, providers, supporterStats = {}, userStat
                 </div>
               </div>
 
-              <div class="field">
-                <label class="field-label">Video Qualities</label>
-                <div class="simple-quality-grid">
-                  <label class="simple-quality"><input type="checkbox" class="simple-quality-input" value="2160p" checked>2160p (4K)</label>
-                  <label class="simple-quality"><input type="checkbox" class="simple-quality-input" value="1080p" checked>1080p</label>
-                  <label class="simple-quality"><input type="checkbox" class="simple-quality-input" value="720p" checked>720p</label>
-                  <label class="simple-quality"><input type="checkbox" class="simple-quality-input" value="480p" checked>480p</label>
-                </div>
-              </div>
+              <div class="simple-settings-grid">
+                <section class="simple-setting-group wide">
+                  <h4>Video quality</h4>
+                  <p>Choose qualities allowed in stream results.</p>
+                  <div class="simple-quality-grid">
+                    <label class="simple-quality"><input type="checkbox" class="simple-quality-input" value="2160p" checked>2160p (4K)</label>
+                    <label class="simple-quality"><input type="checkbox" class="simple-quality-input" value="1080p" checked>1080p</label>
+                    <label class="simple-quality"><input type="checkbox" class="simple-quality-input" value="720p" checked>720p</label>
+                    <label class="simple-quality"><input type="checkbox" class="simple-quality-input" value="480p" checked>480p</label>
+                  </div>
+                </section>
 
-              <div class="field">
-                <label class="field-label" for="simple-content-selection">Content Selection</label>
-                <select id="simple-content-selection" class="field-input">
-                  <option value="default">Default Content Only</option>
-                  <option value="movie">Movies Only</option>
-                  <option value="series">Series Only</option>
-                </select>
-              </div>
-
-              <div class="field">
-                <label class="field-label" for="simple-default-sorting">Default Sorting</label>
-                <select id="simple-default-sorting" class="field-input">
-                  <option value="highest" selected>Highest Quality</option>
-                  <option value="highest-non-4k">Highest Non-4K Quality</option>
-                  <option value="balanced">Balanced</option>
-                </select>
-              </div>
-
-              <div class="field">
-                <label class="field-label">Result Limits</label>
-                <div class="simple-limit-grid">
-                  <label>
-                    <span class="field-label" for="simple-max-per-quality">Max Per Quality</span>
-                    <select id="simple-max-per-quality" class="field-input">
-                      <option value="0">Unlimited</option>
-                      <option value="1">1</option>
-                      <option value="2">2</option>
-                      <option value="3">3</option>
-                      <option value="5">5</option>
+                <section class="simple-setting-group">
+                  <h4>Content and sorting</h4>
+                  <p>Set content scope and result order.</p>
+                  <div class="field">
+                    <label class="field-label" for="simple-content-selection">Content Selection</label>
+                    <select id="simple-content-selection" class="field-input">
+                      <option value="default">Default Content Only</option>
+                      <option value="movie">Movies Only</option>
+                      <option value="series">Series Only</option>
                     </select>
-                  </label>
-                  <label>
-                    <span class="field-label" for="simple-max-per-provider">Max Per Provider</span>
-                    <select id="simple-max-per-provider" class="field-input">
-                      <option value="0">Unlimited</option>
-                      <option value="1">1</option>
-                      <option value="2">2</option>
-                      <option value="3">3</option>
-                      <option value="5">5</option>
+                  </div>
+
+                  <div class="field">
+                    <label class="field-label" for="simple-default-sorting">Default Sorting</label>
+                    <select id="simple-default-sorting" class="field-input">
+                      <option value="highest" selected>Highest Quality</option>
+                      <option value="highest-non-4k">Highest Non-4K Quality</option>
+                      <option value="balanced">Balanced</option>
                     </select>
-                  </label>
-                </div>
+                  </div>
+                </section>
+
+                <section class="simple-setting-group">
+                  <h4>Result limits</h4>
+                  <p>Control duplicates without disabling providers.</p>
+                  <div class="simple-limit-grid">
+                    <label>
+                      <span class="field-label" for="simple-max-per-quality">Max Per Quality</span>
+                      <select id="simple-max-per-quality" class="field-input">
+                        <option value="0">Unlimited</option>
+                        <option value="1">1</option>
+                        <option value="2">2</option>
+                        <option value="3">3</option>
+                        <option value="5">5</option>
+                      </select>
+                    </label>
+                    <label>
+                      <span class="field-label" for="simple-max-per-provider">Max Per Provider</span>
+                      <select id="simple-max-per-provider" class="field-input">
+                        <option value="0">Unlimited</option>
+                        <option value="1">1</option>
+                        <option value="2">2</option>
+                        <option value="3">3</option>
+                        <option value="5">5</option>
+                      </select>
+                    </label>
+                  </div>
+                </section>
               </div>
             </div>
           </section>
@@ -3268,17 +3593,20 @@ const renderConfigurePage = ({ baseUrl, providers, supporterStats = {}, userStat
           </section>
 
           <!-- TORBOX -->
-          <section class="card torbox-card" id="torbox-section">
+          <section class="card torbox-card simple-collapsible simple-collapsed" id="torbox-section">
             <div class="card-inner">
               <div class="torbox-head">
                 <div>
                   <h3 class="card-title">TorBox Integration</h3>
                   <p class="card-desc">Stream without buffering. Highly recommended.</p>
                 </div>
-                <label class="switch" aria-label="Enable TorBox integration">
-                  <input type="checkbox" id="torbox-enabled" checked>
-                  <span></span>
-                </label>
+                <div class="simple-head-actions">
+                  <button class="simple-collapse-toggle" type="button" data-simple-collapse="torbox-section" aria-expanded="false">Show settings</button>
+                  <label class="switch" aria-label="Enable TorBox integration">
+                    <input type="checkbox" id="torbox-enabled" checked>
+                    <span></span>
+                  </label>
+                </div>
               </div>
 
               <div class="field">
@@ -3317,17 +3645,20 @@ const renderConfigurePage = ({ baseUrl, providers, supporterStats = {}, userStat
           </section>
 
           <!-- XTREAM -->
-          <section class="card torbox-card" id="xtream-section">
+          <section class="card torbox-card simple-collapsible simple-collapsed" id="xtream-section">
             <div class="card-inner">
               <div class="torbox-head">
                 <div>
                   <h3 class="card-title">Xtream Codes IPTV</h3>
                   <p class="card-desc">Add private IPTV live TV, VOD, series, categories, and EPG.</p>
                 </div>
-                <label class="switch" aria-label="Enable Xtream Codes IPTV">
-                  <input type="checkbox" id="xtream-enabled">
-                  <span></span>
-                </label>
+                <div class="simple-head-actions">
+                  <button class="simple-collapse-toggle" type="button" data-simple-collapse="xtream-section" aria-expanded="false">Show settings</button>
+                  <label class="switch" aria-label="Enable Xtream Codes IPTV">
+                    <input type="checkbox" id="xtream-enabled">
+                    <span></span>
+                  </label>
+                </div>
               </div>
 
               <div class="field">
@@ -3468,11 +3799,6 @@ const renderConfigurePage = ({ baseUrl, providers, supporterStats = {}, userStat
             <div class="card-inner">
               <div class="support-panel">
                 <div class="support-hero">
-                  <div class="support-hero-copy">
-                    <span class="support-kicker">Support</span>
-                    <h3>Support NebulaStreams</h3>
-                    <p>NebulaStreams stays free for everyone. Supporters pay for convenience features and help keep hosting, monitoring, and provider maintenance funded.</p>
-                  </div>
                   <div class="support-hero-stats">
                     <div class="support-stat-card"><p class="meta-label">Active users</p><p class="meta-value">${escapeHtml(String(userStats.streamUsers || userStats.totalUsers || 0))}</p></div>
                     <div class="support-stat-card"><p class="meta-label">Supporters</p><p class="meta-value">${escapeHtml(String(supporterStats.accounts || supporterStats.active || 0))}</p></div>
@@ -3698,6 +4024,8 @@ const renderConfigurePage = ({ baseUrl, providers, supporterStats = {}, userStat
       const saveSupporterProfile = $('save-supporter-profile');
       const supporterProfileStatus = $('supporter-profile-status');
       const navItems = Array.from(document.querySelectorAll('[data-section-target]'));
+      const simpleSectionButtons = Array.from(document.querySelectorAll('[data-simple-section]'));
+      const simpleCollapseButtons = Array.from(document.querySelectorAll('[data-simple-collapse]'));
       let manifestResolveNonce = 0;
 
       const escapeHtmlClient = (v) => String(v)
@@ -4554,6 +4882,34 @@ const renderConfigurePage = ({ baseUrl, providers, supporterStats = {}, userStat
           const t = document.getElementById(it.dataset.sectionTarget || '');
           if (!t) return;
           t.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+      });
+
+      const setSimpleSectionExpanded = (section, expanded) => {
+        if (!section) return;
+        section.classList.toggle('simple-collapsed', !expanded);
+        const button = document.querySelector('[data-simple-collapse="' + section.id + '"]');
+        if (!button) return;
+        button.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+        button.textContent = expanded ? 'Hide settings' : 'Show settings';
+      };
+
+      simpleCollapseButtons.forEach((button) => {
+        button.addEventListener('click', () => {
+          const section = document.getElementById(button.dataset.simpleCollapse || '');
+          if (!section) return;
+          setSimpleSectionExpanded(section, section.classList.contains('simple-collapsed'));
+        });
+      });
+
+      simpleSectionButtons.forEach((button) => {
+        button.addEventListener('click', () => {
+          const section = document.getElementById(button.dataset.simpleSection || '');
+          if (!section) return;
+          if (section.classList.contains('simple-collapsible')) {
+            setSimpleSectionExpanded(section, true);
+          }
+          section.scrollIntoView({ behavior: 'smooth', block: 'start' });
         });
       });
 
@@ -5801,6 +6157,14 @@ const renderWatchTogetherOfflinePage = (baseUrl) => {
 const renderWatchTogetherPage = ({ baseUrl, account = null, errorMessage = '' }) => {
   const safeBaseUrl = String(baseUrl || '').replace(/\/+$/u, '');
   const kofiPageName = escapeHtml(getKofiPageName(config.DONATION_PRIMARY_URL || 'https://ko-fi.com/redx115775'));
+  const cboxUrl = (() => {
+    try {
+      const parsed = new URL(config.WATCH_TOGETHER_CBOX_URL || '');
+      return ['http:', 'https:'].includes(parsed.protocol) ? parsed.toString() : '';
+    } catch {
+      return '';
+    }
+  })();
   return `<!doctype html>
 <html lang="en">
   <head>
@@ -5818,7 +6182,7 @@ const renderWatchTogetherPage = ({ baseUrl, account = null, errorMessage = '' })
     <link rel="apple-touch-icon" href="${escapeHtml(safeBaseUrl)}/assets/nebula-sports-favicon.png">
     <style>
       :root{color-scheme:dark;--page:#0b0b0e;--surface:#0f0f12;--surface-2:#18181c;--surface-3:#232328;--ink:#f6f7fb;--muted:#9ca3af;--soft:#c7ccd6;--line:rgba(255,255,255,.105);--line-strong:rgba(255,255,255,.18);--accent:#65e6a4;--accent-2:#78d7ff;--accent-ink:#06100b;--danger:#fecdd3;--shadow:0 24px 80px rgba(0,0,0,.48)}
-	      *{box-sizing:border-box}html{background:var(--page)}body{margin:0;min-height:100vh;background:radial-gradient(circle at 12% -8%,rgba(120,215,255,.12),transparent 34%),radial-gradient(circle at 88% 6%,rgba(101,230,164,.1),transparent 30%),linear-gradient(180deg,#0b0b0e 0%,#0f1115 100%);color:var(--ink);font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:13px;letter-spacing:0}button,input,select{font:inherit}button{cursor:pointer}a{color:inherit;text-decoration:none}.app{min-height:100dvh;display:grid;grid-template-rows:auto 1fr}.top{height:58px;display:flex;align-items:center;justify-content:space-between;gap:14px;padding:0 18px;border-bottom:1px solid var(--line);background:rgba(11,11,14,.78);backdrop-filter:blur(18px);position:sticky;top:0;z-index:5}.brand{display:flex;align-items:center;gap:10px;font-weight:900}.brand img{width:34px;height:34px;border-radius:13px;box-shadow:0 0 0 1px rgba(255,255,255,.12),0 10px 24px rgba(101,230,164,.15)}.brand-copy{display:grid;line-height:1.02}.brand-copy span{font-size:15px;letter-spacing:-.025em;background:linear-gradient(90deg,#f8fbff 0%,#78d7ff 52%,#65e6a4 100%);-webkit-background-clip:text;background-clip:text;color:transparent}.brand-copy small{margin-top:4px;color:var(--muted);font-size:10px;font-weight:800}.actions{display:flex;gap:7px;align-items:center}.btn{min-height:32px;border:1px solid var(--line);border-radius:999px;background:rgba(255,255,255,.035);color:var(--soft);padding:6px 10px;font-weight:800;display:inline-flex;align-items:center;justify-content:center;gap:7px;white-space:nowrap;transition:background .18s ease,border-color .18s ease,color .18s ease,transform .18s ease,box-shadow .18s ease}.btn:hover{border-color:var(--line-strong);background:rgba(255,255,255,.07);color:var(--ink)}.btn:active{transform:translateY(1px) scale(.99)}.btn.primary{border-color:transparent;background:linear-gradient(135deg,var(--accent),#8df6bf);color:var(--accent-ink);box-shadow:0 10px 28px rgba(101,230,164,.2)}.btn.primary:hover{box-shadow:0 14px 36px rgba(101,230,164,.28)}.btn-icon{opacity:.86;font-weight:900}.layout{width:min(1280px,100%);margin:0 auto;display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:14px;padding:12px 16px 16px}.stage{min-width:0;display:grid;gap:12px}.intro{min-height:84px;border:1px solid var(--line);border-radius:20px;background:linear-gradient(180deg,rgba(24,24,28,.82),rgba(15,15,18,.82));display:flex;align-items:center;justify-content:space-between;gap:14px;padding:16px 18px;box-shadow:0 14px 46px rgba(0,0,0,.22)}.intro h1{margin:0;max-width:660px;font-size:clamp(26px,3vw,40px);font-weight:950;line-height:1;letter-spacing:-.04em}.intro p{margin:7px 0 0;max-width:520px;color:var(--muted);font-size:14px;line-height:1.45}.signal{display:flex;align-items:center;gap:9px;white-space:nowrap;padding:7px 9px 7px 11px;border:1px solid rgba(101,230,164,.22);border-radius:999px;background:rgba(101,230,164,.06)}.signal span{color:#d8f8e2;font-size:11px;font-weight:900}.pill{border:1px solid rgba(101,230,164,.24);border-radius:999px;padding:5px 10px;color:#d8f8e2;background:rgba(101,230,164,.08);font-size:11px;font-weight:900}.live-dot,.dot{position:relative;width:8px;height:8px;border-radius:99px;background:var(--accent);box-shadow:0 0 0 4px rgba(101,230,164,.14)}.live-dot::after,.dot::after{content:"";position:absolute;inset:-6px;border-radius:99px;border:1px solid rgba(101,230,164,.58);animation:pulse 1.8s ease-out infinite}@keyframes pulse{0%{transform:scale(.65);opacity:.9}100%{transform:scale(1.75);opacity:0}}.player-shell{border:1px solid var(--line-strong);border-radius:18px;background:#07080a;box-shadow:0 14px 44px rgba(0,0,0,.38);overflow:hidden}.player-head{min-height:42px;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 8px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,rgba(35,35,40,.86),rgba(18,18,22,.92));color:#eef2f0}.status{display:inline-flex;align-items:center;gap:8px;min-height:30px;border:1px solid rgba(101,230,164,.22);border-radius:999px;background:rgba(101,230,164,.06);padding:5px 9px;color:#d8f8e2;font-size:10px;font-weight:900;letter-spacing:.02em}.player{aspect-ratio:16/9;width:100%;min-height:328px;background:#050608;display:grid;place-items:center;overflow:hidden;border-radius:0 0 19px 19px}.player iframe{display:block;width:100%;height:100%;border:0;background:#050608}.empty{display:grid;place-items:center;text-align:center;gap:6px;padding:20px;color:#8d949f}.empty strong{display:block;color:var(--soft);font-size:16px;font-weight:900}.empty span{max-width:320px;line-height:1.45}.now{border:1px solid var(--line);border-radius:16px;background:linear-gradient(180deg,rgba(24,24,28,.8),rgba(15,15,18,.88));display:grid;grid-template-columns:minmax(0,1fr) minmax(280px,42%);gap:10px;padding:10px;box-shadow:0 8px 34px rgba(0,0,0,.2)}.now-copy h1{margin:0;font-size:18px;font-weight:950;line-height:1.15;letter-spacing:-.025em}.now-copy p{margin:5px 0 0;color:var(--muted);font-size:12px}.streams{display:flex;align-items:center;gap:7px;overflow:auto;padding:2px 2px 3px}.streams h3{display:none}.stream-btn{min-height:34px;display:flex;align-items:center;justify-content:space-between;gap:9px;border:1px solid var(--line);border-radius:999px;background:rgba(255,255,255,.04);color:var(--ink);padding:6px 9px 6px 10px;white-space:nowrap;transition:background .18s ease,border-color .18s ease,transform .18s ease}.stream-btn:hover{border-color:rgba(120,215,255,.32);background:rgba(120,215,255,.075);transform:translateY(-1px)}.stream-btn.active{border-color:rgba(101,230,164,.5);background:rgba(101,230,164,.12)}.quality{font-size:11px;font-weight:950;letter-spacing:.02em;color:#e9fff2}.viewer{display:inline-flex;align-items:center;gap:5px;font-size:10px;color:#b9c1ca;font-weight:850}.viewer::before{content:"";width:10px;height:6px;border:1px solid currentColor;border-radius:999px;box-shadow:inset 0 0 0 2px rgba(255,255,255,.03)}.badge{font-size:11px;color:#d8f8e2;font-weight:900}.side{min-height:0;border:1px solid var(--line);border-radius:18px;background:linear-gradient(180deg,rgba(24,24,28,.88),rgba(15,15,18,.92));overflow:hidden;box-shadow:0 14px 46px rgba(0,0,0,.26);display:grid;grid-template-rows:auto 1fr}.tabs{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin:8px;padding:5px;border:1px solid var(--line);border-radius:999px;background:rgba(0,0,0,.22)}.tab{height:34px;border:0;border-radius:999px;background:transparent;color:var(--muted);font-weight:900;display:flex;align-items:center;justify-content:center;gap:6px;transition:background .2s ease,color .2s ease,box-shadow .2s ease,transform .2s ease}.tab:hover{color:var(--ink);background:rgba(255,255,255,.045)}.tab.active{background:linear-gradient(180deg,rgba(255,255,255,.12),rgba(255,255,255,.07));color:var(--ink);box-shadow:inset 0 0 0 1px rgba(255,255,255,.08),0 7px 18px rgba(0,0,0,.22)}.tab-icon{color:var(--accent);font-size:11px}.panel{display:none;min-height:0}.panel.active{display:grid}.events-panel{grid-template-rows:auto 1fr}.side-head{padding:12px 14px 14px;border-bottom:1px solid var(--line);display:grid;gap:10px}.side-title{display:flex;align-items:center;justify-content:space-between;gap:10px}.side-title h2{margin:0;font-size:17px;font-weight:950;letter-spacing:-.025em}.search{display:grid;grid-template-columns:1fr auto;gap:8px}.search input,.side select,.chat input{width:100%;height:34px;border:1px solid var(--line);background:rgba(255,255,255,.045);color:var(--ink);border-radius:999px;padding:0 13px;outline:none;transition:border-color .18s ease,background .18s ease,box-shadow .18s ease}.search input::placeholder,.chat input::placeholder{color:#737b86}.search input:focus,.side select:focus,.chat input:focus{border-color:rgba(101,230,164,.48);background:rgba(255,255,255,.065);box-shadow:0 0 0 4px rgba(101,230,164,.1)}.filters{display:grid;gap:8px}.catalog-picker{position:relative}.catalog-trigger{width:100%;height:34px;border:1px solid var(--line);background:rgba(255,255,255,.045);color:var(--ink);border-radius:999px;padding:0 13px;display:flex;align-items:center;justify-content:space-between;gap:10px;font-weight:850;text-align:left;outline:none;transition:border-color .18s ease,background .18s ease,box-shadow .18s ease}.catalog-trigger:hover,.catalog-trigger[aria-expanded="true"]{border-color:rgba(101,230,164,.48);background:rgba(255,255,255,.065);box-shadow:0 0 0 4px rgba(101,230,164,.1)}.catalog-menu{position:absolute;z-index:30;top:calc(100% + 6px);left:0;right:0;display:none;max-height:260px;overflow:auto;padding:6px;border:1px solid var(--line-strong);border-radius:14px;background:#101116;box-shadow:0 18px 42px rgba(0,0,0,.48)}.catalog-picker.open .catalog-menu{display:grid;gap:3px}.catalog-option{width:100%;min-height:32px;border:0;border-radius:10px;background:transparent;color:#e7edf4;padding:7px 10px;text-align:left;font-size:12px;font-weight:850}.catalog-option:hover,.catalog-option:focus{background:rgba(120,215,255,.12);color:#fff;outline:none}.catalog-option.active{background:rgba(101,230,164,.15);color:#d8f8e2}.list{overflow:auto;padding:8px;display:grid;gap:7px;align-content:start}.event{width:100%;text-align:left;border:1px solid transparent;border-radius:14px;background:rgba(255,255,255,.035);color:var(--ink);padding:11px 12px;display:grid;gap:6px;transition:background .18s ease,border-color .18s ease,transform .18s ease}.event:hover{border-color:var(--line-strong);background:rgba(255,255,255,.06);transform:translateY(-1px)}.event.active{border-color:rgba(101,230,164,.44);background:rgba(101,230,164,.1)}.event strong{display:block;font-size:13px;line-height:1.32;font-weight:900}.event span{display:block;color:var(--muted);font-size:11px;line-height:1.35}.chat{padding:12px;grid-template-rows:auto 1fr auto auto;gap:8px;min-height:440px}.chat-list{overflow:auto;display:grid;gap:8px;align-content:start;padding-right:2px}.chat-msg{position:relative;border:1px solid var(--line);border-radius:16px;background:rgba(255,255,255,.045);padding:10px 11px;box-shadow:0 7px 20px rgba(0,0,0,.12);display:grid;gap:6px}.chat-msg::before,.chat-msg::after,.chat-meta::before,.chat-meta::after{content:none!important;display:none!important}.chat-meta{display:flex;align-items:center;justify-content:space-between;gap:10px;color:var(--muted);font-size:10px;min-width:0}.chat-name{display:block;min-width:0;max-width:70%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#d8f8e2;font-size:11px;font-weight:950;background:transparent!important;border:0!important;border-radius:0!important;padding:0!important}.chat-time{flex:0 0 auto;color:#858d98}.chat-text{margin:0;color:#e4e8ee;line-height:1.38;overflow-wrap:anywhere;background:transparent!important;border:0!important;border-radius:0!important;padding:0!important}.chat-form{display:grid;grid-template-columns:86px 1fr auto;gap:7px}.chat-status{min-height:16px;color:var(--muted);font-size:11px}.error{color:var(--danger);border:1px solid #7f1d1d;background:#2a1014;border-radius:14px;padding:10px;margin-top:12px}.floatingchat-container-wrap{right:18px!important;bottom:18px!important;z-index:20!important;background:transparent!important;box-shadow:none!important}.floatingchat-container-wrap iframe,.floatingchat-container-wrap-mobi iframe{background:transparent!important;box-shadow:none!important}.floatingchat-container-wrap-mobi{right:12px!important;bottom:12px!important;z-index:20!important}@media(min-width:1081px){body{font-size:12px}.top{height:54px;padding:0 16px}.brand img{width:31px;height:31px}.brand-copy span{font-size:14px}.layout{width:min(1200px,100%);grid-template-columns:minmax(0,1fr) 300px;gap:12px;padding:10px 14px 14px}.stage{gap:10px}.intro{min-height:74px;padding:13px 15px;border-radius:18px}.intro h1{font-size:clamp(24px,2.55vw,35px)}.intro p{font-size:13px}.player-head{min-height:38px}.player{min-height:296px}.now{padding:9px}.now-copy h1{font-size:16px}.side{border-radius:16px}.tabs{margin:7px}.side-head{padding:10px 12px 12px}.chat{min-height:400px;padding:10px}.event{padding:9px 10px}.btn{min-height:30px;padding:5px 9px}}@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}@media(max-width:1080px){.layout{grid-template-columns:1fr}.player{min-height:auto}.side{min-height:480px}.intro{align-items:flex-start}.now{grid-template-columns:1fr}.streams{padding-top:4px}.signal{align-self:flex-start}}@media(max-width:680px){.top{height:auto;padding:12px;align-items:flex-start;flex-direction:column}.actions{width:100%;overflow:auto}.layout{padding:12px 12px 80px;gap:14px}.intro{min-height:0;padding:16px;align-items:flex-start;flex-direction:column}.intro h1{font-size:30px}.player-head{align-items:flex-start;flex-direction:column}.now{padding:12px}.side{min-height:540px}.brand-copy small{display:none}.btn{min-height:36px;padding:7px 12px}.chat{min-height:500px}.chat-form{grid-template-columns:1fr}.tabs{border-radius:20px}.tab{height:38px}.player{border-radius:0 0 19px 19px}}
+	      *{box-sizing:border-box}html{background:var(--page)}body{margin:0;min-height:100vh;background:radial-gradient(circle at 12% -8%,rgba(120,215,255,.12),transparent 34%),radial-gradient(circle at 88% 6%,rgba(101,230,164,.1),transparent 30%),linear-gradient(180deg,#0b0b0e 0%,#0f1115 100%);color:var(--ink);font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:13px;letter-spacing:0}button,input,select{font:inherit}button{cursor:pointer}a{color:inherit;text-decoration:none}.app{min-height:100dvh;display:grid;grid-template-rows:auto 1fr}.top{height:58px;display:flex;align-items:center;justify-content:space-between;gap:14px;padding:0 18px;border-bottom:1px solid var(--line);background:rgba(11,11,14,.78);backdrop-filter:blur(18px);position:sticky;top:0;z-index:5}.brand{display:flex;align-items:center;gap:10px;font-weight:900}.brand img{width:34px;height:34px;border-radius:13px;box-shadow:0 0 0 1px rgba(255,255,255,.12),0 10px 24px rgba(101,230,164,.15)}.brand-copy{display:grid;line-height:1.02}.brand-copy span{font-size:15px;letter-spacing:-.025em;background:linear-gradient(90deg,#f8fbff 0%,#78d7ff 52%,#65e6a4 100%);-webkit-background-clip:text;background-clip:text;color:transparent}.brand-copy small{margin-top:4px;color:var(--muted);font-size:10px;font-weight:800}.actions{display:flex;gap:7px;align-items:center}.btn{min-height:32px;border:1px solid var(--line);border-radius:999px;background:rgba(255,255,255,.035);color:var(--soft);padding:6px 10px;font-weight:800;display:inline-flex;align-items:center;justify-content:center;gap:7px;white-space:nowrap;transition:background .18s ease,border-color .18s ease,color .18s ease,transform .18s ease,box-shadow .18s ease}.btn:hover{border-color:var(--line-strong);background:rgba(255,255,255,.07);color:var(--ink)}.btn:active{transform:translateY(1px) scale(.99)}.btn.primary{border-color:transparent;background:linear-gradient(135deg,var(--accent),#8df6bf);color:var(--accent-ink);box-shadow:0 10px 28px rgba(101,230,164,.2)}.btn.primary:hover{box-shadow:0 14px 36px rgba(101,230,164,.28)}.btn-icon{opacity:.86;font-weight:900}.layout{width:min(1280px,100%);margin:0 auto;display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:14px;padding:12px 16px 16px}.stage{min-width:0;display:grid;gap:12px}.intro{min-height:84px;border:1px solid var(--line);border-radius:20px;background:linear-gradient(180deg,rgba(24,24,28,.82),rgba(15,15,18,.82));display:flex;align-items:center;justify-content:space-between;gap:14px;padding:16px 18px;box-shadow:0 14px 46px rgba(0,0,0,.22)}.intro h1{margin:0;max-width:660px;font-size:clamp(26px,3vw,40px);font-weight:950;line-height:1;letter-spacing:-.04em}.intro p{margin:7px 0 0;max-width:520px;color:var(--muted);font-size:14px;line-height:1.45}.signal{display:flex;align-items:center;gap:9px;white-space:nowrap;padding:7px 9px 7px 11px;border:1px solid rgba(101,230,164,.22);border-radius:999px;background:rgba(101,230,164,.06)}.signal span{color:#d8f8e2;font-size:11px;font-weight:900}.pill{border:1px solid rgba(101,230,164,.24);border-radius:999px;padding:5px 10px;color:#d8f8e2;background:rgba(101,230,164,.08);font-size:11px;font-weight:900}.live-dot,.dot{position:relative;width:8px;height:8px;border-radius:99px;background:var(--accent);box-shadow:0 0 0 4px rgba(101,230,164,.14)}.live-dot::after,.dot::after{content:"";position:absolute;inset:-6px;border-radius:99px;border:1px solid rgba(101,230,164,.58);animation:pulse 1.8s ease-out infinite}@keyframes pulse{0%{transform:scale(.65);opacity:.9}100%{transform:scale(1.75);opacity:0}}.player-shell{border:1px solid var(--line-strong);border-radius:18px;background:#07080a;box-shadow:0 14px 44px rgba(0,0,0,.38);overflow:hidden}.player-head{min-height:42px;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 8px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,rgba(35,35,40,.86),rgba(18,18,22,.92));color:#eef2f0}.status{display:inline-flex;align-items:center;gap:8px;min-height:30px;border:1px solid rgba(101,230,164,.22);border-radius:999px;background:rgba(101,230,164,.06);padding:5px 9px;color:#d8f8e2;font-size:10px;font-weight:900;letter-spacing:.02em}.player{aspect-ratio:16/9;width:100%;min-height:328px;background:#050608;display:grid;place-items:center;overflow:hidden;border-radius:0 0 19px 19px}.player iframe{display:block;width:100%;height:100%;border:0;background:#050608}.empty{display:grid;place-items:center;text-align:center;gap:6px;padding:20px;color:#8d949f}.empty strong{display:block;color:var(--soft);font-size:16px;font-weight:900}.empty span{max-width:320px;line-height:1.45}.now{border:1px solid var(--line);border-radius:16px;background:linear-gradient(180deg,rgba(24,24,28,.8),rgba(15,15,18,.88));display:grid;grid-template-columns:minmax(0,1fr) minmax(280px,42%);gap:10px;padding:10px;box-shadow:0 8px 34px rgba(0,0,0,.2)}.now-copy h1{margin:0;font-size:18px;font-weight:950;line-height:1.15;letter-spacing:-.025em}.now-copy p{margin:5px 0 0;color:var(--muted);font-size:12px}.streams{display:flex;align-items:center;gap:7px;overflow:auto;padding:2px 2px 3px}.streams h3{display:none}.stream-btn{min-height:34px;display:flex;align-items:center;justify-content:space-between;gap:9px;border:1px solid var(--line);border-radius:999px;background:rgba(255,255,255,.04);color:var(--ink);padding:6px 9px 6px 10px;white-space:nowrap;transition:background .18s ease,border-color .18s ease,transform .18s ease}.stream-btn:hover{border-color:rgba(120,215,255,.32);background:rgba(120,215,255,.075);transform:translateY(-1px)}.stream-btn.active{border-color:rgba(101,230,164,.5);background:rgba(101,230,164,.12)}.quality{font-size:11px;font-weight:950;letter-spacing:.02em;color:#e9fff2}.viewer{display:inline-flex;align-items:center;gap:5px;font-size:10px;color:#b9c1ca;font-weight:850}.viewer::before{content:"";width:10px;height:6px;border:1px solid currentColor;border-radius:999px;box-shadow:inset 0 0 0 2px rgba(255,255,255,.03)}.badge{font-size:11px;color:#d8f8e2;font-weight:900}.side{min-height:0;border:1px solid var(--line);border-radius:18px;background:linear-gradient(180deg,rgba(24,24,28,.88),rgba(15,15,18,.92));overflow:hidden;box-shadow:0 14px 46px rgba(0,0,0,.26);display:grid;grid-template-rows:auto 1fr}.tabs{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin:8px;padding:5px;border:1px solid var(--line);border-radius:999px;background:rgba(0,0,0,.22)}.tab{height:34px;border:0;border-radius:999px;background:transparent;color:var(--muted);font-weight:900;display:flex;align-items:center;justify-content:center;gap:6px;transition:background .2s ease,color .2s ease,box-shadow .2s ease,transform .2s ease}.tab:hover{color:var(--ink);background:rgba(255,255,255,.045)}.tab.active{background:linear-gradient(180deg,rgba(255,255,255,.12),rgba(255,255,255,.07));color:var(--ink);box-shadow:inset 0 0 0 1px rgba(255,255,255,.08),0 7px 18px rgba(0,0,0,.22)}.tab-icon{color:var(--accent);font-size:11px}.panel{display:none;min-height:0}.panel.active{display:grid}.events-panel{grid-template-rows:auto 1fr}.side-head{padding:12px 14px 14px;border-bottom:1px solid var(--line);display:grid;gap:10px}.side-title{display:flex;align-items:center;justify-content:space-between;gap:10px}.side-title h2{margin:0;font-size:17px;font-weight:950;letter-spacing:-.025em}.search{display:grid;grid-template-columns:1fr auto;gap:8px}.search input,.side select{width:100%;height:34px;border:1px solid var(--line);background:rgba(255,255,255,.045);color:var(--ink);border-radius:999px;padding:0 13px;outline:none;transition:border-color .18s ease,background .18s ease,box-shadow .18s ease}.search input::placeholder{color:#737b86}.search input:focus,.side select:focus{border-color:rgba(101,230,164,.48);background:rgba(255,255,255,.065);box-shadow:0 0 0 4px rgba(101,230,164,.1)}.filters{display:grid;gap:8px}.catalog-picker{position:relative}.catalog-trigger{width:100%;height:34px;border:1px solid var(--line);background:rgba(255,255,255,.045);color:var(--ink);border-radius:999px;padding:0 13px;display:flex;align-items:center;justify-content:space-between;gap:10px;font-weight:850;text-align:left;outline:none;transition:border-color .18s ease,background .18s ease,box-shadow .18s ease}.catalog-trigger:hover,.catalog-trigger[aria-expanded="true"]{border-color:rgba(101,230,164,.48);background:rgba(255,255,255,.065);box-shadow:0 0 0 4px rgba(101,230,164,.1)}.catalog-menu{position:absolute;z-index:30;top:calc(100% + 6px);left:0;right:0;display:none;max-height:260px;overflow:auto;padding:6px;border:1px solid var(--line-strong);border-radius:14px;background:#101116;box-shadow:0 18px 42px rgba(0,0,0,.48)}.catalog-picker.open .catalog-menu{display:grid;gap:3px}.catalog-option{width:100%;min-height:32px;border:0;border-radius:10px;background:transparent;color:#e7edf4;padding:7px 10px;text-align:left;font-size:12px;font-weight:850}.catalog-option:hover,.catalog-option:focus{background:rgba(120,215,255,.12);color:#fff;outline:none}.catalog-option.active{background:rgba(101,230,164,.15);color:#d8f8e2}.list{overflow:auto;padding:8px;display:grid;gap:7px;align-content:start}.event{width:100%;text-align:left;border:1px solid transparent;border-radius:14px;background:rgba(255,255,255,.035);color:var(--ink);padding:11px 12px;display:grid;gap:6px;transition:background .18s ease,border-color .18s ease,transform .18s ease}.event:hover{border-color:var(--line-strong);background:rgba(255,255,255,.06);transform:translateY(-1px)}.event.active{border-color:rgba(101,230,164,.44);background:rgba(101,230,164,.1)}.event strong{display:block;font-size:13px;line-height:1.32;font-weight:900}.event span{display:block;color:var(--muted);font-size:11px;line-height:1.35}.chat{padding:12px;grid-template-rows:auto 1fr auto;gap:8px;min-height:440px}.cbox-frame{width:100%;height:100%;min-height:360px;border:1px solid var(--line);border-radius:14px;background:#0b0d10;overflow:hidden}.cbox-frame iframe{display:block;width:100%;height:100%;border:0;background:#0b0d10}.cbox-status{min-height:16px;color:var(--muted);font-size:11px}.error{color:var(--danger);border:1px solid #7f1d1d;background:#2a1014;border-radius:14px;padding:10px;margin-top:12px}.floatingchat-container-wrap{right:18px!important;bottom:18px!important;z-index:20!important;background:transparent!important;box-shadow:none!important}.floatingchat-container-wrap iframe,.floatingchat-container-wrap-mobi iframe{background:transparent!important;box-shadow:none!important}.floatingchat-container-wrap-mobi{right:12px!important;bottom:12px!important;z-index:20!important}@media(min-width:1081px){body{font-size:12px}.top{height:54px;padding:0 16px}.brand img{width:31px;height:31px}.brand-copy span{font-size:14px}.layout{width:min(1200px,100%);grid-template-columns:minmax(0,1fr) 300px;gap:12px;padding:10px 14px 14px}.stage{gap:10px}.intro{min-height:74px;padding:13px 15px;border-radius:18px}.intro h1{font-size:clamp(24px,2.55vw,35px)}.intro p{font-size:13px}.player-head{min-height:38px}.player{min-height:296px}.now{padding:9px}.now-copy h1{font-size:16px}.side{border-radius:16px}.tabs{margin:7px}.side-head{padding:10px 12px 12px}.chat{min-height:400px;padding:10px}.event{padding:9px 10px}.btn{min-height:30px;padding:5px 9px}}@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}@media(max-width:1080px){.layout{grid-template-columns:1fr}.player{min-height:auto}.side{min-height:480px}.intro{align-items:flex-start}.now{grid-template-columns:1fr}.streams{padding-top:4px}.signal{align-self:flex-start}}@media(max-width:680px){.top{height:auto;padding:12px;align-items:flex-start;flex-direction:column}.actions{width:100%;overflow:auto}.layout{padding:12px 12px 80px;gap:14px}.intro{min-height:0;padding:16px;align-items:flex-start;flex-direction:column}.intro h1{font-size:30px}.player-head{align-items:flex-start;flex-direction:column}.now{padding:12px}.side{min-height:540px}.brand-copy small{display:none}.btn{min-height:36px;padding:7px 12px}.tabs{border-radius:20px}.tab{height:38px}.player{border-radius:0 0 19px 19px}.cbox-frame{min-height:430px}}
     </style>
     <style>
       .watch-notice{width:100%;display:flex;align-items:center;justify-content:center;gap:8px;padding:8px 14px;border-bottom:1px solid rgba(240,160,32,.2);background:#2a1b04;color:#f0a020;font-size:12px;font-weight:800;text-align:center}
@@ -5998,10 +6362,11 @@ const renderWatchTogetherPage = ({ baseUrl, account = null, errorMessage = '' })
 		            <button class="sport-tab" type="button" data-sport-filter="combat">Combat</button>
 		            <button class="sport-tab" type="button" data-sport-filter="more">More</button>
 		          </nav>
-		          <div class="actions">
-		            <button class="btn primary install-app-btn" id="installApp" type="button"><span class="btn-icon">▣</span>Install webapp</button>
-		            <a class="btn" href="/sports"><span class="btn-icon">□</span>Stremio addon</a>
-	          </div>
+			          <div class="actions">
+			            <button class="btn primary install-app-btn" id="installApp" type="button"><span class="btn-icon">▣</span>Install webapp</button>
+			            <a class="btn" href="/sports"><span class="btn-icon">□</span>Stremio addon</a>
+			            <a class="btn" href="https://omg10.com/4/11165437" target="_blank" rel="sponsored noopener noreferrer"><span class="btn-icon">↗</span>Sponsored</a>
+		          </div>
         </header>
         <div class="layout">
           <section class="stage">
@@ -6040,14 +6405,11 @@ const renderWatchTogetherPage = ({ baseUrl, account = null, errorMessage = '' })
 	              <div class="list" id="events"><div class="empty">Loading events...</div></div>
 	            </section>
 	            <section class="panel chat" id="chatPanel" aria-label="Public chat">
-	              <div class="side-title"><h2>Event chat</h2><span class="pill" id="chatCount">0</span></div>
-	              <div class="chat-list" id="chatMessages"><div class="empty">Loading chat...</div></div>
-	              <form class="chat-form" id="chatForm">
-                <input id="chatName" maxlength="24" placeholder="Name" autocomplete="nickname">
-                <input id="chatText" maxlength="240" placeholder="Say something kind" autocomplete="off" required>
-                <button class="btn primary" type="submit">Send</button>
-	              </form>
-	              <div class="chat-status" id="chatStatus">Public chat. Be kind. No spam.</div>
+	              <div class="side-title"><h2>Live chat</h2><span class="pill">Cbox</span></div>
+	              <div class="cbox-frame">
+                  ${cboxUrl ? `<iframe src="${escapeHtml(cboxUrl)}" title="Nebula Sports chat" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>` : '<div class="empty"><strong>Chat not configured</strong><span>Add WATCH_TOGETHER_CBOX_URL from Cbox Publish page.</span></div>'}
+                </div>
+	              <div class="cbox-status">Chat runs on Cbox, not Nebula server.</div>
 	            </section>
 			          </aside>
 	        </div>
@@ -6064,8 +6426,8 @@ const renderWatchTogetherPage = ({ baseUrl, account = null, errorMessage = '' })
 	        const openPanel=(panelId)=>{document.querySelectorAll('.panel').forEach((panel)=>panel.classList.toggle('active',panel.id===panelId));document.querySelectorAll('.tab').forEach((tab)=>tab.classList.toggle('active',tab.dataset.panel===panelId))};
 	        const withAccessKey=(path)=>{const url=new URL(path,location.origin);const key=qs.get('key');if(key)url.searchParams.set('key',key);return url.pathname+url.search};
         const api=async(path)=>{const res=await fetch(withAccessKey(path),{headers:{accept:'application/json'}});if(!res.ok)throw new Error(await res.text());return res.json()};
-        const postApi=async(path,body)=>{const res=await fetch(withAccessKey(path),{method:'POST',headers:{accept:'application/json','content-type':'application/json'},body:JSON.stringify(body)});const data=await res.json().catch(()=>({error:'Request failed'}));if(!res.ok)throw new Error(data.error||'Request failed');return data};
-        const withPlayerParams=(value)=>{try{const url=new URL(value);[['autoplay','1'],['muted','0'],['mute','0'],['volume','1']].forEach(([key,paramValue])=>url.searchParams.set(key,paramValue));return url.toString()}catch{return value}};
+        const postApi=async(path,body)=>{const res=await fetch(withAccessKey(path),{method:'POST',headers:{accept:'application/json','content-type':'application/json'},body:JSON.stringify(body)});const data=await res.json().catch(()=>({error:'Request failed'}));if(!res.ok){const error=new Error(data.error||'Request failed');error.status=res.status;error.data=data;throw error}return data};
+        const withPlayerParams=(value)=>{try{const url=new URL(value,location.href);if(/(^|\\.)ok\\.ru$/i.test(url.hostname))return url.toString();[['autoplay','1'],['muted','0'],['mute','0'],['volume','1']].forEach(([key,paramValue])=>url.searchParams.set(key,paramValue));return url.toString()}catch{return value}};
 	        const isWorldCupFootballEvent=(event)=>{
 	          const text=[event?.name,event?.releaseInfo,event?.description,event?.tournament,event?.competition,...(Array.isArray(event?.genres)?event.genres:[])].join(' ').toLowerCase();
 	          return /\\bworld\\s+cup\\b/.test(text)&&/\\b(?:fifa|football|soccer)\\b/.test(text);
@@ -6148,7 +6510,10 @@ const renderWatchTogetherPage = ({ baseUrl, account = null, errorMessage = '' })
             const frame=document.createElement('iframe');
             frame.allow='autoplay; fullscreen; encrypted-media; picture-in-picture';
             frame.allowFullscreen=true;
-            frame.referrerPolicy='no-referrer-when-downgrade';
+            frame.referrerPolicy='strict-origin-when-cross-origin';
+            if(/^https?:\\/\\/(?:www\\.)?ok\\.ru\\/videoembed\\//i.test(String(stream.embedUrl||''))){
+              frame.sandbox='allow-forms allow-pointer-lock allow-same-origin allow-scripts';
+            }
             frame.src=withPlayerParams(stream.embedUrl);
             target.replaceChildren(frame);
           },{once:true});
@@ -6253,7 +6618,6 @@ const renderWatchTogetherPage = ({ baseUrl, account = null, errorMessage = '' })
           state.stream=state.streams.find((stream)=>stream.id===preferredStreamId)||state.streams[0]||null;
           renderStreams(); setPlayer(state.stream);
           refreshStatsForEvent();
-          loadChat().catch(()=>{el('chatMessages').innerHTML='<div class="empty">Chat unavailable.</div>'});
         };
         el('catalogButton').addEventListener('click',()=>el('catalogPicker').classList.contains('open')?closeCatalogMenu():openCatalogMenu());
         document.addEventListener('click',(event)=>{if(!el('catalogPicker').contains(event.target))closeCatalogMenu()});
@@ -6299,54 +6663,6 @@ const renderWatchTogetherPage = ({ baseUrl, account = null, errorMessage = '' })
 	          openPanel('eventsPanel');
 	        }));
 		        const showError=(error)=>{el('events').innerHTML='<div class="empty"><strong>Load failed</strong><span>'+esc(String(error.message||error).slice(0,220))+'</span></div>'};
-        const renderChat=(messages=[])=>{
-          el('chatCount').textContent=String(messages.length);
-          if(!messages.length){el('chatMessages').innerHTML='<div class="empty">No messages yet.</div>';return}
-	          el('chatMessages').innerHTML=messages.map((message)=>'<article class="chat-msg"><div class="chat-meta"><strong class="chat-name">'+esc(message.name||'Guest')+'</strong><time class="chat-time">'+esc(timeLabel(message.createdAt))+'</time></div><p class="chat-text">'+esc(message.text||'')+'</p></article>').join('');
-          el('chatMessages').scrollTop=el('chatMessages').scrollHeight;
-        };
-        const loadChat=async()=>{
-          if(!state.event?.id){renderChat([]);el('chatMessages').innerHTML='<div class="empty">Select an event to open its chat.</div>';return}
-          const data=await api('/watch-together/api/chat?eventId='+encodeURIComponent(state.event.id));
-          renderChat(data.messages||[]);
-        };
-        const lockChatName=()=>{
-          const savedName=(localStorage.getItem('nebula-chat-name')||'').trim();
-          if(savedName){
-            el('chatName').value=savedName;
-            el('chatName').disabled=true;
-            el('chatName').title='Username locked for this browser';
-            el('chatText').disabled=false;
-            el('chatStatus').textContent='Chatting as '+savedName+'.';
-          }else{
-            el('chatName').disabled=false;
-            el('chatText').disabled=true;
-            el('chatStatus').textContent='Set a username first. It locks for this browser.';
-          }
-        };
-        el('chatName').value=localStorage.getItem('nebula-chat-name')||'';
-        lockChatName();
-        el('chatName').addEventListener('input',()=>{el('chatText').disabled=!el('chatName').value.trim();el('chatStatus').textContent=el('chatText').disabled?'Set a username first. It locks for this browser.':'Username will lock after first message.'});
-        el('chatForm').addEventListener('submit',async(event)=>{
-          event.preventDefault();
-          const name=el('chatName').value.trim();
-          const text=el('chatText').value.trim();
-          if(!name){el('chatStatus').textContent='Set a username before chatting.';el('chatName').focus();return}
-          if(!text)return;
-          el('chatStatus').textContent='Sending...';
-          try{
-            localStorage.setItem('nebula-chat-name',name);
-            if(!state.event?.id){el('chatStatus').textContent='Select an event before chatting.';return}
-            const data=await postApi('/watch-together/api/chat',{eventId:state.event.id,name,text});
-            el('chatText').value='';
-            lockChatName();
-            renderChat(data.messages||[]);
-            el('chatStatus').textContent='Sent';
-            setTimeout(()=>{el('chatStatus').textContent='Chatting as '+(localStorage.getItem('nebula-chat-name')||name)+'.'},1200);
-          }catch(error){
-            el('chatStatus').textContent=String(error.message||error).slice(0,120);
-          }
-        });
         const getLiveSessionId=()=>{
           try{
             const existing=localStorage.getItem('nebula-watch-live-session');
@@ -6398,9 +6714,6 @@ const renderWatchTogetherPage = ({ baseUrl, account = null, errorMessage = '' })
         sendLiveHeartbeat();
         setInterval(sendLiveHeartbeat,25000);
         loadCatalogs().then(loadEvents).catch(showError);
-	        renderChat([]);
-	        el('chatMessages').innerHTML='<div class="empty">Select an event to open its chat.</div>';
-	        setInterval(()=>loadChat().catch(()=>{}),8000);
 	      </script>
 	      <script>
 	        (() => {
@@ -6740,6 +7053,11 @@ const isBotProtectionIgnoredPath = (pathName) =>
   || pathName.startsWith('/supporter/')
   || pathName.startsWith('/u/')
   || pathName.startsWith('/sports/i/')
+  || pathName === '/api/vidking/embed'
+  || pathName === '/api/movie/embed'
+  || pathName === '/api/movie/embed-providers'
+  || pathName === '/watch-together/api/chat'
+  || pathName === '/watch-together/api/live-count'
   || pathName === '/webhooks/kofi'
   || pathName === '/webhooks/ko-fi'
   || pathName.startsWith('/admin')
@@ -7455,7 +7773,7 @@ const bootstrap = async () => {
       .type('application/javascript')
       .set('Cache-Control', 'no-cache')
       .set('Service-Worker-Allowed', '/')
-      .sendFile(path.resolve('public/sw.js'));
+      .sendFile(path.resolve('sw.js'));
   });
   app.use(createRateLimiter({
     name: 'public',
@@ -8273,12 +8591,15 @@ const bootstrap = async () => {
   const WATCH_CHAT_MAX_MESSAGES = 150;
   const WATCH_CHAT_FILE = path.join(config.CACHE_DIR, 'watch-together-chat.json');
   const WATCH_CHAT_IDENTITY_FILE = path.join(config.CACHE_DIR, 'watch-together-chat-identities.json');
+  const WATCH_EVENTS_RESPONSE_CACHE_MAX = 48;
   const watchChatPostTimes = new Map();
   let watchChatMessagesByEvent = null;
+  let watchChatMessagesLoadedMtimeMs = 0;
   let watchChatIdentities = null;
   let watchChatWriteChain = Promise.resolve();
   let watchChatIdentityWriteChain = Promise.resolve();
   const watchChatResponseCache = new Map();
+  const watchEventsResponseCache = new Map();
   const watchTogetherLiveSessions = new Map();
   const WATCH_TOGETHER_LIVE_DIR = path.join(config.CACHE_DIR, 'watch-together-live');
   const WATCH_TOGETHER_LIVE_TTL_MS = 70_000;
@@ -8293,8 +8614,22 @@ const bootstrap = async () => {
     .replace(/[^\w:.-]/gu, '')
     .slice(0, 160);
 
-  const loadWatchChatMessages = async () => {
-    if (watchChatMessagesByEvent && typeof watchChatMessagesByEvent === 'object') return watchChatMessagesByEvent;
+  const loadWatchChatMessages = async ({ force = false } = {}) => {
+    let fileMtimeMs = 0;
+    try {
+      const stat = await fsPromises.stat(WATCH_CHAT_FILE);
+      fileMtimeMs = Number(stat.mtimeMs || 0);
+    } catch {
+      fileMtimeMs = 0;
+    }
+    if (
+      !force
+      && watchChatMessagesByEvent
+      && typeof watchChatMessagesByEvent === 'object'
+      && watchChatMessagesLoadedMtimeMs === fileMtimeMs
+    ) {
+      return watchChatMessagesByEvent;
+    }
     try {
       const payload = JSON.parse(await fsPromises.readFile(WATCH_CHAT_FILE, 'utf8'));
       const sourceEvents = payload?.events && typeof payload.events === 'object' ? payload.events : {};
@@ -8312,8 +8647,10 @@ const bootstrap = async () => {
           .slice(-WATCH_CHAT_MAX_MESSAGES);
         return events;
       }, {});
+      watchChatMessagesLoadedMtimeMs = fileMtimeMs;
     } catch {
       watchChatMessagesByEvent = {};
+      watchChatMessagesLoadedMtimeMs = fileMtimeMs;
     }
     return watchChatMessagesByEvent;
   };
@@ -8336,7 +8673,36 @@ const bootstrap = async () => {
       .catch(() => {})
       .then(async () => {
         await fsPromises.mkdir(config.CACHE_DIR, { recursive: true });
-        await fsPromises.writeFile(WATCH_CHAT_FILE, JSON.stringify(payload, null, 2), { mode: 0o600 });
+        let mergedEvents = payload.events;
+        try {
+          const currentPayload = JSON.parse(await fsPromises.readFile(WATCH_CHAT_FILE, 'utf8'));
+          const currentEvents = currentPayload?.events && typeof currentPayload.events === 'object'
+            ? currentPayload.events
+            : {};
+          mergedEvents = { ...currentEvents };
+          for (const [eventId, messages] of Object.entries(payload.events || {})) {
+            const byId = new Map();
+            for (const message of Array.isArray(currentEvents[eventId]) ? currentEvents[eventId] : []) {
+              if (message?.id) byId.set(String(message.id), message);
+            }
+            for (const message of Array.isArray(messages) ? messages : []) {
+              if (message?.id) byId.set(String(message.id), message);
+            }
+            mergedEvents[eventId] = [...byId.values()]
+              .sort((left, right) => new Date(left?.createdAt || 0).getTime() - new Date(right?.createdAt || 0).getTime())
+              .slice(-WATCH_CHAT_MAX_MESSAGES);
+          }
+        } catch {}
+        const mergedPayload = {
+          ...payload,
+          events: mergedEvents
+        };
+        const tmpFile = `${WATCH_CHAT_FILE}.${process.pid}.${Date.now()}.tmp`;
+        await fsPromises.writeFile(tmpFile, JSON.stringify(mergedPayload, null, 2), { mode: 0o600 });
+        await fsPromises.rename(tmpFile, WATCH_CHAT_FILE);
+        watchChatMessagesByEvent = mergedEvents;
+        const stat = await fsPromises.stat(WATCH_CHAT_FILE).catch(() => null);
+        watchChatMessagesLoadedMtimeMs = Number(stat?.mtimeMs || Date.now());
       })
       .catch((error) => {
         logger.warn('watch together chat write failed', { error: error?.message || String(error) });
@@ -8863,9 +9229,12 @@ render();
   });
 
   app.get('/watch-together/api/events', async (req, res, next) => {
+    const requestedCatalogId = String(req.query.catalog || 'streamed-events-live').trim();
+    const search = String(req.query.search || '').trim();
+    const skip = Number.parseInt(req.query.skip || '0', 10) || 0;
+    const cacheKey = `${requestedCatalogId}:${skip}:${search.toLowerCase()}`;
     try {
       const catalogs = await getSportsCatalogDefinitions({ timeoutMs: 4_000 });
-      const requestedCatalogId = String(req.query.catalog || 'streamed-events-live').trim();
       const catalog = catalogs.find((entry) => entry.id === requestedCatalogId)
         || catalogs.find((entry) => entry.id === 'streamed-events-live')
         || catalogs[0];
@@ -8875,19 +9244,45 @@ render();
       }
       const events = await streamManager.streamedSportsAdapter.getEventCatalog({
         catalog,
-        search: String(req.query.search || '').trim(),
-        skip: Number.parseInt(req.query.skip || '0', 10) || 0,
+        search,
+        skip,
         limit: 60,
         signal: AbortSignal.timeout(5_000)
       });
+      const payload = {
+        catalog,
+        events: events.map((event) => decorateSportsMeta(event, req))
+      };
+      watchEventsResponseCache.set(cacheKey, payload);
+      if (watchEventsResponseCache.size > WATCH_EVENTS_RESPONSE_CACHE_MAX) {
+        watchEventsResponseCache.delete(watchEventsResponseCache.keys().next().value);
+      }
       res
         .setHeader('Cache-Control', 'public, max-age=20')
-        .json({
-          catalog,
-          events: events.map((event) => decorateSportsMeta(event, req))
-        });
+        .json(payload);
     } catch (error) {
-      next(error);
+      logger.warn?.('watch together events route failed', {
+        catalog: requestedCatalogId,
+        search,
+        error: error?.message || String(error)
+      });
+      const cached = watchEventsResponseCache.get(cacheKey);
+      if (cached) {
+        res
+          .setHeader('Cache-Control', 'public, max-age=5')
+          .setHeader('X-Nebula-Stale', '1')
+          .json({ ...cached, stale: true });
+        return;
+      }
+      res
+        .setHeader('Cache-Control', 'no-store')
+        .setHeader('X-Nebula-Stale', '1')
+        .json({
+          catalog: { type: 'tv', id: requestedCatalogId, name: 'Sports Events' },
+          events: [],
+          stale: true,
+          error: 'Events unavailable. Try again.'
+        });
     }
   });
 
@@ -8984,6 +9379,7 @@ render();
   const renderHelloSportsPlayerPage = ({ source = null, errorMessage = '' } = {}) => {
     const title = source ? `NebulaSports #${source.streamNo}` : 'Live Stream';
     const sourceUrl = source?.embedUrl || '';
+    const isOkEmbed = /^https?:\/\/(?:www\.)?ok\.ru\/videoembed\//iu.test(sourceUrl);
     return `<!doctype html>
 <html lang="en">
 <head>
@@ -9001,7 +9397,7 @@ render();
 </head>
 <body>
   <main class="shell">
-    ${errorMessage ? `<div class="message"><strong>Source unavailable</strong><span>${escapeHtml(errorMessage)}</span></div>` : `<div class="player-crop"><iframe src="${escapeHtml(sourceUrl)}" allow="autoplay; fullscreen; encrypted-media; picture-in-picture" allowfullscreen referrerpolicy="no-referrer-when-downgrade"></iframe></div>`}
+    ${errorMessage ? `<div class="message"><strong>Source unavailable</strong><span>${escapeHtml(errorMessage)}</span></div>` : `<div class="player-crop"><iframe src="${escapeHtml(sourceUrl)}" allow="autoplay; fullscreen; encrypted-media; picture-in-picture" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"${isOkEmbed ? ' sandbox="allow-forms allow-pointer-lock allow-same-origin allow-scripts"' : ''}></iframe></div>`}
   </main>
 </body>
 </html>`;
@@ -9083,35 +9479,10 @@ render();
 
   app.get('/watch-together/api/chat', async (req, res, next) => {
     try {
-      const eventId = sanitizeWatchChatEventId(req.query.eventId);
-      if (!eventId) {
-        res
-          .setHeader('Cache-Control', 'no-store')
-          .setHeader('X-Nebula-Cache', 'miss')
-          .json({ messages: [] });
-        return;
-      }
-      const now = Date.now();
-      const cached = watchChatResponseCache.get(eventId);
-      if (cached && cached.expiresAt > now) {
-        res
-          .setHeader('Cache-Control', 'no-store')
-          .setHeader('X-Nebula-Cache', 'hit')
-          .type('json')
-          .send(cached.body);
-        return;
-      }
-      const messages = await getWatchChatMessagesForEvent(eventId);
-      const body = JSON.stringify({ messages: messages.slice(-WATCH_CHAT_MAX_MESSAGES) });
-      watchChatResponseCache.set(eventId, {
-        body,
-        expiresAt: now + 1000
-      });
       res
         .setHeader('Cache-Control', 'no-store')
-        .setHeader('X-Nebula-Cache', 'miss')
-        .type('json')
-        .send(body);
+        .status(410)
+        .json({ messages: [], disabled: true, provider: 'cbox' });
     } catch (error) {
       next(error);
     }
@@ -9119,52 +9490,10 @@ render();
 
   app.post('/watch-together/api/chat', async (req, res, next) => {
     try {
-      const rateLimitError = checkWatchChatRateLimit(req);
-      if (rateLimitError) {
-        res.status(429).json({ error: rateLimitError });
-        return;
-      }
-      const submittedName = sanitizeWatchChatText(req.body?.name, 24);
-      const text = sanitizeWatchChatText(req.body?.text, 240);
-      const eventId = sanitizeWatchChatEventId(req.body?.eventId);
-      if (!eventId) {
-        res.status(400).json({ error: 'Select an event before chatting.' });
-        return;
-      }
-      if (!submittedName) {
-        res.status(400).json({ error: 'Set a username before chatting.' });
-        return;
-      }
-      if (text.length < 1) {
-        res.status(400).json({ error: 'Message cannot be empty.' });
-        return;
-      }
-      const identityId = getWatchChatIdentityId(req);
-      const identities = await loadWatchChatIdentities();
-      const lockedName = identities[identityId];
-      if (lockedName && lockedName !== submittedName) {
-        res.status(409).json({ error: `Username already locked as ${lockedName}.` });
-        return;
-      }
-      if (!lockedName) {
-        identities[identityId] = submittedName;
-        watchChatIdentities = identities;
-        await persistWatchChatIdentities();
-      }
-      const messages = await getWatchChatMessagesForEvent(eventId);
-      messages.push({
-        id: crypto.randomUUID(),
-        name: lockedName || submittedName,
-        text,
-        createdAt: new Date().toISOString()
-      });
-      watchChatMessagesByEvent[eventId] = messages.slice(-WATCH_CHAT_MAX_MESSAGES);
-      await persistWatchChatMessages();
-      setWatchChatCookie(req, res, identityId);
       res
         .setHeader('Cache-Control', 'no-store')
-        .status(201)
-        .json({ messages: watchChatMessagesByEvent[eventId] });
+        .status(410)
+        .json({ error: 'Nebula chat moved to Cbox.', disabled: true, provider: 'cbox' });
     } catch (error) {
       next(error);
     }
@@ -9968,6 +10297,38 @@ render();
       res
         .set('Cache-Control', 'public, max-age=300')
         .json(buildVidkingEmbedUrl({
+          provider: 'vidking',
+          type: req.query.type,
+          tmdbId: req.query.tmdbId,
+          season: req.query.season,
+          episode: req.query.episode,
+          color: req.query.color,
+          autoPlay: toBooleanQuery(req.query.autoPlay),
+          nextEpisode: toBooleanQuery(req.query.nextEpisode),
+          episodeSelector: toBooleanQuery(req.query.episodeSelector),
+          progress: req.query.progress
+        }));
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.get('/api/movie/embed-providers', (req, res) => {
+    res
+      .set('Cache-Control', 'public, max-age=3600, stale-while-revalidate=86400')
+      .json({
+        defaultProvider: 'vidking',
+        providers: MOVIE_EMBED_PROVIDER_LIST.map((provider) => ({
+          id: provider.id,
+          name: provider.name
+        }))
+      });
+  });
+  app.get('/api/movie/embed', (req, res, next) => {
+    try {
+      res
+        .set('Cache-Control', 'public, max-age=300')
+        .json(buildVidkingEmbedUrl({
+          provider: req.query.provider,
           type: req.query.type,
           tmdbId: req.query.tmdbId,
           season: req.query.season,

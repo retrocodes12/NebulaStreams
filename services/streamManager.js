@@ -3378,6 +3378,9 @@ export class StreamManager {
       browserTimeoutMs: config.STREAMED_SPORTS_BROWSER_TIMEOUT_MS,
       hlsCacheMs: config.STREAMED_SPORTS_HLS_CACHE_MS,
       browserIdleMs: config.STREAMED_SPORTS_BROWSER_IDLE_MS,
+      sportzXStreamsEnabled: config.SPORTZX_STREAMS_ENABLED,
+      sportzXBaseUrl: config.SPORTZX_BASE_URL,
+      sportzXFallbackUrl: config.SPORTZX_FALLBACK_URL,
       cacheDir: path.join(config.CACHE_DIR, 'streamed-sports')
     });
     this.xtreamCodesAdapter = new XtreamCodesAdapter({ logger });
