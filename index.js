@@ -1665,148 +1665,58 @@ const renderDashboardPage = ({ baseUrl, account = null, wall = [], activeSection
 };
 
 const renderSportsPage = ({ baseUrl, account = null, errorMessage = '', successMessage = '', stats = {}, availableSports = [], trendingEvents = [] }) => {
-  const sportsBase = `${String(baseUrl || '').replace(/\/+$/u, '')}/sports`;
-  const installUrl = account?.installKey ? `${sportsBase}/i/${account.installKey}/manifest.json` : '';
-  const statusLabel = account
-    ? (account.lifetime ? 'Lifetime' : `Active until ${account.expiresAt ? new Date(account.expiresAt).toLocaleDateString('en') : 'renewal'}`)
-    : 'Sign in required';
+  const sportsBase = String(baseUrl || '').replace(/\/+$/u, '') + '/sports';
+  const installUrl = account?.installKey ? sportsBase + '/i/' + account.installKey + '/manifest.json' : '';
   const kofiUrl = escapeHtml(config.DONATION_PRIMARY_URL || 'https://ko-fi.com/nebulastreams');
-  const sportsPreview = (Array.isArray(availableSports) && availableSports.length
-    ? availableSports
-    : ['Football', 'Basketball', 'Tennis', 'MMA', 'Boxing', 'Cricket', 'Baseball', 'Hockey', 'Rugby', 'Motorsport']).slice(0, 14);
-  const pinnedTrendingEvents = [
-    { name: 'FIFA World Cup 2026', time: '2026 tournament coverage', genre: 'Football' }
-  ];
-  const liveTrendingEvents = (Array.isArray(trendingEvents) ? trendingEvents : [])
-    .filter((event) => !/fifa|world\s*cup/iu.test(String(event?.name || '')));
-  const eventPreview = [...pinnedTrendingEvents, ...liveTrendingEvents].slice(0, 6);
-  return `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Nebula Sports</title>
-    <link rel="icon" type="image/png" sizes="32x32" href="${escapeHtml(baseUrl)}/assets/nebula-sports-favicon-32.png">
-    <link rel="apple-touch-icon" href="${escapeHtml(baseUrl)}/assets/nebula-sports-favicon.png">
-    <style>
-      :root{color-scheme:dark;--bg:#050914;--surface:#0b1220;--surface2:#0f1a2e;--line:rgba(148,163,184,.18);--line2:rgba(34,211,238,.3);--text:#eff6ff;--muted:#95a3b8;--soft:#d9f8ff;--accent:#22d3ee;--accent2:#2563eb;--ok:#22c55e;--bad:#fb7185;--shadow:0 26px 80px rgba(0,0,0,.32)}
-      *{box-sizing:border-box}html{background:var(--bg)}body{margin:0;min-height:100vh;background:radial-gradient(circle at top left,rgba(34,211,238,.16),transparent 30%),linear-gradient(180deg,#07111f 0%,#050914 54%,#040711 100%);color:var(--text);font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}a{color:inherit;text-decoration:none}button,input{font:inherit}button{cursor:pointer}.page{max-width:1160px;margin:0 auto;padding:28px 22px 42px}.topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px}.brand{display:flex;gap:12px;align-items:center}.brand img{width:44px;height:44px;border-radius:12px;object-fit:cover}.brand strong{font-size:18px}.top-actions{display:flex;gap:10px;align-items:center}.pill{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:999px;background:rgba(255,255,255,.04);padding:8px 11px;color:var(--muted);font-size:12px;font-weight:800;letter-spacing:.04em;text-transform:uppercase}.hero{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(360px,.9fr);gap:18px;align-items:start}.panel{border:1px solid var(--line);border-radius:18px;background:linear-gradient(180deg,rgba(255,255,255,.07),rgba(255,255,255,.035));box-shadow:var(--shadow)}.hero-copy{padding:30px}.kicker{display:inline-flex;margin-bottom:18px;color:#8ee7ff;font-size:12px;font-weight:900;letter-spacing:.11em;text-transform:uppercase}h1{max-width:760px;margin:0 0 14px;font-size:clamp(36px,6vw,64px);line-height:.98;letter-spacing:0}h2{margin:0 0 12px;font-size:20px}h3{margin:0;font-size:15px}p{margin:0}.muted,.note{color:var(--muted)}.lead{max-width:700px;font-size:16px;line-height:1.65}.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;overflow:hidden;margin-top:28px;border:1px solid var(--line);border-radius:16px;background:var(--line)}.stat{background:rgba(6,12,23,.74);padding:18px}.stat span{display:block;color:var(--muted);font-size:11px;font-weight:850;letter-spacing:.09em;text-transform:uppercase}.stat strong{display:block;margin-top:8px;font-size:28px}.preview-grid{display:grid;grid-template-columns:.92fr 1.08fr;gap:14px;margin-top:18px}.preview-card{border:1px solid var(--line);border-radius:16px;background:rgba(8,16,31,.6);padding:18px}.preview-card p{margin-top:5px;color:var(--muted);font-size:13px}.sport-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}.sport-chip{display:inline-flex;padding:7px 10px;border:1px solid rgba(34,211,238,.2);border-radius:999px;background:rgba(34,211,238,.07);color:#cff8ff;font-size:12px;font-weight:800}.event-list{display:grid;gap:9px;margin-top:14px}.event-item{display:grid;gap:4px;padding:10px 0;border-top:1px solid rgba(148,163,184,.13)}.event-item:first-child{border-top:0;padding-top:0}.event-item strong{font-size:13px;line-height:1.35}.event-item span{color:var(--muted);font-size:12px}.pricing{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:18px}.price-card{position:relative;display:flex;flex-direction:column;min-height:250px;padding:20px;border:1px solid var(--line);border-radius:16px;background:rgba(8,16,31,.72)}.price-card.featured{border-color:var(--line2);box-shadow:inset 0 0 0 1px rgba(34,211,238,.08)}.price-card.featured:before{content:"Best value";position:absolute;top:16px;right:16px;padding:5px 9px;border:1px solid rgba(34,211,238,.35);border-radius:999px;background:rgba(34,211,238,.1);color:#9befff;font-size:11px;font-weight:900}.plan-name{color:var(--muted);font-size:11px;font-weight:900;letter-spacing:.1em;text-transform:uppercase}.price{display:flex;align-items:baseline;gap:7px;margin:18px 0 10px;font-size:34px;font-weight:950}.price span{color:var(--muted);font-size:13px;font-weight:750}.price-card p{min-height:42px;color:var(--muted);line-height:1.5}.btn{display:inline-flex;align-items:center;justify-content:center;min-height:42px;margin-top:auto;border:1px solid transparent;border-radius:10px;background:linear-gradient(135deg,var(--accent2),var(--accent));color:#fff;font-weight:850;text-align:center}.btn.secondary,.ghost{border-color:var(--line);background:rgba(255,255,255,.055);color:var(--text)}.auth-panel{padding:22px}.flash{margin-bottom:14px;border:1px solid rgba(34,197,94,.34);background:rgba(34,197,94,.09);color:#bbf7d0;border-radius:12px;padding:12px}.flash.error{border-color:rgba(251,113,133,.4);background:rgba(251,113,133,.08);color:#fecdd3}.forms{display:grid;grid-template-columns:1fr;gap:14px}.form-card{display:grid;gap:10px;padding:18px;border:1px solid var(--line);border-radius:16px;background:rgba(7,14,27,.68)}label{display:grid;gap:7px;color:var(--muted);font-size:13px;font-weight:700}input{width:100%;border:1px solid var(--line);background:#07111d;color:var(--text);border-radius:10px;padding:11px 12px}input:focus{outline:0;border-color:rgba(34,211,238,.55);box-shadow:0 0 0 3px rgba(34,211,238,.1)}.install{display:grid;gap:14px}.install-head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start}.status{color:var(--ok);font-weight:850}.install code{display:block;word-break:break-all;background:#07111d;border:1px solid var(--line);border-radius:12px;padding:14px;color:var(--soft)}.row{display:flex;gap:10px;flex-wrap:wrap}.row form{margin:0}.note{font-size:13px;line-height:1.55}.footer-note{margin-top:18px;padding:16px 18px;border:1px solid rgba(34,211,238,.18);border-radius:16px;background:rgba(34,211,238,.055)}@media(max-width:900px){.hero,.pricing,.preview-grid{grid-template-columns:1fr}.topbar{align-items:flex-start;gap:14px}.top-actions{display:none}.price-card{min-height:auto}}@media(max-width:560px){.page{padding:18px 12px 28px}.hero-copy,.auth-panel{padding:16px}.stats{grid-template-columns:1fr}.install-head{display:block}.row .btn,.row button{width:100%}}
-    </style>
-  </head>
-  <body>
-    <main class="page">
-      <div class="topbar">
-        <div class="brand">
-          <img src="${escapeHtml(baseUrl)}/assets/nebula-sports-logo.png" alt="Nebula Sports">
-          <strong>Nebula Sports</strong>
-        </div>
-        <div class="top-actions">
-          <span class="pill">Paid addon</span>
-          <a class="pill" href="${escapeHtml(baseUrl)}/configure">NebulaStreams</a>
-        </div>
-      </div>
-      <section class="hero">
-        <div class="panel hero-copy">
-          <span class="kicker">Nebula Sports</span>
-          <h1>Live sports events for Stremio.</h1>
-          <p class="lead muted">Private sports addon with clean catalogs, small manifest, username/password access, and Ko-fi token signup. Built separate from main NebulaStreams so sports catalogs stay fast on TV clients.</p>
-          <div class="stats">
-            <div class="stat"><span>Sports accounts</span><strong>${escapeHtml(String(stats.accounts || 0))}</strong></div>
-            <div class="stat"><span>Active</span><strong>${escapeHtml(String(stats.active || 0))}</strong></div>
-            <div class="stat"><span>Catalogs</span><strong>18</strong></div>
-          </div>
-          <div class="preview-grid">
-            <div class="preview-card">
-              <h3>Sports included</h3>
-              <p>Live, today, popular, plus dedicated sports catalogs.</p>
-              <div class="sport-chips">
-                ${sportsPreview.map((sport) => `<span class="sport-chip">${escapeHtml(sport)}</span>`).join('')}
-              </div>
-            </div>
-            <div class="preview-card">
-              <h3>Trending events</h3>
-              <p>Preview updates from current Streamed event data.</p>
-              <div class="event-list">
-                ${eventPreview.length ? eventPreview.map((event) => `
-                  <div class="event-item">
-                    <strong>${escapeHtml(event.name || 'Live sports event')}</strong>
-                    <span>${escapeHtml([event.time, event.genre].filter(Boolean).join(' · ') || 'Live/upcoming')}</span>
-                  </div>
-                `).join('') : `
-                  <div class="event-item">
-                    <strong>Live and upcoming events</strong>
-                    <span>Football, basketball, tennis, combat sports, cricket, motorsport, and more.</span>
-                  </div>
-                `}
-              </div>
-            </div>
-          </div>
-          <div class="pricing">
-            <div class="price-card">
-              <span class="plan-name">Monthly</span>
-              <div class="price">$1 <span>/ month</span></div>
-              <p>Access while subscription is active. Include "Nebula Sports" in Ko-fi note.</p>
-              <a class="btn secondary" href="${kofiUrl}" target="_blank" rel="noopener">Pay on Ko-fi</a>
-            </div>
-            <div class="price-card featured">
-              <span class="plan-name">Lifetime</span>
-              <div class="price">$3 <span>/ lifetime</span></div>
-              <p>One payment. Webhook treats $3 Sports payment as lifetime access.</p>
-              <a class="btn" href="${kofiUrl}" target="_blank" rel="noopener">Get lifetime</a>
-            </div>
-          </div>
-          <div class="footer-note note">After payment, Ko-fi webhook emails a one-use secret token. Create username/password here, paste token, then install your private manifest.</div>
-        </div>
-        <div class="panel auth-panel">
-          ${errorMessage ? `<div class="flash error">${escapeHtml(errorMessage)}</div>` : ''}
-          ${successMessage ? `<div class="flash">${escapeHtml(successMessage)}</div>` : ''}
-          ${account ? `
-            <div class="install">
-              <div class="install-head">
-                <div>
-                  <h2>Welcome, ${escapeHtml(account.username)}</h2>
-                  <p class="muted">Use this private install URL in Stremio.</p>
-                </div>
-                <span class="status">${escapeHtml(statusLabel)}</span>
-              </div>
-              <code>${escapeHtml(installUrl)}</code>
-              <div class="row">
-                <a class="btn" href="${escapeHtml(installUrl)}">Install manifest</a>
-                <button class="btn secondary" type="button" data-copy="${escapeHtml(installUrl)}">Copy URL</button>
-                <form method="post" action="/sports/logout"><button class="btn secondary" type="submit">Sign out</button></form>
-              </div>
-              <p class="note">Playback uses Nebula private HLS bridge. Do not share this URL; it belongs to your account.</p>
-            </div>
-          ` : `
-            <div class="forms">
-              <form class="form-card" method="post" action="/sports/trial/request">
-                <h2>Try free for 24 hours</h2>
-                <p class="note">Enter email. If eligible, one-use trial token arrives by email. One trial per user.</p>
-                <label>Email<input name="email" type="email" autocomplete="email" required></label>
-                <button class="btn secondary" type="submit">Get Free Trial</button>
-              </form>
-              <form class="form-card" method="post" action="/sports/login">
-                <h2>Sign in</h2>
-                <label>Username<input name="username" autocomplete="username" required></label>
-                <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
-                <button class="btn" type="submit">Sign in</button>
-              </form>
-              <form class="form-card" method="post" action="/sports/signup">
-                <h2>Create account</h2>
-                <p class="note">Use the one-use token from your Nebula Sports email.</p>
-                <label>Username<input name="username" autocomplete="username" required></label>
-                <label>Password<input name="password" type="password" autocomplete="new-password" minlength="8" required></label>
-                <label>Secret token<input name="tokenCode" autocomplete="off" placeholder="NSPORT-..." required></label>
-                <button class="btn secondary" type="submit">Create account</button>
-              </form>
-            </div>
-          `}
-        </div>
-      </section>
-    </main>
-    <script>document.querySelectorAll('[data-copy]').forEach((btn)=>btn.addEventListener('click',async()=>{const value=btn.getAttribute('data-copy')||'';if(!value)return;await navigator.clipboard.writeText(value);btn.textContent='Copied';setTimeout(()=>btn.textContent='Copy URL',1300)}));</script>
-  </body>
-</html>`;
+  const accountCount = escapeHtml(String(stats.accounts || 0));
+  const activeCount = escapeHtml(String(stats.active || 0));
+  const flashHtml = [
+    errorMessage ? '<div class="wrap" style="padding-top:18px"><div class="card" style="border-color:rgba(251,113,133,.4);color:#fecdd3">' + escapeHtml(errorMessage) + '</div></div>' : '',
+    successMessage ? '<div class="wrap" style="padding-top:18px"><div class="card" style="border-color:rgba(31,170,110,.42);color:#bbf7d0">' + escapeHtml(successMessage) + '</div></div>' : ''
+  ].join('');
+  let html = "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"UTF-8\" />\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n<title>Nebula Sports — Live sports for Stremio</title>\n<style>\n  :root {\n    --ink: #e7ebf0;\n    --ink-soft: #aeb7c2;\n    --muted: #7c8794;\n    --line: #232a33;\n    --line-strong: #333c47;\n    --surface: #0e1116;\n    --surface-2: #161b22;\n    --surface-3: #1d232c;\n    --accent: #1faa6e;\n    --accent-hover: #28b878;\n    --accent-soft: rgba(31,170,110,.15);\n    --radius: 12px;\n    --radius-sm: 9px;\n    --shadow: 0 1px 2px rgba(15,20,25,.04), 0 8px 24px rgba(15,20,25,.05);\n    --font: \"Inter\", -apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, Helvetica, Arial, sans-serif;\n    --mono: ui-monospace, SFMono-Regular, \"SF Mono\", Menlo, Consolas, monospace;\n  }\n\n  * { box-sizing: border-box; }\n  html { scroll-behavior: smooth; }\n  body {\n    margin: 0;\n    font-family: var(--font);\n    color: var(--ink);\n    background: var(--surface);\n    line-height: 1.55;\n    -webkit-font-smoothing: antialiased;\n    text-rendering: optimizeLegibility;\n  }\n  h1, h2, h3 { letter-spacing: -0.02em; line-height: 1.15; margin: 0; }\n  p { margin: 0; }\n  a { color: inherit; text-decoration: none; }\n\n  .wrap { width: 100%; max-width: 1080px; margin: 0 auto; padding: 0 24px; }\n\n  /* ---------- Header ---------- */\n  header.site {\n    position: sticky; top: 0; z-index: 50;\n    background: rgba(14,17,22,.82);\n    backdrop-filter: saturate(180%) blur(12px);\n    border-bottom: 1px solid var(--line);\n  }\n  .nav { display: flex; align-items: center; justify-content: space-between; height: 64px; }\n  .brand { display: flex; align-items: center; gap: 10px; font-weight: 650; font-size: 16px; }\n  .brand .mark {\n    width: 28px; height: 28px; border-radius: 8px;\n    background: var(--accent); color: #fff;\n    display: grid; place-items: center; font-weight: 700; font-size: 15px;\n  }\n  .brand .tag {\n    font-size: 11px; font-weight: 600; color: var(--muted);\n    border: 1px solid var(--line-strong); border-radius: 999px;\n    padding: 2px 9px; margin-left: 4px; letter-spacing: .01em;\n  }\n  .nav-links { display: flex; align-items: center; gap: 28px; }\n  .nav-links a { font-size: 14px; color: var(--ink-soft); font-weight: 500; }\n  .nav-links a:hover { color: var(--ink); }\n\n  .btn {\n    display: inline-flex; align-items: center; justify-content: center; gap: 8px;\n    font-family: inherit; font-size: 14px; font-weight: 600; cursor: pointer;\n    border-radius: var(--radius-sm); padding: 10px 18px; border: 1px solid transparent;\n    transition: background .15s ease, border-color .15s ease, color .15s ease, transform .05s ease;\n  }\n  .btn:active { transform: translateY(1px); }\n  .btn-primary { background: var(--accent); color: #fff; }\n  .btn-primary:hover { background: var(--accent-hover); }\n  .btn-ghost { background: transparent; color: var(--ink); border-color: var(--line-strong); }\n  .btn-ghost:hover { background: var(--surface-2); }\n  .btn-block { width: 100%; padding: 12px 18px; }\n\n  /* ---------- Hero ---------- */\n  .hero { padding: 92px 0 64px; border-bottom: 1px solid var(--line); }\n  .hero .eyebrow {\n    display: inline-flex; align-items: center; gap: 8px;\n    font-size: 13px; font-weight: 600; color: var(--accent);\n    background: var(--accent-soft); border-radius: 999px; padding: 5px 13px;\n    margin-bottom: 22px;\n  }\n  .hero .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }\n  .hero h1 { font-size: 52px; max-width: 14ch; }\n  .hero p.lead { font-size: 18px; color: var(--ink-soft); max-width: 60ch; margin-top: 20px; }\n  .hero .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 32px; }\n\n  /* ---------- Stats ---------- */\n  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 56px; }\n  .stat {\n    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);\n    padding: 22px 24px;\n  }\n  .stat .num { font-size: 34px; font-weight: 700; letter-spacing: -0.03em; }\n  .stat .lbl { font-size: 13px; color: var(--muted); margin-top: 4px; font-weight: 500; }\n\n  /* ---------- Sections ---------- */\n  section.block { padding: 72px 0; border-bottom: 1px solid var(--line); }\n  .section-head { margin-bottom: 36px; }\n  .section-head .kicker { font-size: 13px; font-weight: 650; color: var(--accent); text-transform: uppercase; letter-spacing: .06em; }\n  .section-head h2 { font-size: 30px; margin-top: 10px; }\n  .section-head p { color: var(--ink-soft); font-size: 16px; margin-top: 10px; max-width: 60ch; }\n\n  /* sports chips */\n  .chips { display: flex; flex-wrap: wrap; gap: 10px; }\n  .chip {\n    font-size: 14px; font-weight: 550; color: var(--ink-soft);\n    background: var(--surface-2); border: 1px solid var(--line);\n    border-radius: 999px; padding: 9px 16px;\n  }\n  .chip:hover { border-color: var(--line-strong); color: var(--ink); }\n\n  /* events */\n  .events { display: grid; gap: 0; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }\n  .event { display: flex; align-items: center; gap: 18px; padding: 18px 22px; border-bottom: 1px solid var(--line); background: var(--surface); }\n  .event:last-child { border-bottom: 0; }\n  .event:hover { background: var(--surface-2); }\n  .event .name { font-weight: 600; font-size: 15px; flex: 1; }\n  .event .meta { font-size: 13px; color: var(--muted); white-space: nowrap; }\n  .event .cat {\n    font-size: 11px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase;\n    color: var(--ink-soft); background: var(--surface-3);\n    border-radius: 6px; padding: 4px 9px; white-space: nowrap;\n  }\n\n  /* pricing */\n  .pricing { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; max-width: 760px; }\n  .plan { border: 1px solid var(--line); border-radius: var(--radius); padding: 30px; background: var(--surface); position: relative; }\n  .plan.featured { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 8px 30px rgba(0,0,0,.35); }\n  .plan .badge {\n    position: absolute; top: 22px; right: 22px;\n    font-size: 11px; font-weight: 650; color: var(--accent);\n    background: var(--accent-soft); border-radius: 999px; padding: 4px 11px;\n  }\n  .plan .pname { font-size: 15px; font-weight: 650; color: var(--ink-soft); }\n  .plan .price { font-size: 42px; font-weight: 700; letter-spacing: -0.03em; margin-top: 10px; }\n  .plan .price span { font-size: 16px; font-weight: 500; color: var(--muted); }\n  .plan .pdesc { font-size: 14px; color: var(--ink-soft); margin-top: 14px; min-height: 42px; }\n  .plan .btn { margin-top: 22px; }\n\n  /* steps */\n  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }\n  .step { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 26px; }\n  .step .n { width: 30px; height: 30px; border-radius: 8px; background: var(--accent); color: #fff; display: grid; place-items: center; font-weight: 700; font-size: 14px; }\n  .step h3 { font-size: 16px; margin-top: 16px; }\n  .step p { font-size: 14px; color: var(--ink-soft); margin-top: 8px; }\n\n  /* ---------- Auth / forms ---------- */\n  .auth { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }\n  .card { border: 1px solid var(--line); border-radius: var(--radius); padding: 30px; background: var(--surface); }\n  .card h3 { font-size: 19px; }\n  .card .hint { font-size: 13.5px; color: var(--muted); margin-top: 8px; }\n  .field { margin-top: 16px; }\n  .field label { display: block; font-size: 13px; font-weight: 600; color: var(--ink-soft); margin-bottom: 6px; }\n  .field input {\n    width: 100%; font-family: inherit; font-size: 14.5px; color: var(--ink);\n    background: var(--surface); border: 1px solid var(--line-strong);\n    border-radius: var(--radius-sm); padding: 11px 13px; transition: border-color .15s ease, box-shadow .15s ease;\n  }\n  .field input::placeholder { color: #5f6a76; }\n  .field input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }\n  .field input.mono { font-family: var(--mono); letter-spacing: .02em; }\n\n  .trial {\n    border: 1px solid var(--line); border-radius: var(--radius); padding: 30px 32px;\n    background: var(--surface-2); display: flex; align-items: center; justify-content: space-between; gap: 28px; flex-wrap: wrap;\n  }\n  .trial .copy h3 { font-size: 20px; }\n  .trial .copy p { font-size: 14px; color: var(--ink-soft); margin-top: 8px; max-width: 46ch; }\n  .trial form { display: flex; gap: 10px; flex: 1; min-width: 280px; }\n  .trial form input { flex: 1; }\n\n  /* ---------- Footer ---------- */\n  footer.site { padding: 44px 0; }\n  .foot { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }\n  .foot .muted { font-size: 13px; color: var(--muted); }\n  .foot .links { display: flex; gap: 22px; }\n  .foot .links a { font-size: 13px; color: var(--ink-soft); }\n  .foot .links a:hover { color: var(--ink); }\n\n  @media (max-width: 820px) {\n    .nav-links { display: none; }\n    .hero { padding: 64px 0 48px; }\n    .hero h1 { font-size: 38px; }\n    .stats, .pricing, .steps, .auth { grid-template-columns: 1fr; }\n    .stats { margin-top: 40px; }\n  }\n</style>\n</head>\n<body>\n\n<header class=\"site\">\n  <div class=\"wrap nav\">\n    <div class=\"brand\">\n      <span class=\"mark\">N</span>\n      Nebula Sports\n      <span class=\"tag\">NebulaStreams addon</span>\n    </div>\n    <nav class=\"nav-links\">\n      <a href=\"#sports\">Sports</a>\n      <a href=\"#events\">Events</a>\n      <a href=\"#pricing\">Pricing</a>\n      <a href=\"#account\">Account</a>\n    </nav>\n    <a class=\"btn btn-primary\" href=\"#account\">Sign in</a>\n  </div>\n</header>\n\n<main>\n  <!-- HERO -->\n  <section class=\"hero\">\n    <div class=\"wrap\">\n      <span class=\"eyebrow\"><span class=\"dot\"></span> Private sports addon</span>\n      <h1>Live sports events for Stremio.</h1>\n      <p class=\"lead\">A private sports addon with clean catalogs, a small manifest, and username/password access. Built separately from the main NebulaStreams addon so sports catalogs stay fast on TV clients.</p>\n      <div class=\"actions\">\n        <a class=\"btn btn-primary\" href=\"#trial\">Start 24-hour free trial</a>\n        <a class=\"btn btn-ghost\" href=\"#pricing\">View pricing</a>\n      </div>\n\n      <div class=\"stats\">\n        <div class=\"stat\"><div class=\"num\">10</div><div class=\"lbl\">Sports accounts</div></div>\n        <div class=\"stat\"><div class=\"num\">6</div><div class=\"lbl\">Active now</div></div>\n        <div class=\"stat\"><div class=\"num\">18</div><div class=\"lbl\">Catalogs</div></div>\n      </div>\n    </div>\n  </section>\n\n  <!-- SPORTS -->\n  <section class=\"block\" id=\"sports\">\n    <div class=\"wrap\">\n      <div class=\"section-head\">\n        <div class=\"kicker\">Coverage</div>\n        <h2>Sports included</h2>\n        <p>Live, today, and popular catalogs, plus dedicated catalogs for every sport below.</p>\n      </div>\n      <div class=\"chips\">\n        <span class=\"chip\">FIFA World Cup</span>\n        <span class=\"chip\">Basketball</span>\n        <span class=\"chip\">Football</span>\n        <span class=\"chip\">American Football</span>\n        <span class=\"chip\">Hockey</span>\n        <span class=\"chip\">Baseball</span>\n        <span class=\"chip\">Motor Sports</span>\n        <span class=\"chip\">Fight (UFC, Boxing)</span>\n        <span class=\"chip\">Tennis</span>\n        <span class=\"chip\">Rugby</span>\n        <span class=\"chip\">Golf</span>\n        <span class=\"chip\">Billiards</span>\n        <span class=\"chip\">AFL</span>\n        <span class=\"chip\">Darts</span>\n      </div>\n    </div>\n  </section>\n\n  <!-- EVENTS -->\n  <section class=\"block\" id=\"events\">\n    <div class=\"wrap\">\n      <div class=\"section-head\">\n        <div class=\"kicker\">Live feed</div>\n        <h2>Trending events</h2>\n        <p>Preview updates pulled from current Streamed event data.</p>\n      </div>\n      <div class=\"events\">\n        <div class=\"event\"><span class=\"name\">FIFA World Cup 2026</span><span class=\"meta\">2026 tournament coverage</span><span class=\"cat\">Football</span></div>\n        <div class=\"event\"><span class=\"name\">Spring Nationals — North Georgia</span><span class=\"meta\">Jun 19, 2026 · 00:00 UTC</span><span class=\"cat\">Other</span></div>\n        <div class=\"event\"><span class=\"name\">betr Darwin Triple Crown — Race 17</span><span class=\"meta\">Jun 19, 2026 · 00:00 UTC</span><span class=\"cat\">Motor Sports</span></div>\n        <div class=\"event\"><span class=\"name\">Summer Nationals Late Models — Dubuque</span><span class=\"meta\">Jun 19, 2026 · 00:10 UTC</span><span class=\"cat\">Other</span></div>\n        <div class=\"event\"><span class=\"name\">NARC Super Dirt Cup — Skagit</span><span class=\"meta\">Jun 19, 2026 · 01:00 UTC</span><span class=\"cat\">Other</span></div>\n        <div class=\"event\"><span class=\"name\">MotoGP Czech Republic Grand Prix</span><span class=\"meta\">Jun 19, 2026 · 07:00 UTC</span><span class=\"cat\">Motor Sports</span></div>\n      </div>\n    </div>\n  </section>\n\n  <!-- PRICING -->\n  <section class=\"block\" id=\"pricing\">\n    <div class=\"wrap\">\n      <div class=\"section-head\">\n        <div class=\"kicker\">Pricing</div>\n        <h2>Simple, one-off pricing</h2>\n        <p>Pay through Ko-fi and include &ldquo;Nebula Sports&rdquo; in the note. Your access token is emailed automatically.</p>\n      </div>\n      <div class=\"pricing\">\n        <div class=\"plan\">\n          <div class=\"pname\">Monthly</div>\n          <div class=\"price\">$1<span> / month</span></div>\n          <p class=\"pdesc\">Access stays active while the subscription is running. Include &ldquo;Nebula Sports&rdquo; in your Ko-fi note.</p>\n          <a class=\"btn btn-ghost btn-block\" href=\"#account\">Choose monthly</a>\n        </div>\n        <div class=\"plan featured\">\n          <span class=\"badge\">Best value</span>\n          <div class=\"pname\">Lifetime</div>\n          <div class=\"price\">$3<span> / once</span></div>\n          <p class=\"pdesc\">One payment, permanent access. The webhook treats a $3 sports payment as lifetime access.</p>\n          <a class=\"btn btn-primary btn-block\" href=\"#account\">Get lifetime access</a>\n        </div>\n      </div>\n    </div>\n  </section>\n\n  <!-- HOW IT WORKS -->\n  <section class=\"block\" id=\"how\">\n    <div class=\"wrap\">\n      <div class=\"section-head\">\n        <div class=\"kicker\">Getting started</div>\n        <h2>How it works</h2>\n      </div>\n      <div class=\"steps\">\n        <div class=\"step\">\n          <div class=\"n\">1</div>\n          <h3>Pay on Ko-fi</h3>\n          <p>After payment, the Ko-fi webhook emails you a one-use secret token.</p>\n        </div>\n        <div class=\"step\">\n          <div class=\"n\">2</div>\n          <h3>Create your account</h3>\n          <p>Set a username and password here, then paste the token to verify.</p>\n        </div>\n        <div class=\"step\">\n          <div class=\"n\">3</div>\n          <h3>Install your manifest</h3>\n          <p>Add your private manifest to Stremio and start streaming live sports.</p>\n        </div>\n      </div>\n    </div>\n  </section>\n\n  <!-- TRIAL -->\n  <section class=\"block\" id=\"trial\">\n    <div class=\"wrap\">\n      <div class=\"trial\">\n        <div class=\"copy\">\n          <h3>Try free for 24 hours</h3>\n          <p>Enter your email. If eligible, a one-use trial token arrives by email. One trial per user.</p>\n        </div>\n        <form method=\"post\" action=\"/sports/trial\">\n          <input type=\"email\" name=\"email\" placeholder=\"you@email.com\" required />\n          <button class=\"btn btn-primary\" type=\"submit\">Get free trial</button>\n        </form>\n      </div>\n    </div>\n  </section>\n\n  <!-- ACCOUNT -->\n  <section class=\"block\" id=\"account\">\n    <div class=\"wrap\">\n      <div class=\"section-head\">\n        <div class=\"kicker\">Access</div>\n        <h2>Sign in or create your account</h2>\n      </div>\n      <div class=\"auth\">\n        <div class=\"card\">\n          <h3>Sign in</h3>\n          <p class=\"hint\">Use the username and password you created.</p>\n          <form method=\"post\" action=\"/sports/login\">\n            <div class=\"field\">\n              <label for=\"si-user\">Username</label>\n              <input id=\"si-user\" type=\"text\" name=\"username\" placeholder=\"username\" autocomplete=\"username\" required />\n            </div>\n            <div class=\"field\">\n              <label for=\"si-pass\">Password</label>\n              <input id=\"si-pass\" type=\"password\" name=\"password\" placeholder=\"••••••••\" autocomplete=\"current-password\" required />\n            </div>\n            <button class=\"btn btn-ghost btn-block\" style=\"margin-top:18px\" type=\"submit\">Sign in</button>\n          </form>\n        </div>\n\n        <div class=\"card\">\n          <h3>Create account</h3>\n          <p class=\"hint\">Use the one-use token from your Nebula Sports email.</p>\n          <form method=\"post\" action=\"/sports/register\">\n            <div class=\"field\">\n              <label for=\"ca-user\">Username</label>\n              <input id=\"ca-user\" type=\"text\" name=\"username\" placeholder=\"choose a username\" autocomplete=\"username\" required />\n            </div>\n            <div class=\"field\">\n              <label for=\"ca-pass\">Password</label>\n              <input id=\"ca-pass\" type=\"password\" name=\"password\" placeholder=\"choose a password\" autocomplete=\"new-password\" required />\n            </div>\n            <div class=\"field\">\n              <label for=\"ca-token\">Secret token</label>\n              <input id=\"ca-token\" class=\"mono\" type=\"text\" name=\"token\" placeholder=\"paste your one-use token\" required />\n            </div>\n            <button class=\"btn btn-primary btn-block\" style=\"margin-top:18px\" type=\"submit\">Create account</button>\n          </form>\n        </div>\n      </div>\n    </div>\n  </section>\n</main>\n\n<footer class=\"site\">\n  <div class=\"wrap foot\">\n    <span class=\"muted\">© 2026 Nebula Sports · A NebulaStreams addon</span>\n    <div class=\"links\">\n      <a href=\"#pricing\">Pricing</a>\n      <a href=\"#how\">How it works</a>\n      <a href=\"#account\">Sign in</a>\n    </div>\n  </div>\n</footer>\n\n</body>\n</html>\n";
+
+  html = html
+    .replace('<div class="stat"><div class="num">10</div><div class="lbl">Sports accounts</div></div>', '<div class="stat"><div class="num">' + accountCount + '</div><div class="lbl">Sports accounts</div></div>')
+    .replace('<div class="stat"><div class="num">6</div><div class="lbl">Active now</div></div>', '<div class="stat"><div class="num">' + activeCount + '</div><div class="lbl">Active now</div></div>')
+    .replace('action="/sports/trial"', 'action="/sports/trial/request"')
+    .replace('action="/sports/register"', 'action="/sports/signup"')
+    .replace('name="token" placeholder="paste your one-use token"', 'name="tokenCode" placeholder="paste your one-use token"')
+    .replaceAll('href="#account">Choose monthly</a>', 'href="' + kofiUrl + '" target="_blank" rel="noopener">Choose monthly</a>')
+    .replaceAll('href="#account">Get lifetime access</a>', 'href="' + kofiUrl + '" target="_blank" rel="noopener">Get lifetime access</a>')
+    .replace('<main>', '<main>' + flashHtml);
+
+  if (account) {
+    const statusLabel = account.lifetime
+      ? 'Lifetime access'
+      : 'Active until ' + (account.expiresAt ? new Date(account.expiresAt).toLocaleDateString('en') : 'renewal');
+    const accountSection = '<section class="block" id="account">' +
+      '<div class="wrap">' +
+        '<div class="section-head">' +
+          '<div class="kicker">Access</div>' +
+          '<h2>Your private Stremio manifest</h2>' +
+          '<p>' + escapeHtml(statusLabel) + '. Keep this install URL private; it belongs to your Nebula Sports account.</p>' +
+        '</div>' +
+        '<div class="card">' +
+          '<h3>Signed in as ' + escapeHtml(account.username || 'sports user') + '</h3>' +
+          '<p class="hint">Add this manifest URL in Stremio to unlock Nebula Sports catalogs.</p>' +
+          '<div class="field">' +
+            '<label for="sports-install-url">Install URL</label>' +
+            '<input id="sports-install-url" class="mono" type="text" readonly value="' + escapeHtml(installUrl) + '" />' +
+          '</div>' +
+          '<div class="actions" style="margin-top:18px">' +
+            '<a class="btn btn-primary" href="' + escapeHtml(installUrl) + '">Install manifest</a>' +
+            '<button class="btn btn-ghost" type="button" data-copy="' + escapeHtml(installUrl) + '">Copy URL</button>' +
+            '<form method="post" action="/sports/logout" style="display:inline"><button class="btn btn-ghost" type="submit">Sign out</button></form>' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+    '</section>';
+    html = html.replace(/<section class="block" id="account">[\s\S]*?<\/section>\n<\/main>/u, accountSection + '\n</main>');
+  }
+
+  html = html.replace('</body>', '<script>document.querySelectorAll("[data-copy]").forEach((btn)=>btn.addEventListener("click",async()=>{const value=btn.getAttribute("data-copy")||"";if(!value)return;await navigator.clipboard.writeText(value);btn.textContent="Copied";setTimeout(()=>btn.textContent="Copy URL",1400)}));</script>\n</body>');
+  return html;
 };
 
 const WATCH_TOGETHER_NOTICE = Object.freeze({
