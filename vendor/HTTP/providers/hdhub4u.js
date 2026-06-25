@@ -68,9 +68,10 @@ var import_cheerio_without_node_native2 = __toESM(require("cheerio-without-node-
 // src/hdhub4u/constants.js
 var TMDB_API_KEY = "439c478a771f35c05022f9feabcca01c";
 var TMDB_BASE_URL = "https://api.themoviedb.org/3";
-var MAIN_URL = "https://new3.hdhub4u.fo";
+var MAIN_URL = "https://new1.hdhub4u.cl";
 var DOMAINS_URL = "https://raw.githubusercontent.com/phisher98/TVVVV/refs/heads/main/domains.json";
 var FALLBACK_DOMAINS = [
+  "https://new1.hdhub4u.cl",
   "https://new3.hdhub4u.fo",
   "https://new4.hdhub4u.fo",
   "https://new5.hdhub4u.fo",
@@ -788,6 +789,44 @@ function hubCdnExtractor(url, referer, parentQuality) {
     }
   });
 }
+function hubDriveDirectDownload(url, html, referer) {
+  return __async(this, null, function* () {
+    var _a, _b;
+    try {
+      const $ = import_cheerio_without_node_native.default.load(html);
+      const fileId = ($("#down-id").text().trim() || ((_a = url.match(/\/file\/(\d+)/)) == null ? void 0 : _a[1]) || "").trim();
+      if (!fileId)
+        return [];
+      const response = yield fetch("https://hubdrive.space/ajax.php?ajax=direct-download", {
+        method: "POST",
+        headers: __spreadProps(__spreadValues({}, HEADERS), {
+          Referer: url,
+          Origin: "https://hubdrive.space",
+          "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+          "X-Requested-With": "XMLHttpRequest"
+        }),
+        body: new URLSearchParams({ id: fileId }).toString()
+      });
+      const data = yield response.json();
+      const directUrl = ((_b = data == null ? void 0 : data.data) == null ? void 0 : _b.gd) || (data == null ? void 0 : data.file);
+      if (!(data == null ? void 0 : data.code) || String(data.code) !== "200" || !directUrl)
+        return [];
+      const size = Number(data.data && data.data.s) || 0;
+      const fileName = data.data && data.data.n || $("div.card-header").text().trim() || "HubDrive file";
+      return [{
+        source: "HubDrive Direct",
+        quality: 1080,
+        url: directUrl.startsWith("http") ? directUrl : new URL(directUrl, url).toString(),
+        size,
+        fileName,
+        headers: { Referer: url },
+        behaviorHints: { notWebReady: false }
+      }];
+    } catch (e) {
+      return [];
+    }
+  });
+}
 function loadExtractor(_0) {
   return __async(this, arguments, function* (url, referer = MAIN_URL) {
     try {
@@ -816,6 +855,9 @@ function loadExtractor(_0) {
       if (hostname.includes("hubdrive")) {
         const res = yield fetch(url, { headers: __spreadProps(__spreadValues({}, HEADERS), { Referer: referer }) });
         const data = yield res.text();
+        const directDownloads = yield hubDriveDirectDownload(url, data, referer);
+        if (directDownloads.length > 0)
+          return directDownloads;
         const href = import_cheerio_without_node_native.default.load(data)(".btn.btn-primary.btn-user.btn-success1.m-1").attr("href");
         if (href) {
           const extracted = yield loadExtractor(href, url);
@@ -1184,11 +1226,42 @@ function getDownloadLinks(mediaUrl) {
         const href = $(el).attr("href");
         return href && (href.includes("hdstream4u") || href.includes("hubstream"));
       });
-      const initialLinks = [.../* @__PURE__ */ new Set([
-        ...qualityLinks.map((i, el) => $(el).attr("href")).get(),
-        ...bodyLinks.map((i, el) => $(el).attr("href")).get()
-      ])];
-      const results = yield Promise.all(initialLinks.map((url) => loadExtractor(url, mediaUrl)));
+      const parseQualityFromText = (text) => {
+        if (/\b(?:4K|2160p?)\b/i.test(text)) return 2160;
+        const match = String(text || "").match(/\b(1080|720|480|360)p?\b/i);
+        return match ? Number(match[1]) : null;
+      };
+      const parseSizeFromText = (text) => {
+        const match = String(text || "").match(/\[?\s*([0-9]+(?:\.[0-9]+)?)\s*(GB|MB)\s*\]?/i);
+        if (!match) return null;
+        const value = Number(match[1]);
+        if (!Number.isFinite(value)) return null;
+        return Math.round(value * (match[2].toUpperCase() === "GB" ? 1024 ** 3 : 1024 ** 2));
+      };
+      const linkEntries = [
+        ...qualityLinks.map((i, el) => {
+          const text = $(el).text();
+          return {
+            url: $(el).attr("href"),
+            quality: parseQualityFromText(text),
+            size: parseSizeFromText(text)
+          };
+        }).get(),
+        ...bodyLinks.map((i, el) => ({ url: $(el).attr("href"), quality: null, size: null })).get()
+      ];
+      const seenInitialUrls = /* @__PURE__ */ new Set();
+      const initialLinks = linkEntries.filter((entry) => {
+        if (!entry.url || seenInitialUrls.has(entry.url)) return false;
+        seenInitialUrls.add(entry.url);
+        return true;
+      });
+      const results = yield Promise.all(initialLinks.map((entry) => __async(this, null, function* () {
+        const extracted = yield loadExtractor(entry.url, mediaUrl);
+        return extracted.map((link) => __spreadProps(__spreadValues({}, link), {
+          quality: entry.quality || link.quality,
+          size: entry.size || link.size
+        }));
+      })));
       const allFinalLinks = results.flat();
       const seenUrls = /* @__PURE__ */ new Set();
       const uniqueFinalLinks = allFinalLinks.filter((link) => {

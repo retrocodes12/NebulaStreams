@@ -316,13 +316,44 @@ async function getDownloadLinks(mediaUrl) {
         const href = $(el).attr("href");
         return href && (href.includes("hdstream4u") || href.includes("hubstream"));
     });
+    const parseQualityFromText = (text) => {
+      if (/\b(?:4K|2160p?)\b/i.test(text)) return 2160;
+      const match = String(text || "").match(/\b(1080|720|480|360)p?\b/i);
+      return match ? Number(match[1]) : null;
+    };
+    const parseSizeFromText = (text) => {
+      const match = String(text || "").match(/\[?\s*([0-9]+(?:\.[0-9]+)?)\s*(GB|MB)\s*\]?/i);
+      if (!match) return null;
+      const value = Number(match[1]);
+      if (!Number.isFinite(value)) return null;
+      return Math.round(value * (match[2].toUpperCase() === "GB" ? 1024 ** 3 : 1024 ** 2));
+    };
+    const linkEntries = [
+        ...qualityLinks.map((i, el) => {
+          const text = $(el).text();
+          return {
+            url: $(el).attr("href"),
+            quality: parseQualityFromText(text),
+            size: parseSizeFromText(text)
+          };
+        }).get(),
+        ...bodyLinks.map((i, el) => ({ url: $(el).attr("href"), quality: null, size: null })).get()
+    ];
+    const seenInitialUrls = new Set();
+    const initialLinks = linkEntries.filter((entry) => {
+      if (!entry.url || seenInitialUrls.has(entry.url)) return false;
+      seenInitialUrls.add(entry.url);
+      return true;
+    });
     
-    const initialLinks = [...new Set([
-        ...qualityLinks.map((i, el) => $(el).attr("href")).get(),
-        ...bodyLinks.map((i, el) => $(el).attr("href")).get()
-    ])];
-    
-    const results = await Promise.all(initialLinks.map(url => loadExtractor(url, mediaUrl)));
+    const results = await Promise.all(initialLinks.map(async (entry) => {
+      const extracted = await loadExtractor(entry.url, mediaUrl);
+      return extracted.map((link) => ({
+        ...link,
+        quality: entry.quality || link.quality,
+        size: entry.size || link.size
+      }));
+    }));
     const allFinalLinks = results.flat();
     
     const seenUrls = new Set();

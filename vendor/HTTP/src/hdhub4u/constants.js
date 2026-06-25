@@ -1,7 +1,8 @@
 export const TMDB_API_KEY = "439c478a771f35c05022f9feabcca01c";
 export const TMDB_BASE_URL = "https://api.themoviedb.org/3";
-export let MAIN_URL = "https://hdhub4u.cv";
+export let MAIN_URL = "https://new1.hdhub4u.cl";
 export const FALLBACK_DOMAINS = [
+  "https://new1.hdhub4u.cl",
   "https://hdhub4u.cv",
   "https://new6.hdhub4u.fo",
   "https://new7.hdhub4u.fo",

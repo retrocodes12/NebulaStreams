@@ -5,6 +5,7 @@ import https from 'node:https';
 import os from 'node:os';
 import path from 'node:path';
 import v8 from 'node:v8';
+import zlib from 'node:zlib';
 import express from 'express';
 
 import { config } from './config.js';
@@ -54,6 +55,312 @@ const escapeHtml = (value) =>
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#39;');
+
+const clampPosterText = (value, max = 72) => {
+  const text = String(value || '').replace(/\s+/gu, ' ').trim();
+  return text.length > max ? `${text.slice(0, max - 1).trim()}…` : text;
+};
+
+const getPosterInitials = (value) => {
+  const words = String(value || '')
+    .replace(/&/gu, ' and ')
+    .split(/[^a-z0-9]+/iu)
+    .filter((word) => word && !/^(?:the|and|tv|usa|uk|hd|channel)$/iu.test(word));
+  const initials = words.slice(0, 3).map((word) => word[0]).join('').toUpperCase();
+  return initials || 'NS';
+};
+
+const SPORTS_ADDON_VERSION = '1.0.7';
+const SPORTS_POSTER_VERSION = 'v5';
+const SPORTS_FLIX_POSTER_BASE_URL = 'https://free.flixnest.app/api/essential-live-events/poster.jpg';
+
+const PNG_CRC_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n += 1) {
+    let c = n;
+    for (let k = 0; k < 8; k += 1) {
+      c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+    }
+    table[n] = c >>> 0;
+  }
+  return table;
+})();
+
+const crc32 = (buffer) => {
+  let crc = 0xffffffff;
+  for (const byte of buffer) {
+    crc = PNG_CRC_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+};
+
+const pngChunk = (type, data = Buffer.alloc(0)) => {
+  const typeBuffer = Buffer.from(type, 'ascii');
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length, 0);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(Buffer.concat([typeBuffer, data])), 0);
+  return Buffer.concat([length, typeBuffer, data, crc]);
+};
+
+const encodeRgbaPng = (width, height, rgba) => {
+  const scanlineLength = width * 4 + 1;
+  const raw = Buffer.alloc(scanlineLength * height);
+  for (let y = 0; y < height; y += 1) {
+    raw[y * scanlineLength] = 0;
+    rgba.copy(raw, y * scanlineLength + 1, y * width * 4, (y + 1) * width * 4);
+  }
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 6;
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk('IHDR', ihdr),
+    pngChunk('IDAT', zlib.deflateSync(raw, { level: 6 })),
+    pngChunk('IEND')
+  ]);
+};
+
+const POSTER_FONT = Object.freeze({
+  A: ['01110', '10001', '10001', '11111', '10001', '10001', '10001'],
+  B: ['11110', '10001', '10001', '11110', '10001', '10001', '11110'],
+  C: ['01111', '10000', '10000', '10000', '10000', '10000', '01111'],
+  D: ['11110', '10001', '10001', '10001', '10001', '10001', '11110'],
+  E: ['11111', '10000', '10000', '11110', '10000', '10000', '11111'],
+  F: ['11111', '10000', '10000', '11110', '10000', '10000', '10000'],
+  G: ['01111', '10000', '10000', '10111', '10001', '10001', '01110'],
+  H: ['10001', '10001', '10001', '11111', '10001', '10001', '10001'],
+  I: ['11111', '00100', '00100', '00100', '00100', '00100', '11111'],
+  J: ['00111', '00010', '00010', '00010', '10010', '10010', '01100'],
+  K: ['10001', '10010', '10100', '11000', '10100', '10010', '10001'],
+  L: ['10000', '10000', '10000', '10000', '10000', '10000', '11111'],
+  M: ['10001', '11011', '10101', '10101', '10001', '10001', '10001'],
+  N: ['10001', '11001', '10101', '10011', '10001', '10001', '10001'],
+  O: ['01110', '10001', '10001', '10001', '10001', '10001', '01110'],
+  P: ['11110', '10001', '10001', '11110', '10000', '10000', '10000'],
+  Q: ['01110', '10001', '10001', '10001', '10101', '10010', '01101'],
+  R: ['11110', '10001', '10001', '11110', '10100', '10010', '10001'],
+  S: ['01111', '10000', '10000', '01110', '00001', '00001', '11110'],
+  T: ['11111', '00100', '00100', '00100', '00100', '00100', '00100'],
+  U: ['10001', '10001', '10001', '10001', '10001', '10001', '01110'],
+  V: ['10001', '10001', '10001', '10001', '10001', '01010', '00100'],
+  W: ['10001', '10001', '10001', '10101', '10101', '10101', '01010'],
+  X: ['10001', '10001', '01010', '00100', '01010', '10001', '10001'],
+  Y: ['10001', '10001', '01010', '00100', '00100', '00100', '00100'],
+  Z: ['11111', '00001', '00010', '00100', '01000', '10000', '11111'],
+  0: ['01110', '10001', '10011', '10101', '11001', '10001', '01110'],
+  1: ['00100', '01100', '00100', '00100', '00100', '00100', '01110'],
+  2: ['01110', '10001', '00001', '00010', '00100', '01000', '11111'],
+  3: ['11110', '00001', '00001', '01110', '00001', '00001', '11110'],
+  4: ['00010', '00110', '01010', '10010', '11111', '00010', '00010'],
+  5: ['11111', '10000', '10000', '11110', '00001', '00001', '11110'],
+  6: ['01110', '10000', '10000', '11110', '10001', '10001', '01110'],
+  7: ['11111', '00001', '00010', '00100', '01000', '01000', '01000'],
+  8: ['01110', '10001', '10001', '01110', '10001', '10001', '01110'],
+  9: ['01110', '10001', '10001', '01111', '00001', '00001', '01110'],
+  ':': ['00000', '00100', '00100', '00000', '00100', '00100', '00000'],
+  '-': ['00000', '00000', '00000', '11111', '00000', '00000', '00000'],
+  '.': ['00000', '00000', '00000', '00000', '00000', '01100', '01100'],
+  '/': ['00001', '00010', '00010', '00100', '01000', '01000', '10000'],
+  '&': ['01100', '10010', '10100', '01000', '10101', '10010', '01101'],
+  '+': ['00000', '00100', '00100', '11111', '00100', '00100', '00000'],
+  ' ': ['00000', '00000', '00000', '00000', '00000', '00000', '00000']
+});
+
+const posterPngCache = new Map();
+const POSTER_PNG_CACHE_MAX = 320;
+const posterJpgCache = new Map();
+const POSTER_JPG_CACHE_MAX = 320;
+
+const compareVersionParts = (left, right) => {
+  const a = String(left || '').split('.').map((part) => Number.parseInt(part, 10) || 0);
+  const b = String(right || '').split('.').map((part) => Number.parseInt(part, 10) || 0);
+  const length = Math.max(a.length, b.length, 3);
+  for (let index = 0; index < length; index += 1) {
+    const delta = (a[index] || 0) - (b[index] || 0);
+    if (delta !== 0) return delta;
+  }
+  return 0;
+};
+
+const parseRgb = (hex) => [
+  Number.parseInt(hex.slice(1, 3), 16),
+  Number.parseInt(hex.slice(3, 5), 16),
+  Number.parseInt(hex.slice(5, 7), 16)
+];
+
+const blendColor = (a, b, t) => a.map((value, index) => Math.round(value + (b[index] - value) * t));
+
+const drawRect = (rgba, width, height, x, y, w, h, color, alpha = 255) => {
+  const [r, g, b] = color;
+  const x0 = Math.max(0, Math.floor(x));
+  const y0 = Math.max(0, Math.floor(y));
+  const x1 = Math.min(width, Math.ceil(x + w));
+  const y1 = Math.min(height, Math.ceil(y + h));
+  for (let py = y0; py < y1; py += 1) {
+    for (let px = x0; px < x1; px += 1) {
+      const offset = (py * width + px) * 4;
+      const inv = 255 - alpha;
+      rgba[offset] = Math.round((r * alpha + rgba[offset] * inv) / 255);
+      rgba[offset + 1] = Math.round((g * alpha + rgba[offset + 1] * inv) / 255);
+      rgba[offset + 2] = Math.round((b * alpha + rgba[offset + 2] * inv) / 255);
+      rgba[offset + 3] = 255;
+    }
+  }
+};
+
+const drawCircle = (rgba, width, height, cx, cy, radius, color, alpha = 255) => {
+  const r2 = radius * radius;
+  for (let y = Math.max(0, Math.floor(cy - radius)); y < Math.min(height, Math.ceil(cy + radius)); y += 1) {
+    for (let x = Math.max(0, Math.floor(cx - radius)); x < Math.min(width, Math.ceil(cx + radius)); x += 1) {
+      const dx = x - cx;
+      const dy = y - cy;
+      if (dx * dx + dy * dy <= r2) drawRect(rgba, width, height, x, y, 1, 1, color, alpha);
+    }
+  }
+};
+
+const normalizePosterLine = (value) => String(value || '')
+  .toUpperCase()
+  .replace(/[^A-Z0-9 :./&+-]+/gu, ' ')
+  .replace(/\s+/gu, ' ')
+  .trim();
+
+const wrapPosterText = (value, maxChars, maxLines) => {
+  const words = normalizePosterLine(value).split(/\s+/u).filter(Boolean);
+  const lines = [];
+  let current = '';
+  for (const word of words) {
+    const next = current ? `${current} ${word}` : word;
+    if (next.length > maxChars && current) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = next;
+    }
+    if (lines.length >= maxLines) break;
+  }
+  if (current && lines.length < maxLines) lines.push(current);
+  return lines.length ? lines : ['LIVE SPORTS'];
+};
+
+const drawBitmapText = (rgba, width, height, text, x, y, scale, color, alpha = 255, align = 'left') => {
+  const normalized = normalizePosterLine(text);
+  const charWidth = 6 * scale;
+  const textWidth = Math.max(0, normalized.length * charWidth - scale);
+  const startX = align === 'center' ? x - textWidth / 2 : (align === 'right' ? x - textWidth : x);
+  [...normalized].forEach((char, charIndex) => {
+    const glyph = POSTER_FONT[char] || POSTER_FONT[' '];
+    glyph.forEach((row, rowIndex) => {
+      [...row].forEach((bit, colIndex) => {
+        if (bit === '1') {
+          drawRect(
+            rgba,
+            width,
+            height,
+            startX + charIndex * charWidth + colIndex * scale,
+            y + rowIndex * scale,
+            scale,
+            scale,
+            color,
+            alpha
+          );
+        }
+      });
+    });
+  });
+};
+
+const buildSportsPosterPng = ({ title, genre, timeLabel, infoLabel, kind, seed }) => {
+  const width = 600;
+  const height = 900;
+  const key = `${SPORTS_POSTER_VERSION}:${title}:${genre}:${timeLabel}:${infoLabel}:${kind}:${seed}`;
+  const cached = posterPngCache.get(key);
+  if (cached) return cached;
+
+  const rgba = Buffer.alloc(width * height * 4);
+  const top = parseRgb('#210044');
+  const mid = parseRgb('#08324d');
+  const bottom = parseRgb('#052516');
+  const accent = [58 + (seed[0] % 120), 110 + (seed[1] % 110), 190 + (seed[2] % 60)];
+  const accent2 = [190 + (seed[3] % 50), 65 + (seed[4] % 120), 220 + (seed[5] % 30)];
+  const accent3 = [55 + (seed[6] % 90), 210 + (seed[7] % 35), 150 + (seed[8] % 80)];
+
+  for (let y = 0; y < height; y += 1) {
+    const vertical = y / (height - 1);
+    const base = vertical < 0.52
+      ? blendColor(top, mid, vertical / 0.52)
+      : blendColor(mid, bottom, (vertical - 0.52) / 0.48);
+    for (let x = 0; x < width; x += 1) {
+      const dx1 = (x - 120) / 460;
+      const dy1 = (y - 120) / 520;
+      const glow1 = Math.max(0, 1 - Math.sqrt(dx1 * dx1 + dy1 * dy1));
+      const dx2 = (x - 520) / 380;
+      const dy2 = (y - 260) / 430;
+      const glow2 = Math.max(0, 1 - Math.sqrt(dx2 * dx2 + dy2 * dy2));
+      const offset = (y * width + x) * 4;
+      rgba[offset] = Math.min(255, Math.round(base[0] + accent[0] * glow1 * 0.42 + accent2[0] * glow2 * 0.32));
+      rgba[offset + 1] = Math.min(255, Math.round(base[1] + accent[1] * glow1 * 0.38 + accent2[1] * glow2 * 0.28));
+      rgba[offset + 2] = Math.min(255, Math.round(base[2] + accent[2] * glow1 * 0.34 + accent2[2] * glow2 * 0.32));
+      rgba[offset + 3] = 255;
+    }
+  }
+
+  drawCircle(rgba, width, height, 300, 170, 96, accent2, 150);
+  drawCircle(rgba, width, height, 300, 170, 72, [8, 16, 30], 230);
+  drawCircle(rgba, width, height, 300, 170, 54, accent, 235);
+  drawRect(rgba, width, height, 40, 40, 520, 820, [255, 255, 255], 18);
+  drawRect(rgba, width, height, 60, 250, 480, 62, [5, 12, 24], 180);
+  drawRect(rgba, width, height, 74, 510, 452, 116, [5, 12, 24], 175);
+  drawRect(rgba, width, height, 0, 680, 600, 220, accent2, 58);
+  drawRect(rgba, width, height, 0, 750, 600, 150, accent3, 52);
+  drawCircle(rgba, width, height, 82, 92, 5, [255, 255, 255], 170);
+  drawCircle(rgba, width, height, 512, 126, 4, [255, 255, 255], 145);
+  drawCircle(rgba, width, height, 460, 744, 4, [255, 255, 255], 130);
+
+  drawBitmapText(rgba, width, height, 'NEBULA SPORTS', 300, 76, 5, [245, 250, 255], 230, 'center');
+  drawBitmapText(rgba, width, height, getPosterInitials(title), 300, 148, 9, [255, 255, 255], 245, 'center');
+  drawBitmapText(rgba, width, height, kind === 'channel' ? 'LIVE TV' : genre, 300, 270, 4, [212, 255, 239], 245, 'center');
+
+  const titleLines = wrapPosterText(title, 15, 3);
+  titleLines.forEach((line, index) => {
+    drawBitmapText(rgba, width, height, line, 300, 350 + index * 58, 7, [248, 251, 255], 245, 'center');
+  });
+  drawBitmapText(rgba, width, height, 'START TIME', 300, 536, 4, [190, 205, 220], 230, 'center');
+  wrapPosterText(timeLabel, 20, 1).forEach((line) => {
+    drawBitmapText(rgba, width, height, line, 300, 574, 5, [255, 255, 255], 245, 'center');
+  });
+  wrapPosterText(infoLabel, 22, 2).forEach((line, index) => {
+    drawBitmapText(rgba, width, height, line, 300, 650 + index * 36, 4, [215, 255, 239], 235, 'center');
+  });
+  drawBitmapText(rgba, width, height, 'PLAYABLE IN STREMIO', 300, 812, 4, [238, 246, 240], 220, 'center');
+
+  const png = encodeRgbaPng(width, height, rgba);
+  posterPngCache.set(key, png);
+  while (posterPngCache.size > POSTER_PNG_CACHE_MAX) {
+    posterPngCache.delete(posterPngCache.keys().next().value);
+  }
+  return png;
+};
+
+const buildSportsPosterUrl = (baseUrl, { id = '', name = '', genre = '', kind = 'event', time = '', info = '' } = {}) => {
+  const normalizedBase = String(baseUrl || '').replace(/\/+$/u, '');
+  const sig = crypto.createHash('sha1').update(`${SPORTS_POSTER_VERSION}:${id}:${name}:${genre}:${kind}:${time}:${info}`).digest('hex').slice(0, 10);
+  const params = new URLSearchParams({
+    title: clampPosterText(name || 'Sports Event', 80),
+    genre: clampPosterText(genre || (kind === 'channel' ? 'Live TV' : 'Sports'), 32),
+    meta: clampPosterText(genre || (kind === 'channel' ? 'Live TV' : 'Sports'), 44),
+    time: clampPosterText(time || (kind === 'channel' ? 'Live now' : 'Starting soon'), 44),
+    info: clampPosterText(info || (kind === 'channel' ? '24/7 sports channel' : 'Live event stream'), 70),
+    badge: kind === 'channel' ? 'LIVE TV' : 'EVENT',
+    sources: 'Nebula Sports',
+    kind: String(kind || 'event').slice(0, 24),
+    sig
+  });
+  return `${normalizedBase}/sports/poster/${SPORTS_POSTER_VERSION}/${sig}.jpg?${params.toString()}`;
+};
 
 const VIDKING_BASE_URL = 'https://www.vidking.net';
 const MOVIE_EMBED_PROVIDERS = Object.freeze({
@@ -333,7 +640,8 @@ const encodeCatalogExtra = (name, value) => {
 
 const PROJECT_SUPPORTERS = [
   'Devon Durham',
-  'Shadow'
+  'Shadow',
+  'S10skillz'
 ];
 
 const renderSupporterPills = (supporters = PROJECT_SUPPORTERS) => supporters
@@ -347,6 +655,7 @@ const WATCH_CHAT_COOKIE_NAME = 'nebula_watch_chat';
 const ADMIN_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const CPU_SAMPLE_WINDOW_MS = 200;
 const { readFile } = fsPromises;
+const SMTP2GO_WEBHOOK_STORE_PATH = path.join(config.CACHE_DIR, 'smtp2go-webhooks.json');
 
 const sleep = (delayMs) => new Promise((resolve) => {
   const timer = setTimeout(resolve, delayMs);
@@ -357,6 +666,119 @@ const maskEmailAddress = (email) => {
   const [user, domain] = String(email || '').trim().toLowerCase().split('@');
   if (!user || !domain) return '';
   return `${user.slice(0, 2) || '*'}***@${domain.slice(0, 1)}***`;
+};
+
+const normalizeWebhookEmail = (value) => String(value || '').trim().toLowerCase();
+
+const hashWebhookEmail = (email) =>
+  crypto.createHash('sha256').update(`smtp2go:${normalizeWebhookEmail(email)}`).digest('hex');
+
+const getSmtp2goEvents = (body = {}) => {
+  if (Array.isArray(body)) return body;
+  if (Array.isArray(body.events)) return body.events;
+  if (Array.isArray(body.data)) return body.data;
+  if (body && typeof body === 'object') return [body];
+  return [];
+};
+
+const getSmtp2goEmail = (event = {}) => normalizeWebhookEmail(
+  event.recipient
+    || event.email
+    || event.to
+    || event.rcpt
+    || event.rcpt_to
+    || event.address
+    || event.envelope_to
+    || ''
+);
+
+const getSmtp2goEventType = (event = {}) => String(
+  event.event
+    || event.type
+    || event.event_type
+    || event.category
+    || event.status
+    || ''
+).trim().toLowerCase();
+
+const isSmtp2goSuppressionEvent = (event = {}) => {
+  const eventType = getSmtp2goEventType(event);
+  const bounceType = String(event.bounce_type || event.bounceType || event.classification || '').trim().toLowerCase();
+  return /(?:bounce|reject|complaint|spam|unsubscribe|blocked|dropped|failed)/u.test(eventType)
+    || /(?:hard|permanent|complaint|spam|blocked)/u.test(bounceType);
+};
+
+const compactSmtp2goEvent = (event = {}) => {
+  const email = getSmtp2goEmail(event);
+  const message = String(
+    event.reason
+      || event.error
+      || event.smtp_response
+      || event.response
+      || event.description
+      || event.message
+      || ''
+  ).slice(0, 500);
+  return {
+    receivedAt: new Date().toISOString(),
+    provider: 'smtp2go',
+    event: getSmtp2goEventType(event) || 'unknown',
+    suppressed: isSmtp2goSuppressionEvent(event),
+    emailMasked: maskEmailAddress(email),
+    emailHash: email ? hashWebhookEmail(email) : '',
+    messageId: String(event.message_id || event.messageId || event.email_id || event.emailId || event.id || '').slice(0, 160),
+    reason: message
+  };
+};
+
+const readSmtp2goWebhookStore = async () => {
+  try {
+    const raw = await fsPromises.readFile(SMTP2GO_WEBHOOK_STORE_PATH, 'utf8');
+    const parsed = JSON.parse(raw);
+    return {
+      version: 1,
+      events: Array.isArray(parsed.events) ? parsed.events : [],
+      suppressions: parsed.suppressions && typeof parsed.suppressions === 'object' ? parsed.suppressions : {}
+    };
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return { version: 1, events: [], suppressions: {} };
+    }
+    throw error;
+  }
+};
+
+const recordSmtp2goWebhookEvents = async (events = []) => {
+  const compactEvents = events
+    .map(compactSmtp2goEvent)
+    .filter((event) => event.emailHash || event.messageId || event.event !== 'unknown');
+  const store = await readSmtp2goWebhookStore();
+
+  for (const event of compactEvents) {
+    store.events.push(event);
+    if (event.suppressed && event.emailHash) {
+      const current = store.suppressions[event.emailHash] || {
+        emailMasked: event.emailMasked,
+        count: 0
+      };
+      store.suppressions[event.emailHash] = {
+        ...current,
+        emailMasked: event.emailMasked || current.emailMasked,
+        count: Number(current.count || 0) + 1,
+        lastEventAt: event.receivedAt,
+        lastEvent: event.event,
+        lastReason: event.reason
+      };
+    }
+  }
+
+  store.events = store.events.slice(-1000);
+  await fsPromises.mkdir(path.dirname(SMTP2GO_WEBHOOK_STORE_PATH), { recursive: true });
+  await fsPromises.writeFile(SMTP2GO_WEBHOOK_STORE_PATH, `${JSON.stringify(store, null, 2)}\n`);
+  return {
+    received: compactEvents.length,
+    suppressed: compactEvents.filter((event) => event.suppressed).length
+  };
 };
 
 const parseKofiWebhookPayload = (body = {}) => {
@@ -415,7 +837,19 @@ const getKofiText = (payload = {}) => [
 const isSportsKofiPayment = (payload = {}, amount = 0) => {
   const text = getKofiText(payload);
   return /\b(?:nebula\s*sports|sports\s*addon|sports\s*access|nsports)\b/iu.test(text)
-    || (amount >= 3 && amount < 5);
+    || (amount >= 3 && amount < 5)
+    || amount >= 10;
+};
+
+const SPORTS_LAUNCH_PROMO_END_AT = Date.parse('2026-06-29T00:00:00.000Z');
+const isSportsLaunchPromoActive = (now = Date.now()) => now < SPORTS_LAUNCH_PROMO_END_AT;
+const getSportsKofiTier = (amount, now = Date.now()) => {
+  const paidAmount = Number(amount) || 0;
+  if (paidAmount >= 15) return 'premium-future';
+  if (isSportsLaunchPromoActive(now)) {
+    return paidAmount >= 3 ? 'lifetime' : 'monthly';
+  }
+  return paidAmount >= 7 ? 'lifetime' : 'monthly';
 };
 
 const createUptimeKumaProxy = ({ targetBaseUrl, mountPath = '/status' }) => {
@@ -732,21 +1166,481 @@ const renderConfigurePage = ({ baseUrl, providers, supporterStats = {}, userStat
   const providerIds = providers.map((provider) => provider.id);
   const escapedBaseUrl = escapeHtml(String(baseUrl || '').replace(/\/+$/u, ''));
   const providerCount = String(providers.length);
-  const supporterCount = String(supporterStats.accounts || supporterStats.active || 2);
+  const supporterCount = String(Math.max(Number(supporterStats.accounts || supporterStats.active || 0), PROJECT_SUPPORTERS.length));
   const activeUserCount = String(userStats.streamUsers || userStats.totalUsers || '60,107');
-  let html = "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"UTF-8\" />\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n<title>NebulaStreams · Configure</title>\n<style>\n  :root {\n    --bg: #0c0c0d;\n    --surface: #131314;\n    --surface-2: #1a1a1c;\n    --surface-3: #212124;\n    --border: #2a2a2e;\n    --border-soft: #202023;\n    --text: #f2f2f3;\n    --text-2: #b2b2b8;\n    --muted: #7d7d84;\n    --faint: #54545b;\n    --on: #f2f2f3;        /* selected = near-white (inverted) */\n    --on-ink: #0c0c0d;    /* text on selected */\n    --green: #46c98a;\n    --radius: 12px;\n    --radius-sm: 8px;\n    --mono: \"SFMono-Regular\", \"JetBrains Mono\", \"Menlo\", \"Consolas\", monospace;\n    --sans: -apple-system, BlinkMacSystemFont, \"Segoe UI\", \"Inter\", system-ui, sans-serif;\n  }\n  * { box-sizing: border-box; }\n  html { scroll-behavior: smooth; }\n  body {\n    margin: 0; background: var(--bg); color: var(--text);\n    font-family: var(--sans); font-size: 15px; line-height: 1.55;\n    -webkit-font-smoothing: antialiased;\n  }\n  a { color: inherit; text-decoration: none; }\n  ::selection { background: #2f2f34; }\n\n  /* Top bar */\n  .topbar {\n    position: sticky; top: 0; z-index: 50;\n    display: flex; align-items: center; justify-content: space-between; gap: 20px;\n    padding: 13px 28px; background: rgba(12,12,13,0.8); backdrop-filter: blur(14px);\n    border-bottom: 1px solid var(--border-soft);\n  }\n  .brand { display: flex; align-items: center; gap: 11px; }\n  .brand-mark {\n    width: 28px; height: 28px; border-radius: 50%;\n    border: 1.5px solid var(--text); position: relative; flex-shrink: 0;\n  }\n  .brand-mark::after {\n    content: \"\"; position: absolute; width: 6px; height: 6px; border-radius: 50%;\n    background: var(--text); top: 4px; right: 4px;\n  }\n  .brand-name { font-weight: 650; letter-spacing: -0.01em; font-size: 15px; }\n  .brand-name span { color: var(--muted); font-weight: 500; }\n  .nav { display: flex; align-items: center; gap: 4px; }\n  .nav a { color: var(--text-2); font-size: 13.5px; padding: 7px 12px; border-radius: 8px; transition: background .15s, color .15s; }\n  .nav a:hover { background: var(--surface-2); color: var(--text); }\n  .pill {\n    display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--text-2);\n    padding: 6px 11px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); margin-left: 6px;\n  }\n  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); }\n\n  /* Layout */\n  .wrap { max-width: 1180px; margin: 0 auto; padding: 40px 28px 96px;\n    display: grid; grid-template-columns: 272px 1fr; gap: 40px; align-items: start; }\n  .rail { position: sticky; top: 84px; display: flex; flex-direction: column; gap: 18px; }\n\n  .install { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); padding: 18px; }\n  .install h3 { margin: 0 0 3px; font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }\n  .install .sub { margin: 0 0 14px; font-size: 12.5px; color: var(--faint); line-height: 1.45; }\n  .url-box { font-family: var(--mono); font-size: 12px; color: var(--text-2); background: var(--bg);\n    border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 11px; word-break: break-all; line-height: 1.5; margin-bottom: 12px; }\n  .url-box b { color: var(--text); font-weight: 500; }\n  .btn-row { display: flex; gap: 8px; }\n  .btn { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 7px;\n    font-family: var(--sans); font-size: 13px; font-weight: 550; padding: 9px 12px; border-radius: var(--radius-sm);\n    border: 1px solid var(--border); background: var(--surface-3); color: var(--text); cursor: pointer; transition: background .15s, transform .05s; }\n  .btn:hover { background: #2a2a2e; }\n  .btn:active { transform: translateY(1px); }\n  .btn.primary { background: var(--on); border-color: transparent; color: var(--on-ink); }\n  .btn.primary:hover { background: #fff; }\n  .btn svg { width: 15px; height: 15px; }\n  .meta-row { display: flex; gap: 8px; margin-top: 12px; }\n  .meta { flex: 1; text-align: center; padding: 8px 4px; background: var(--surface); border: 1px solid var(--border-soft); border-radius: var(--radius-sm); }\n  .meta .v { font-size: 14px; font-weight: 650; letter-spacing: -.01em; }\n  .meta .l { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-top: 1px; }\n  .thanks { margin-top: 12px; font-size: 11.5px; color: var(--faint); }\n  .thanks b { color: var(--text-2); font-weight: 500; }\n\n  .sidenav { display: flex; flex-direction: column; gap: 1px; }\n  .sidenav a { font-size: 13.5px; color: var(--muted); padding: 7px 12px; border-radius: 8px;\n    display: flex; align-items: center; gap: 10px; transition: background .12s, color .12s; }\n  .sidenav a:hover { color: var(--text-2); background: var(--surface); }\n  .sidenav a.active { color: var(--text); background: var(--surface-2); }\n  .sidenav a .idx { font-family: var(--mono); font-size: 11px; color: var(--faint); width: 16px; }\n  .sidenav a.active .idx { color: var(--text); }\n\n  /* Content */\n  .content { display: flex; flex-direction: column; gap: 16px; min-width: 0; }\n  .hero { margin-bottom: 8px; }\n  .eyebrow { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 600; margin-bottom: 12px; display: block; }\n  .hero h1 { margin: 0 0 12px; font-size: 34px; line-height: 1.12; font-weight: 680; letter-spacing: -.025em; }\n  .hero p { margin: 0; color: var(--text-2); font-size: 15.5px; max-width: 60ch; }\n  .feature-line { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }\n  .chip-static { font-size: 12.5px; color: var(--text-2); border: 1px solid var(--border); border-radius: 999px; padding: 5px 12px; background: var(--surface); }\n\n  .card { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); padding: 22px 24px; }\n  .card-head { margin-bottom: 18px; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }\n  .card-head h2 { margin: 0 0 4px; font-size: 17px; font-weight: 620; letter-spacing: -.015em; }\n  .card-head p { margin: 0; font-size: 13.5px; color: var(--muted); max-width: 60ch; }\n\n  .field { padding: 16px 0; border-top: 1px solid var(--border-soft); }\n  .field:first-of-type { border-top: 0; padding-top: 0; }\n  .field-label { font-size: 14px; font-weight: 550; margin-bottom: 2px; }\n  .field-hint { font-size: 12.5px; color: var(--muted); margin-bottom: 12px; line-height: 1.45; }\n\n  .chips { display: flex; flex-wrap: wrap; gap: 8px; }\n  .chip { font-size: 13px; color: var(--text-2); border: 1px solid var(--border); border-radius: 999px;\n    padding: 7px 14px; background: var(--surface-2); cursor: pointer; user-select: none; transition: all .13s; }\n  .chip:hover { border-color: #3a3a40; color: var(--text); }\n  .chip.on { background: var(--on); border-color: var(--on); color: var(--on-ink); font-weight: 550; }\n\n  .seg-group { display: flex; flex-direction: column; gap: 14px; }\n  .seg-line { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }\n  .seg-line > span { font-size: 13.5px; color: var(--text-2); }\n  .seg { display: inline-flex; background: var(--surface-2); border: 1px solid var(--border); border-radius: 9px; padding: 3px; flex-wrap: wrap; }\n  .seg button { font-family: var(--sans); font-size: 12.5px; color: var(--muted); border: 0; background: transparent;\n    padding: 6px 12px; border-radius: 6px; cursor: pointer; white-space: nowrap; transition: all .13s; }\n  .seg button:hover { color: var(--text-2); }\n  .seg button.on { background: var(--on); color: var(--on-ink); font-weight: 550; }\n\n  /* native select */\n  .select-wrap { position: relative; }\n  select.input { appearance: none; -webkit-appearance: none; cursor: pointer; padding-right: 34px; }\n  .select-wrap .chev { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--muted); display: flex; }\n\n  .preset-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }\n  .preset { text-align: left; border: 1px solid var(--border); background: var(--surface-2); border-radius: var(--radius-sm);\n    padding: 13px 15px; cursor: pointer; transition: all .13s; font-family: var(--sans); }\n  .preset:hover { border-color: #3a3a40; background: var(--surface-3); }\n  .preset.on { border-color: var(--on); background: var(--surface-3); }\n  .preset .pt { font-size: 13.5px; font-weight: 600; color: var(--text); margin-bottom: 3px; }\n  .preset .pd { font-size: 12px; color: var(--muted); line-height: 1.4; }\n  .preset-foot { margin-top: 14px; font-size: 12.5px; color: var(--muted); font-family: var(--mono); }\n\n  .toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }\n  .search { flex: 1; min-width: 200px; display: flex; align-items: center; gap: 9px; background: var(--surface-2);\n    border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 9px 12px; }\n  .search svg { width: 15px; height: 15px; color: var(--faint); flex-shrink: 0; }\n  .search input { flex: 1; border: 0; background: transparent; color: var(--text); font-family: var(--sans); font-size: 13.5px; outline: none; }\n  .search input::placeholder { color: var(--faint); }\n  .ghost-btn { font-family: var(--sans); font-size: 12.5px; color: var(--text-2); border: 1px solid var(--border);\n    background: var(--surface-2); padding: 9px 13px; border-radius: var(--radius-sm); cursor: pointer; transition: all .13s; }\n  .ghost-btn:hover { background: var(--surface-3); color: var(--text); }\n  .examples { font-size: 12px; color: var(--faint); margin-bottom: 12px; line-height: 1.5; font-family: var(--mono); }\n\n  .provider-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }\n  .provider { display: flex; align-items: center; gap: 11px; padding: 10px 13px; border: 1px solid var(--border-soft);\n    border-radius: var(--radius-sm); background: var(--surface-2); cursor: pointer; transition: all .13s; }\n  .provider:hover { border-color: var(--border); }\n  .provider .box { width: 17px; height: 17px; border-radius: 5px; border: 1.5px solid #3c3c44; flex-shrink: 0; position: relative; transition: all .13s; }\n  .provider.on .box { background: var(--on); border-color: var(--on); }\n  .provider.on .box::after { content: \"\"; position: absolute; left: 5px; top: 2px; width: 4px; height: 8px; border: solid var(--on-ink); border-width: 0 2px 2px 0; transform: rotate(45deg); }\n  .provider .pname { font-family: var(--mono); font-size: 12.5px; color: var(--text-2); }\n  .provider.on .pname { color: var(--text); }\n  .count-note { font-size: 12.5px; color: var(--muted); margin-top: 12px; }\n\n  .adapter-empty { border: 1px dashed var(--border); border-radius: var(--radius-sm); padding: 20px; text-align: center; color: var(--faint); font-size: 13px; background: var(--surface-2); }\n\n  .prio { display: flex; flex-direction: column; gap: 7px; }\n  .prio-item { display: flex; align-items: center; gap: 12px; padding: 11px 14px; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); background: var(--surface-2); }\n  .prio-item .grip { color: var(--faint); cursor: grab; display: flex; }\n  .prio-item .grip svg { width: 14px; height: 14px; }\n  .prio-item .rank { font-family: var(--mono); font-size: 11px; color: var(--muted); }\n  .prio-item .pq { font-size: 13.5px; font-weight: 500; flex: 1; }\n  .prio-item .tag { font-size: 11px; color: var(--faint); font-family: var(--mono); }\n\n  .toggle-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding: 15px 0; border-top: 1px solid var(--border-soft); }\n  .toggle-row:first-child { border-top: 0; padding-top: 2px; }\n  .toggle-row .tinfo .tt { font-size: 14px; font-weight: 540; }\n  .toggle-row .tinfo .td { font-size: 12.5px; color: var(--muted); margin-top: 2px; max-width: 56ch; line-height: 1.45; }\n  .switch { flex-shrink: 0; width: 40px; height: 23px; border-radius: 999px; background: var(--surface-3); border: 1px solid var(--border); cursor: pointer; position: relative; transition: background .16s, border-color .16s; }\n  .switch::after { content: \"\"; position: absolute; top: 2px; left: 2px; width: 17px; height: 17px; border-radius: 50%; background: #8b8b93; transition: transform .16s, background .16s; }\n  .switch.on { background: var(--on); border-color: transparent; }\n  .switch.on::after { transform: translateX(17px); background: var(--on-ink); }\n\n  .input, .ta { width: 100%; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm);\n    padding: 10px 12px; color: var(--text); font-family: var(--sans); font-size: 13.5px; outline: none; transition: border-color .13s; }\n  .input:focus, .ta:focus { border-color: #45454d; }\n  .input::placeholder, .ta::placeholder { color: var(--faint); }\n  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }\n  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }\n  .stack { display: flex; flex-direction: column; gap: 6px; }\n  .lbl { font-size: 12.5px; color: var(--text-2); font-weight: 500; }\n  .sub-hint { font-size: 12px; color: var(--faint); line-height: 1.5; }\n  .sub-hint code { font-family: var(--mono); background: var(--surface-3); padding: 1px 5px; border-radius: 4px; color: var(--text-2); }\n\n  .collap summary { list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: space-between; }\n  .collap summary::-webkit-details-marker { display: none; }\n  .collap summary .caret { color: var(--muted); transition: transform .18s; display: flex; }\n  .collap[open] summary .caret { transform: rotate(90deg); }\n  .collap .body { margin-top: 18px; display: flex; flex-direction: column; gap: 14px; }\n\n  .price-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }\n  .price { border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; background: var(--surface-2); }\n  .price.feature { border-color: #3d3d44; }\n  .price .pkr { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 4px; }\n  .price .pn { font-size: 14px; font-weight: 600; }\n  .price .pp { font-family: var(--mono); font-size: 13px; color: var(--text-2); }\n  .price .pcap { font-size: 12.5px; color: var(--muted); margin: 0 0 14px; }\n  .price ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }\n  .price li { font-size: 13px; color: var(--text-2); display: flex; gap: 9px; align-items: flex-start; }\n  .price li svg { width: 14px; height: 14px; color: var(--text); flex-shrink: 0; margin-top: 2px; }\n\n  .faq { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 22px; }\n  .faq h4 { margin: 0 0 4px; font-size: 13.5px; font-weight: 600; }\n  .faq p { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.5; }\n\n  .notes { display: flex; flex-direction: column; gap: 12px; }\n  .note-item { display: flex; gap: 12px; font-size: 13px; color: var(--text-2); line-height: 1.5; }\n  .note-item b { color: var(--text); font-weight: 600; }\n  .note-item .nk { font-family: var(--mono); font-size: 11px; color: var(--faint); flex-shrink: 0; width: 70px; padding-top: 1px; }\n\n  .banner { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); padding: 16px 18px; display: flex; gap: 13px; align-items: flex-start; }\n  .banner .ico { color: var(--text); flex-shrink: 0; margin-top: 1px; }\n  .banner .bt { font-size: 13.5px; font-weight: 560; margin-bottom: 2px; }\n  .banner .bd { font-size: 12.5px; color: var(--muted); line-height: 1.5; }\n\n  .footer { border-top: 1px solid var(--border-soft); margin-top: 12px; padding-top: 22px; display: flex;\n    align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; font-size: 12.5px; color: var(--faint); }\n\n  .toast { position: fixed; bottom: 26px; left: 50%; transform: translateX(-50%) translateY(20px);\n    background: var(--surface-3); border: 1px solid var(--border); color: var(--text); padding: 11px 18px;\n    border-radius: 999px; font-size: 13px; opacity: 0; transition: all .25s; pointer-events: none; z-index: 100; box-shadow: 0 8px 30px rgba(0,0,0,.5); }\n  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }\n\n  .tabbar { display: flex; gap: 4px; padding: 4px; background: var(--surface); border: 1px solid var(--border); border-radius: 11px; position: sticky; top: 70px; z-index: 40; }\n  .tab { flex: 1; font-family: var(--sans); font-size: 13.5px; font-weight: 550; color: var(--muted); background: transparent; border: 0; padding: 10px 14px; border-radius: 8px; cursor: pointer; transition: all .14s; }\n  .tab:hover { color: var(--text-2); }\n  .tab.on { background: var(--surface-3); color: var(--text); }\n  .tabpanel { display: none; flex-direction: column; gap: 16px; }\n  .tabpanel.on { display: flex; animation: fade .2s ease; }\n  @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }\n  .rail-note { font-size: 12.5px; color: var(--muted); line-height: 1.55; padding: 2px 2px 0; }\n\n  .site-banner { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); padding: 16px 20px; }\n  .sb-main { display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap; }\n  .sb-badge { display: inline-flex; align-items: center; gap: 7px; font-size: 11px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); margin-bottom: 7px; }\n  .sb-badge .lt { width: 6px; height: 6px; border-radius: 50%; background: var(--green); }\n  .sb-title { font-size: 15.5px; font-weight: 620; letter-spacing: -.01em; margin-bottom: 3px; }\n  .sb-desc { font-size: 13px; color: var(--muted); max-width: 58ch; line-height: 1.45; }\n  .sb-actions { display: flex; gap: 8px; flex-shrink: 0; }\n  .sb-actions .btn { flex: 0 0 auto; padding: 9px 16px; }\n\n  .thanks-card { border: 1px solid var(--text); border-radius: var(--radius); background: var(--surface-2); padding: 15px 16px; }\n  .tc-head { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 650; letter-spacing: .01em; }\n  .tc-ico { display: flex; color: var(--text); }\n  .tc-sub { font-size: 12px; color: var(--muted); margin: 5px 0 11px; line-height: 1.45; }\n  .tc-names { display: flex; flex-wrap: wrap; gap: 6px; }\n  .tc-name { font-size: 12px; font-weight: 550; color: var(--on-ink); background: var(--on); border-radius: 999px; padding: 4px 11px; }\n\n  @media (max-width: 920px) {\n    .wrap { grid-template-columns: 1fr; gap: 24px; }\n    .rail { position: static; } .sidenav { display: none; }\n    .preset-grid, .provider-grid, .price-grid, .faq, .grid-2, .grid-3 { grid-template-columns: 1fr; }\n    .hero h1 { font-size: 27px; } .nav a:not(.pill) { display: none; }\n  }\n</style>\n</head>\n<body>\n  <header class=\"topbar\">\n    <div class=\"brand\">\n      <div class=\"brand-mark\"></div>\n      <div class=\"brand-name\">NebulaStreams <span>· Configure</span></div>\n    </div>\n    <nav class=\"nav\">\n      <a href=\"#\">Movie Site</a>\n      <a href=\"#\">Sports</a>\n      <a href=\"#support\">Support</a>\n      <span class=\"pill\"><span class=\"dot\"></span> Live · 115 providers</span>\n    </nav>\n  </header>\n\n  <div class=\"wrap\">\n    <aside class=\"rail\">\n      <div class=\"install\">\n        <h3>Install URL</h3>\n        <p class=\"sub\">The manifest NebulaStreams generates from your current settings. Updates in real time.</p>\n        <div class=\"url-box\"><b>https://</b>nebula.work.gd/manifest.json</div>\n        <div class=\"btn-row\">\n          <button class=\"btn primary\" id=\"installBtn\">\n            <svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.2\"><path d=\"M12 3v12m0 0l-4-4m4 4l4-4M4 19h16\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>\n            Install\n          </button>\n          <button class=\"btn\" id=\"copyBtn\">\n            <svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><rect x=\"9\" y=\"9\" width=\"11\" height=\"11\" rx=\"2\"/><path d=\"M5 15V5a2 2 0 012-2h10\"/></svg>\n            Copy URL\n          </button>\n        </div>\n        <div class=\"meta-row\">\n          <div class=\"meta\"><div class=\"v\">115</div><div class=\"l\">Providers</div></div>\n          <div class=\"meta\"><div class=\"v\">Custom</div><div class=\"l\">Quality</div></div>\n          <div class=\"meta\"><div class=\"v\">Ready</div><div class=\"l\">TorBox</div></div>\n        </div>\n      </div>\n\n      <div class=\"thanks-card\">\n        <div class=\"tc-head\"><span class=\"tc-ico\"><svg width=\"15\" height=\"15\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M12 21C6 16.5 3 13 3 9a4 4 0 017-2.5A4 4 0 0117 9c0 4-3 7.5-9 12z\" stroke-linejoin=\"round\"/></svg></span> Special thanks</div>\n        <div class=\"tc-sub\">Our supporters keep NebulaStreams free and online.</div>\n        <div class=\"tc-names\"><span class=\"tc-name\">Devon Durham</span><span class=\"tc-name\">Shadow</span></div>\n      </div>\n\n      <div class=\"rail-note\">\n        <p>Your manifest updates live as you change settings. Switch tabs to configure providers, filters, integrations, and support — nothing here affects free stream access.</p>\n      </div>\n    </aside>\n\n    <main class=\"content\">\n      <section class=\"hero\">\n        <span class=\"eyebrow\">Stremio Add-on Configuration</span>\n        <h1>Build your perfect<br>stream pipeline.</h1>\n        <p>Pick providers, sort qualities, fine-tune filters, then install in one click. Every change updates the install URL in real time. Browse movies and series with selectable stream sources — and watch live sports from Nebula Sports.</p>\n        <div class=\"feature-line\">\n          <span class=\"chip-static\">Live manifest</span>\n          <span class=\"chip-static\">Smart presets</span>\n          <span class=\"chip-static\">TorBox support</span>\n          <span class=\"chip-static\">Private configs</span>\n        </div>\n      </section>\n\n      <div class=\"site-banner\">\n        <div class=\"sb-main\">\n          <div class=\"sb-text\">\n            <span class=\"sb-badge\"><span class=\"lt\"></span> Now streaming</span>\n            <div class=\"sb-title\">NebulaStreams Movie Site &amp; Nebula Sports</div>\n            <div class=\"sb-desc\">Browse movies and series with selectable stream sources — and watch the World Cup and live sports from Nebula Sports.</div>\n          </div>\n          <div class=\"sb-actions\">\n            <a href=\"#\" class=\"btn primary\">\n              <svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><rect x=\"3\" y=\"5\" width=\"18\" height=\"14\" rx=\"2\"/><path d=\"M10 9l5 3-5 3z\" fill=\"currentColor\" stroke=\"none\"/></svg>\n              Movie Site\n            </a>\n            <a href=\"#\" class=\"btn\">\n              <svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M12 3a14 14 0 000 18M12 3a14 14 0 010 18M3.5 9h17M3.5 15h17\" stroke-linecap=\"round\"/></svg>\n              Nebula Sports\n            </a>\n          </div>\n        </div>\n      </div>\n\n      <div class=\"tabbar\" id=\"tabbar\">\n        <button class=\"tab on\" data-tab=\"simple\">Simple</button>\n        <button class=\"tab\" data-tab=\"advanced\">Advanced</button>\n        <button class=\"tab\" data-tab=\"integrations\">Integrations</button>\n        <button class=\"tab\" data-tab=\"support\">Support</button>\n      </div>\n\n      <div class=\"tabpanel on\" data-panel=\"simple\">\n      <!-- 01 Presets -->\n      <section class=\"card\" id=\"presets\">\n        <div class=\"card-head\"><div><h2>One-click presets</h2><p>Apply a ready-made profile, then tweak anything you want manually.</p></div></div>\n        <div class=\"preset-grid\" id=\"presetGrid\">\n          <button class=\"preset on\"><div class=\"pt\">Web Fast</div><div class=\"pd\">Direct-friendly playback, H.264 preference, aggressive dedupe.</div></button>\n          <button class=\"preset\"><div class=\"pt\">Mobile Data</div><div class=\"pd\">Smaller files &amp; resolutions, tighter caps for low-bandwidth.</div></button>\n          <button class=\"preset\"><div class=\"pt\">4K HDR</div><div class=\"pd\">Top-end quality and HDR releases, no size restrictions.</div></button>\n          <button class=\"preset\"><div class=\"pt\">Anime</div><div class=\"pd\">Anime-focused providers with Japanese audio preference.</div></button>\n          <button class=\"preset\"><div class=\"pt\">Indian Content</div><div class=\"pd\">Indian-focused providers, direct hosts preferred.</div></button>\n          <button class=\"preset\"><div class=\"pt\">Turkish Content</div><div class=\"pd\">Turkish-focused providers for movies and series.</div></button>\n          <button class=\"preset\"><div class=\"pt\">Italian Content</div><div class=\"pd\">Italian-focused providers for movies, series, anime.</div></button>\n          <button class=\"preset\"><div class=\"pt\">Latino Content</div><div class=\"pd\">Spanish and Latino-focused providers.</div></button>\n          <button class=\"preset\"><div class=\"pt\">French Content</div><div class=\"pd\">French movies, series, and anime providers.</div></button>\n          <button class=\"preset\"><div class=\"pt\">Arabic Content</div><div class=\"pd\">Arabic-focused providers for movies, series, anime.</div></button>\n        </div>\n        <div class=\"preset-foot\">Preset: Custom</div>\n      </section>\n\n      <!-- 02 Simple -->\n      <section class=\"card\" id=\"simple\">\n        <div class=\"card-head\"><div><h2>Simple settings</h2><p>Quick setup with common stream controls.</p></div></div>\n        <div class=\"field\">\n          <div class=\"field-label\">Video quality</div>\n          <div class=\"field-hint\">Choose qualities allowed in stream results.</div>\n          <div class=\"chips\" data-multi>\n            <span class=\"chip on\">2160p (4K)</span><span class=\"chip on\">1080p</span><span class=\"chip on\">720p</span><span class=\"chip\">480p</span>\n          </div>\n        </div>\n        <div class=\"field\">\n          <div class=\"field-label\">Content and sorting</div>\n          <div class=\"field-hint\">Set content scope and result order.</div>\n          <div class=\"seg-group\">\n            <div class=\"seg-line\"><span>Content selection</span><div class=\"seg\" data-seg><button class=\"on\">Default</button><button>Movies only</button><button>Series only</button></div></div>\n            <div class=\"seg-line\"><span>Default sorting</span><div class=\"seg\" data-seg><button class=\"on\">Highest quality</button><button>Highest non-4K</button><button>Balanced</button></div></div>\n          </div>\n        </div>\n        <div class=\"field\">\n          <div class=\"field-label\">Result limits</div>\n          <div class=\"field-hint\">Control duplicates without disabling providers.</div>\n          <div class=\"seg-group\">\n            <div class=\"seg-line\"><span>Max per quality</span><div class=\"seg\" data-seg><button class=\"on\">Unlimited</button><button>1</button><button>2</button><button>3</button><button>5</button></div></div>\n            <div class=\"seg-line\"><span>Max per provider</span><div class=\"seg\" data-seg><button class=\"on\">Unlimited</button><button>1</button><button>2</button><button>3</button><button>5</button></div></div>\n          </div>\n        </div>\n      </section>\n\n      </div>\n\n      <div class=\"tabpanel\" data-panel=\"advanced\">\n      <!-- 03 Providers -->\n      <section class=\"card\" id=\"providers\">\n        <div class=\"card-head\"><div><h2>Provider selection</h2><p>Pick any combination. Leaving everything unchecked falls back to all providers.</p></div></div>\n        <div class=\"toolbar\">\n          <div class=\"search\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><circle cx=\"11\" cy=\"11\" r=\"7\"/><path d=\"M21 21l-4-4\" stroke-linecap=\"round\"/></svg><input id=\"provSearch\" placeholder=\"Search providers…\" /></div>\n          <button class=\"ghost-btn\" id=\"selAll\">Select all</button>\n          <button class=\"ghost-btn\" id=\"clearAll\">Clear</button>\n        </div>\n        <div class=\"examples\">Examples: nuvio, nuvio-latino, nuvio-french, nuvio-italian, nuvio-2, cloudstream-phisher, r2-plugin, r3-plugin, r4-asian-drama-movies, r5-plugin, streamrip-plugin, pstream</div>\n        <div class=\"provider-grid\" id=\"provGrid\"></div>\n        <div class=\"count-note\" id=\"provCount\">All providers selected</div>\n      </section>\n\n      <!-- 04 Adapters -->\n      <section class=\"card\" id=\"adapters\">\n        <div class=\"card-head\"><div><h2>Adapter providers</h2><p>Open adapter groups and choose source providers inside plugins.</p></div></div>\n        <div class=\"adapter-empty\">Loading adapter providers…</div>\n      </section>\n\n      <!-- 05 Priority -->\n      <section class=\"card\" id=\"priority\">\n        <div class=\"card-head\"><div><h2>Quality priority</h2><p>Move preferred qualities up. Used for ranking results.</p></div><button class=\"ghost-btn\">Reset</button></div>\n        <div class=\"prio\" id=\"prioList\">\n          <div class=\"prio-item\"><span class=\"grip\"><svg viewBox=\"0 0 24 24\" fill=\"currentColor\"><circle cx=\"9\" cy=\"6\" r=\"1.6\"/><circle cx=\"15\" cy=\"6\" r=\"1.6\"/><circle cx=\"9\" cy=\"12\" r=\"1.6\"/><circle cx=\"15\" cy=\"12\" r=\"1.6\"/><circle cx=\"9\" cy=\"18\" r=\"1.6\"/><circle cx=\"15\" cy=\"18\" r=\"1.6\"/></svg></span><span class=\"rank\">01</span><span class=\"pq\">2160p (4K)</span><span class=\"tag\">UHD</span></div>\n          <div class=\"prio-item\"><span class=\"grip\"><svg viewBox=\"0 0 24 24\" fill=\"currentColor\"><circle cx=\"9\" cy=\"6\" r=\"1.6\"/><circle cx=\"15\" cy=\"6\" r=\"1.6\"/><circle cx=\"9\" cy=\"12\" r=\"1.6\"/><circle cx=\"15\" cy=\"12\" r=\"1.6\"/><circle cx=\"9\" cy=\"18\" r=\"1.6\"/><circle cx=\"15\" cy=\"18\" r=\"1.6\"/></svg></span><span class=\"rank\">02</span><span class=\"pq\">1080p</span><span class=\"tag\">FHD</span></div>\n          <div class=\"prio-item\"><span class=\"grip\"><svg viewBox=\"0 0 24 24\" fill=\"currentColor\"><circle cx=\"9\" cy=\"6\" r=\"1.6\"/><circle cx=\"15\" cy=\"6\" r=\"1.6\"/><circle cx=\"9\" cy=\"12\" r=\"1.6\"/><circle cx=\"15\" cy=\"12\" r=\"1.6\"/><circle cx=\"9\" cy=\"18\" r=\"1.6\"/><circle cx=\"15\" cy=\"18\" r=\"1.6\"/></svg></span><span class=\"rank\">03</span><span class=\"pq\">720p</span><span class=\"tag\">HD</span></div>\n          <div class=\"prio-item\"><span class=\"grip\"><svg viewBox=\"0 0 24 24\" fill=\"currentColor\"><circle cx=\"9\" cy=\"6\" r=\"1.6\"/><circle cx=\"15\" cy=\"6\" r=\"1.6\"/><circle cx=\"9\" cy=\"12\" r=\"1.6\"/><circle cx=\"15\" cy=\"12\" r=\"1.6\"/><circle cx=\"9\" cy=\"18\" r=\"1.6\"/><circle cx=\"15\" cy=\"18\" r=\"1.6\"/></svg></span><span class=\"rank\">04</span><span class=\"pq\">480p</span><span class=\"tag\">SD</span></div>\n        </div>\n      </section>\n\n      <!-- 06 Filters -->\n      <section class=\"card\" id=\"filters\">\n        <div class=\"card-head\"><div><h2>Playback filters</h2><p>Cut noisy results without losing unknown or unlabeled streams.</p></div></div>\n        <div class=\"toggle-row\"><div class=\"tinfo\"><div class=\"tt\">Web-ready only</div><div class=\"td\">Strict — only simple MP4-style links without proxy headers. Reduces results heavily.</div></div><div class=\"switch\" data-switch></div></div>\n        <div class=\"toggle-row\"><div class=\"tinfo\"><div class=\"tt\">Hide HEVC / HDR / 10-bit</div><div class=\"td\">For lighter playback devices that struggle with heavier codecs.</div></div><div class=\"switch\" data-switch></div></div>\n        <div class=\"field\" style=\"border-top:1px solid var(--border-soft)\">\n          <div class=\"seg-line\"><span>Stream card formatter</span><div class=\"seg\" data-seg><button class=\"on\">Clean</button><button>Detailed</button><button>Compact</button><button>Minimal</button></div></div>\n          <div class=\"field-hint\" style=\"margin:8px 0 0\">Choose how stream cards are displayed in Stremio.</div>\n        </div>\n        <div class=\"field\">\n          <div class=\"grid-2\">\n            <div class=\"stack\">\n              <span class=\"lbl\">Preferred audio language</span>\n              <div class=\"select-wrap\">\n                <select class=\"input\"><option>Any language</option><option>Hindi</option><option>English</option><option>Tamil</option><option>Telugu</option><option>Malayalam</option><option>Kannada</option><option>Japanese</option><option>Korean</option><option>Turkish</option><option>Italian</option><option>Latino</option><option>Spanish</option><option>Arabic</option></select>\n                <span class=\"chev\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M6 9l6 6 6-6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg></span>\n              </div>\n              <span class=\"sub-hint\">Keeps matches and unknown-language streams. Only clearly different audio is filtered.</span>\n            </div>\n            <div class=\"stack\">\n              <span class=\"lbl\">Maximum file size</span>\n              <div class=\"select-wrap\">\n                <select class=\"input\"><option>No limit</option><option>1.5 GB</option><option>3 GB</option><option>5 GB</option><option>10 GB</option><option>20 GB</option></select>\n                <span class=\"chev\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M6 9l6 6 6-6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg></span>\n              </div>\n              <span class=\"sub-hint\">Hide oversized files for lighter playback or smaller downloads.</span>\n            </div>\n          </div>\n        </div>\n        <div class=\"field\">\n          <div class=\"stack\">\n            <span class=\"lbl\">Blocked hosts</span>\n            <input class=\"input\" placeholder=\"Comma-separated host fragments to hide…\" />\n          </div>\n        </div>\n        <div class=\"field\">\n          <div class=\"stack\">\n            <span class=\"lbl\">Custom proxy URL</span>\n            <input class=\"input\" placeholder=\"https://your-proxy/…\" />\n            <span class=\"sub-hint\">Optional. HTTP streams will be rewritten through your proxy. Supports <code>{url}</code> and <code>{headers}</code> placeholders. Stored behind a private config id.</span>\n          </div>\n        </div>\n        <div class=\"field\">\n          <div class=\"stack\">\n            <span class=\"lbl\">Febbox UI cookie (ShowBox)</span>\n            <input class=\"input\" placeholder=\"Paste Febbox UI cookie…\" />\n            <span class=\"sub-hint\">Optional. Enables ShowBox with your own Febbox UI cookie. Stored behind a private config id.</span>\n          </div>\n        </div>\n        <div class=\"field\">\n          <div class=\"seg-line\"><span>Deduplication mode</span><div class=\"seg\" data-seg><button>Off</button><button class=\"on\">Smart</button><button>By filename</button><button>Host + quality</button></div></div>\n          <div class=\"field-hint\" style=\"margin:8px 0 0\">Collapse duplicates after ranking, keeping the best-scored copy.</div>\n        </div>\n      </section>\n\n      <!-- 07 Boosts -->\n      <section class=\"card\" id=\"boosts\">\n        <div class=\"card-head\"><div><h2>Preference boosts</h2><p>These don't remove streams — they push matching streams higher.</p></div></div>\n        <div class=\"toggle-row\"><div class=\"tinfo\"><div class=\"tt\">Prefer HDR</div><div class=\"td\">Push HDR &amp; Dolby Vision higher.</div></div><div class=\"switch\" data-switch></div></div>\n        <div class=\"toggle-row\"><div class=\"tinfo\"><div class=\"tt\">Prefer H.264 / x264</div><div class=\"td\">For players that struggle with HEVC.</div></div><div class=\"switch on\" data-switch></div></div>\n        <div class=\"toggle-row\"><div class=\"tinfo\"><div class=\"tt\">Prefer smaller files</div><div class=\"td\">When speed matters more than quality.</div></div><div class=\"switch\" data-switch></div></div>\n        <div class=\"toggle-row\"><div class=\"tinfo\"><div class=\"tt\">Prefer direct hosts</div><div class=\"td\">Direct HTTP above streams that need extra headers.</div></div><div class=\"switch on\" data-switch></div></div>\n      </section>\n\n      </div>\n\n      <div class=\"tabpanel\" data-panel=\"integrations\">\n      <!-- 08 TorBox -->\n      <section class=\"card\" id=\"torbox\">\n        <details class=\"collap\" open>\n          <summary><div><h2 style=\"font-size:17px;margin:0 0 4px;font-weight:620;letter-spacing:-.015em\">TorBox integration</h2><p style=\"margin:0;font-size:13.5px;color:var(--muted)\">Stream without buffering. Highly recommended.</p></div>\n            <span class=\"caret\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M9 6l6 6-6 6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg></span></summary>\n          <div class=\"body\">\n            <div class=\"stack\"><span class=\"lbl\">API key</span><input class=\"input\" placeholder=\"Paste your TorBox API key…\" /><span class=\"sub-hint\">Find your API key in your TorBox account settings.</span></div>\n            <div class=\"toggle-row\" style=\"padding-top:4px\"><div class=\"tinfo\"><div class=\"tt\">TorBox-only streams</div><div class=\"td\">Excludes normal search results.</div></div><div class=\"switch\" data-switch></div></div>\n            <div class=\"toggle-row\"><div class=\"tinfo\"><div class=\"tt\">TorBox Usenet (Recommended)</div><div class=\"td\">Pro plan only — do not enable on Essential / Standard.</div></div><div class=\"switch\" data-switch></div></div>\n          </div>\n        </details>\n      </section>\n\n      <!-- 09 IPTV -->\n      <section class=\"card\" id=\"iptv\">\n        <div class=\"card-head\"><div><h2>IPTV &amp; live TV</h2><p>Add private IPTV and public live TV catalogs. Credentials are stored only in the private manifest config and never placed in the public install URL.</p></div></div>\n\n        <details class=\"collap field\" style=\"border-top:0;padding-top:0\">\n          <summary><div><div class=\"field-label\">Xtream Codes IPTV</div><div class=\"field-hint\" style=\"margin-bottom:0\">Add private IPTV live TV, VOD, series, categories, and EPG.</div></div>\n            <span class=\"caret\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M9 6l6 6-6 6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg></span></summary>\n          <div class=\"body\">\n            <div class=\"stack\"><span class=\"lbl\">Server URL</span><input class=\"input\" placeholder=\"http://server:port\" /></div>\n            <div class=\"grid-2\"><div class=\"stack\"><span class=\"lbl\">Username</span><input class=\"input\" /></div><div class=\"stack\"><span class=\"lbl\">Password</span><input class=\"input\" type=\"password\" /></div></div>\n          </div>\n        </details>\n\n        <details class=\"collap field\">\n          <summary><div><div class=\"field-label\">Stalker / MAG Portal</div><div class=\"field-hint\" style=\"margin-bottom:0\">Add private MAG IPTV live TV catalogs from portal + MAC address.</div></div>\n            <span class=\"caret\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M9 6l6 6-6 6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg></span></summary>\n          <div class=\"body\">\n            <div class=\"stack\"><span class=\"lbl\">Stalker portal URL</span><input class=\"input\" placeholder=\"http://portal/c/\" /></div>\n            <div class=\"grid-2\">\n              <div class=\"stack\"><span class=\"lbl\">Stalker MAC address</span><input class=\"input\" placeholder=\"00:1A:79:xx:xx:xx\" /></div>\n              <div class=\"stack\"><span class=\"lbl\">STB type</span>\n                <div class=\"select-wrap\"><select class=\"input\"><option>MAG254</option><option>MAG250</option><option>MAG256</option><option>MAG270</option><option>MAG322</option><option>MAG324</option><option>MAG349</option><option>MAG351</option><option>MAG420</option></select>\n                  <span class=\"chev\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M6 9l6 6 6-6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg></span></div>\n              </div>\n            </div>\n            <div class=\"grid-3\">\n              <div class=\"stack\"><span class=\"lbl\">Serial number</span><input class=\"input\" /></div>\n              <div class=\"stack\"><span class=\"lbl\">Device ID</span><input class=\"input\" /></div>\n              <div class=\"stack\"><span class=\"lbl\">Device ID 2</span><input class=\"input\" /></div>\n            </div>\n            <div class=\"grid-2\">\n              <div class=\"stack\"><span class=\"lbl\">Category start</span><input class=\"input\" placeholder=\"0\" /></div>\n              <div class=\"stack\"><span class=\"lbl\">Category catalogs</span><input class=\"input\" /></div>\n            </div>\n            <span class=\"sub-hint\">Stremio limits manifest size. For portals with hundreds of categories, set Category Start to 0, 40, 80, 120… to choose the visible category page.</span>\n          </div>\n        </details>\n\n        <div class=\"toggle-row\"><div class=\"tinfo\"><div class=\"tt\">Famelack Public Live TV</div><div class=\"td\">Add public worldwide live TV catalogs from Famelack data.</div></div><div class=\"switch\" data-switch></div></div>\n        <div class=\"toggle-row\"><div class=\"tinfo\"><div class=\"tt\">Nflix Public Live TV</div><div class=\"td\">Add public TV channel catalogs from NflixMovies.</div></div><div class=\"switch\" data-switch></div></div>\n      </section>\n\n      </div>\n\n      <div class=\"tabpanel\" data-panel=\"support\">\n      <!-- 10 Support -->\n      <section class=\"card\" id=\"support\">\n        <div class=\"card-head\"><div><h2>Support NebulaStreams</h2><p>This add-on is completely free. Support only unlocks profile sync, backups, dashboard themes, and short install URLs — it never changes free provider access, stream quality, or stream count.</p></div></div>\n        <div class=\"banner\" style=\"margin-bottom:18px\">\n          <span class=\"ico\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M12 21C6 16.5 3 13 3 9a4 4 0 017-2.5A4 4 0 0117 9c0 4-3 7.5-9 12z\" stroke-linejoin=\"round\"/></svg></span>\n          <div><div class=\"bt\">50% donation pledge</div><div class=\"bd\">Half of supporter donations is set aside for charities and humanitarian programs such as UNICEF, UNFPA, and CRY — and similar child welfare and emergency aid efforts. Remaining funds cover NebulaStreams hosting and maintenance.</div></div>\n        </div>\n        <div class=\"price-grid\">\n          <div class=\"price\">\n            <div class=\"pkr\"><span class=\"pn\">Nebula Supporter</span><span class=\"pp\">$1 / month</span></div>\n            <p class=\"pcap\">Monthly supporter — cloud convenience while keeping every stream feature free.</p>\n            <ul>\n              <li><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\"><path d=\"M5 13l4 4L19 7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg> Supporter badge</li>\n              <li><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\"><path d=\"M5 13l4 4L19 7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg> Saved cloud profiles &amp; profile sync</li>\n              <li><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\"><path d=\"M5 13l4 4L19 7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg> Multiple config backups</li>\n              <li><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\"><path d=\"M5 13l4 4L19 7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg> Short install URLs</li>\n              <li><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\"><path d=\"M5 13l4 4L19 7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg> Early feature access &amp; priority support</li>\n            </ul>\n          </div>\n          <div class=\"price feature\">\n            <div class=\"pkr\"><span class=\"pn\">Nebula Founder</span><span class=\"pp\">$5 / lifetime</span></div>\n            <p class=\"pcap\">One-time support with founder status and lifetime perks.</p>\n            <ul>\n              <li><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\"><path d=\"M5 13l4 4L19 7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg> Everything in Supporter</li>\n              <li><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\"><path d=\"M5 13l4 4L19 7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg> Lifetime founder badge</li>\n              <li><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\"><path d=\"M5 13l4 4L19 7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg> Founder recognition wall</li>\n              <li><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\"><path d=\"M5 13l4 4L19 7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg> Exclusive themes</li>\n              <li><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\"><path d=\"M5 13l4 4L19 7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg> Future supporter perks included</li>\n            </ul>\n          </div>\n        </div>\n\n        <div class=\"field\" style=\"border-top:1px solid var(--border-soft);margin-top:6px\">\n          <div class=\"toolbar\" style=\"margin:0\">\n            <button class=\"btn\" style=\"flex:0 0 auto;padding:9px 16px\">Support on Ko-fi</button>\n            <button class=\"ghost-btn\">More ways to support</button>\n            <button class=\"ghost-btn\">Open dashboard</button>\n          </div>\n        </div>\n        <div class=\"grid-2\">\n          <div class=\"stack\"><span class=\"lbl\">Supporter code</span><input class=\"input\" placeholder=\"Enter your supporter code…\" /><span class=\"sub-hint\">Supporter perks do not change free stream results.</span></div>\n          <div class=\"stack\"><span class=\"lbl\">Cloud profile name</span><input class=\"input\" placeholder=\"e.g. Living room TV\" />\n            <div class=\"toolbar\" style=\"margin:6px 0 0\"><button class=\"ghost-btn\">Save current config</button></div>\n            <span class=\"sub-hint\">Save provider, quality, TorBox, IPTV, adapter, and advanced settings to supporter cloud.</span>\n          </div>\n        </div>\n\n        <div class=\"field\">\n          <div class=\"faq\">\n            <div><h4>Why support?</h4><p>Hosting, proxy traffic, provider fixes, and uptime work cost money and time.</p></div>\n            <div><h4>Free users?</h4><p>No provider, quality, stream count, or playback feature is ever gated.</p></div>\n            <div><h4>Payments?</h4><p>Ko-fi sends a webhook. Nebula creates a supporter code and emails it.</p></div>\n            <div><h4>Cloud sync?</h4><p>Supporters can sync, backup, restore, export, and use short install URLs.</p></div>\n          </div>\n        </div>\n      </section>\n\n      <!-- 11 Notes -->\n      <section class=\"card\" id=\"notes\">\n        <div class=\"card-head\"><div><h2>Operational notes</h2><p>A few practical details about how the add-on behaves.</p></div></div>\n        <div class=\"notes\">\n          <div class=\"note-item\"><span class=\"nk\">Quality order</span><span><b>Only affects ranking.</b> It can't invent missing qualities providers don't have.</span></div>\n          <div class=\"note-item\"><span class=\"nk\">Web-ready</span><span><b>Filters hard.</b> Use only for the safest direct-play subset.</span></div>\n          <div class=\"note-item\"><span class=\"nk\">Cold starts</span><span>First request can be slower while the backend wakes up and queries providers in parallel.</span></div>\n          <div class=\"note-item\"><span class=\"nk\">Media hosting</span><span>NebulaStreams does not store media. It discovers external links and passes them through configured playback.</span></div>\n        </div>\n      </section>\n\n      </div>\n\n      <footer class=\"footer\">\n        <span>NebulaStreams — community Stremio add-on</span>\n        <span>60,107 active users · 115 providers · 2 supporters</span>\n      </footer>\n    </main>\n  </div>\n\n  <div class=\"toast\" id=\"toast\">Manifest URL copied</div>\n\n<script>\n  const PROVIDERS = [\"nuvio\",\"nuvio-latino\",\"nuvio-french\",\"nuvio-italian\",\"nuvio-2\",\"cloudstream-phisher\",\"r2-plugin\",\"r3-plugin\",\"r4-asian-drama-movies\",\"r5-plugin\",\"streamrip-plugin\",\"pstream\",\"torrentio\",\"comet\",\"mediafusion\",\"orion\"];\n  const grid = document.getElementById('provGrid');\n  const countEl = document.getElementById('provCount');\n  function refreshCount(){\n    const all = grid.querySelectorAll('.provider').length;\n    const on = grid.querySelectorAll('.provider.on').length;\n    countEl.textContent = on === all ? 'All providers selected' : (on === 0 ? 'No providers selected — falls back to all' : on + ' of ' + all + ' providers selected');\n  }\n  PROVIDERS.forEach(name => {\n    const el = document.createElement('div');\n    el.className = 'provider on'; el.dataset.name = name;\n    el.innerHTML = '<span class=\"box\"></span><span class=\"pname\">' + name + '</span>';\n    el.addEventListener('click', () => { el.classList.toggle('on'); refreshCount(); });\n    grid.appendChild(el);\n  });\n  document.getElementById('selAll').onclick = () => { grid.querySelectorAll('.provider').forEach(p => p.classList.add('on')); refreshCount(); };\n  document.getElementById('clearAll').onclick = () => { grid.querySelectorAll('.provider').forEach(p => p.classList.remove('on')); refreshCount(); };\n  document.getElementById('provSearch').addEventListener('input', e => {\n    const q = e.target.value.toLowerCase();\n    grid.querySelectorAll('.provider').forEach(p => { p.style.display = p.dataset.name.includes(q) ? 'flex' : 'none'; });\n  });\n\n  document.querySelectorAll('[data-multi] .chip').forEach(c => c.addEventListener('click', () => c.classList.toggle('on')));\n  document.querySelectorAll('[data-seg]').forEach(seg => seg.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {\n    seg.querySelectorAll('button').forEach(x => x.classList.remove('on')); b.classList.add('on');\n  })));\n  document.querySelectorAll('[data-switch]').forEach(s => s.addEventListener('click', () => s.classList.toggle('on')));\n  document.querySelectorAll('#presetGrid .preset').forEach(p => p.addEventListener('click', () => {\n    document.querySelectorAll('#presetGrid .preset').forEach(x => x.classList.remove('on')); p.classList.add('on');\n    document.querySelector('.preset-foot').textContent = 'Preset: ' + p.querySelector('.pt').textContent;\n  }));\n\n  const toast = document.getElementById('toast');\n  function showToast(msg){ toast.textContent = msg; toast.classList.add('show'); setTimeout(()=>toast.classList.remove('show'), 1800); }\n  document.getElementById('copyBtn').onclick = () => { navigator.clipboard && navigator.clipboard.writeText('https://nebula.work.gd/manifest.json'); showToast('Manifest URL copied'); };\n  document.getElementById('installBtn').onclick = () => showToast('Opening Stremio…');\n\n  const tabs = [...document.querySelectorAll('#tabbar .tab')];\n  const panels = [...document.querySelectorAll('.tabpanel')];\n  tabs.forEach(t => t.addEventListener('click', () => {\n    tabs.forEach(x => x.classList.toggle('on', x === t));\n    const name = t.dataset.tab;\n    panels.forEach(p => p.classList.toggle('on', p.dataset.panel === name));\n    window.scrollTo({ top: 0, behavior: 'smooth' });\n  }));\n  refreshCount();\n</script>\n</body>\n</html>\n";
+  let html = "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"UTF-8\" />\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n<title>NebulaStreams · Configure</title>\n<style>\n  :root {\n    --bg: #0c0c0d;\n    --surface: #131314;\n    --surface-2: #1a1a1c;\n    --surface-3: #212124;\n    --border: #2a2a2e;\n    --border-soft: #202023;\n    --text: #f2f2f3;\n    --text-2: #b2b2b8;\n    --muted: #7d7d84;\n    --faint: #54545b;\n    --on: #f2f2f3;        /* selected = near-white (inverted) */\n    --on-ink: #0c0c0d;    /* text on selected */\n    --green: #46c98a;\n    --radius: 12px;\n    --radius-sm: 8px;\n    --mono: \"SFMono-Regular\", \"JetBrains Mono\", \"Menlo\", \"Consolas\", monospace;\n    --sans: -apple-system, BlinkMacSystemFont, \"Segoe UI\", \"Inter\", system-ui, sans-serif;\n  }\n  * { box-sizing: border-box; }\n  html { scroll-behavior: smooth; }\n  body {\n    margin: 0; background: var(--bg); color: var(--text);\n    font-family: var(--sans); font-size: 15px; line-height: 1.55;\n    -webkit-font-smoothing: antialiased;\n  }\n  a { color: inherit; text-decoration: none; }\n  ::selection { background: #2f2f34; }\n\n  /* Top bar */\n  .topbar {\n    position: sticky; top: 0; z-index: 50;\n    display: flex; align-items: center; justify-content: space-between; gap: 20px;\n    padding: 13px 28px; background: rgba(12,12,13,0.8); backdrop-filter: blur(14px);\n    border-bottom: 1px solid var(--border-soft);\n  }\n  .brand { display: flex; align-items: center; gap: 11px; }\n  .brand-mark {\n    width: 28px; height: 28px; border-radius: 50%;\n    border: 1.5px solid var(--text); position: relative; flex-shrink: 0;\n  }\n  .brand-mark::after {\n    content: \"\"; position: absolute; width: 6px; height: 6px; border-radius: 50%;\n    background: var(--text); top: 4px; right: 4px;\n  }\n  .brand-name { font-weight: 650; letter-spacing: -0.01em; font-size: 15px; }\n  .brand-name span { color: var(--muted); font-weight: 500; }\n  .nav { display: flex; align-items: center; gap: 4px; }\n  .nav a { color: var(--text-2); font-size: 13.5px; padding: 7px 12px; border-radius: 8px; transition: background .15s, color .15s; }\n  .nav a:hover { background: var(--surface-2); color: var(--text); }\n  .pill {\n    display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--text-2);\n    padding: 6px 11px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); margin-left: 6px;\n  }\n  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); }\n\n  /* Layout */\n  .wrap { max-width: 1180px; margin: 0 auto; padding: 40px 28px 96px;\n    display: grid; grid-template-columns: 272px 1fr; gap: 40px; align-items: start; }\n  .rail { position: sticky; top: 84px; display: flex; flex-direction: column; gap: 18px; }\n\n  .install { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); padding: 18px; }\n  .install h3 { margin: 0 0 3px; font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }\n  .install .sub { margin: 0 0 14px; font-size: 12.5px; color: var(--faint); line-height: 1.45; }\n  .url-box { font-family: var(--mono); font-size: 12px; color: var(--text-2); background: var(--bg);\n    border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 11px; word-break: break-all; line-height: 1.5; margin-bottom: 12px; }\n  .url-box b { color: var(--text); font-weight: 500; }\n  .btn-row { display: flex; gap: 8px; }\n  .btn { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 7px;\n    font-family: var(--sans); font-size: 13px; font-weight: 550; padding: 9px 12px; border-radius: var(--radius-sm);\n    border: 1px solid var(--border); background: var(--surface-3); color: var(--text); cursor: pointer; transition: background .15s, transform .05s; }\n  .btn:hover { background: #2a2a2e; }\n  .btn:active { transform: translateY(1px); }\n  .btn.primary { background: var(--on); border-color: transparent; color: var(--on-ink); }\n  .btn.primary:hover { background: #fff; }\n  .btn svg { width: 15px; height: 15px; }\n  .meta-row { display: flex; gap: 8px; margin-top: 12px; }\n  .meta { flex: 1; text-align: center; padding: 8px 4px; background: var(--surface); border: 1px solid var(--border-soft); border-radius: var(--radius-sm); }\n  .meta .v { font-size: 14px; font-weight: 650; letter-spacing: -.01em; }\n  .meta .l { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-top: 1px; }\n  .thanks { margin-top: 12px; font-size: 11.5px; color: var(--faint); }\n  .thanks b { color: var(--text-2); font-weight: 500; }\n\n  .sidenav { display: flex; flex-direction: column; gap: 1px; }\n  .sidenav a { font-size: 13.5px; color: var(--muted); padding: 7px 12px; border-radius: 8px;\n    display: flex; align-items: center; gap: 10px; transition: background .12s, color .12s; }\n  .sidenav a:hover { color: var(--text-2); background: var(--surface); }\n  .sidenav a.active { color: var(--text); background: var(--surface-2); }\n  .sidenav a .idx { font-family: var(--mono); font-size: 11px; color: var(--faint); width: 16px; }\n  .sidenav a.active .idx { color: var(--text); }\n\n  /* Content */\n  .content { display: flex; flex-direction: column; gap: 16px; min-width: 0; }\n  .hero { margin-bottom: 8px; }\n  .eyebrow { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 600; margin-bottom: 12px; display: block; }\n  .hero h1 { margin: 0 0 12px; font-size: 34px; line-height: 1.12; font-weight: 680; letter-spacing: -.025em; }\n  .hero p { margin: 0; color: var(--text-2); font-size: 15.5px; max-width: 60ch; }\n  .feature-line { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }\n  .chip-static { font-size: 12.5px; color: var(--text-2); border: 1px solid var(--border); border-radius: 999px; padding: 5px 12px; background: var(--surface); }\n\n  .card { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); padding: 22px 24px; }\n  .card-head { margin-bottom: 18px; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }\n  .card-head h2 { margin: 0 0 4px; font-size: 17px; font-weight: 620; letter-spacing: -.015em; }\n  .card-head p { margin: 0; font-size: 13.5px; color: var(--muted); max-width: 60ch; }\n\n  .field { padding: 16px 0; border-top: 1px solid var(--border-soft); }\n  .field:first-of-type { border-top: 0; padding-top: 0; }\n  .field-label { font-size: 14px; font-weight: 550; margin-bottom: 2px; }\n  .field-hint { font-size: 12.5px; color: var(--muted); margin-bottom: 12px; line-height: 1.45; }\n\n  .chips { display: flex; flex-wrap: wrap; gap: 8px; }\n  .chip { font-size: 13px; color: var(--text-2); border: 1px solid var(--border); border-radius: 999px;\n    padding: 7px 14px; background: var(--surface-2); cursor: pointer; user-select: none; transition: all .13s; }\n  .chip:hover { border-color: #3a3a40; color: var(--text); }\n  .chip.on { background: var(--on); border-color: var(--on); color: var(--on-ink); font-weight: 550; }\n\n  .seg-group { display: flex; flex-direction: column; gap: 14px; }\n  .seg-line { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }\n  .seg-line > span { font-size: 13.5px; color: var(--text-2); }\n  .seg { display: inline-flex; background: var(--surface-2); border: 1px solid var(--border); border-radius: 9px; padding: 3px; flex-wrap: wrap; }\n  .seg button { font-family: var(--sans); font-size: 12.5px; color: var(--muted); border: 0; background: transparent;\n    padding: 6px 12px; border-radius: 6px; cursor: pointer; white-space: nowrap; transition: all .13s; }\n  .seg button:hover { color: var(--text-2); }\n  .seg button.on { background: var(--on); color: var(--on-ink); font-weight: 550; }\n\n  /* native select */\n  .select-wrap { position: relative; }\n  select.input { appearance: none; -webkit-appearance: none; cursor: pointer; padding-right: 34px; }\n  .select-wrap .chev { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--muted); display: flex; }\n\n  .preset-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }\n  .preset { text-align: left; border: 1px solid var(--border); background: var(--surface-2); border-radius: var(--radius-sm);\n    padding: 13px 15px; cursor: pointer; transition: all .13s; font-family: var(--sans); }\n  .preset:hover { border-color: #3a3a40; background: var(--surface-3); }\n  .preset.on { border-color: var(--on); background: var(--surface-3); }\n  .preset .pt { font-size: 13.5px; font-weight: 600; color: var(--text); margin-bottom: 3px; }\n  .preset .pd { font-size: 12px; color: var(--muted); line-height: 1.4; }\n  .preset-foot { margin-top: 14px; font-size: 12.5px; color: var(--muted); font-family: var(--mono); }\n\n  .toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }\n  .search { flex: 1; min-width: 200px; display: flex; align-items: center; gap: 9px; background: var(--surface-2);\n    border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 9px 12px; }\n  .search svg { width: 15px; height: 15px; color: var(--faint); flex-shrink: 0; }\n  .search input { flex: 1; border: 0; background: transparent; color: var(--text); font-family: var(--sans); font-size: 13.5px; outline: none; }\n  .search input::placeholder { color: var(--faint); }\n  .ghost-btn { font-family: var(--sans); font-size: 12.5px; color: var(--text-2); border: 1px solid var(--border);\n    background: var(--surface-2); padding: 9px 13px; border-radius: var(--radius-sm); cursor: pointer; transition: all .13s; }\n  .ghost-btn:hover { background: var(--surface-3); color: var(--text); }\n  .examples { font-size: 12px; color: var(--faint); margin-bottom: 12px; line-height: 1.5; font-family: var(--mono); }\n\n  .provider-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }\n  .provider { display: flex; align-items: center; gap: 11px; padding: 10px 13px; border: 1px solid var(--border-soft);\n    border-radius: var(--radius-sm); background: var(--surface-2); cursor: pointer; transition: all .13s; }\n  .provider:hover { border-color: var(--border); }\n  .provider .box { width: 17px; height: 17px; border-radius: 5px; border: 1.5px solid #3c3c44; flex-shrink: 0; position: relative; transition: all .13s; }\n  .provider.on .box { background: var(--on); border-color: var(--on); }\n  .provider.on .box::after { content: \"\"; position: absolute; left: 5px; top: 2px; width: 4px; height: 8px; border: solid var(--on-ink); border-width: 0 2px 2px 0; transform: rotate(45deg); }\n  .provider .pname { font-family: var(--mono); font-size: 12.5px; color: var(--text-2); }\n  .provider.on .pname { color: var(--text); }\n  .count-note { font-size: 12.5px; color: var(--muted); margin-top: 12px; }\n\n  .adapter-empty { border: 1px dashed var(--border); border-radius: var(--radius-sm); padding: 20px; text-align: center; color: var(--faint); font-size: 13px; background: var(--surface-2); }\n\n  .prio { display: flex; flex-direction: column; gap: 7px; }\n  .prio-item { display: flex; align-items: center; gap: 12px; padding: 11px 14px; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); background: var(--surface-2); }\n  .prio-item .grip { color: var(--faint); cursor: grab; display: flex; }\n  .prio-item .grip svg { width: 14px; height: 14px; }\n  .prio-item .rank { font-family: var(--mono); font-size: 11px; color: var(--muted); }\n  .prio-item .pq { font-size: 13.5px; font-weight: 500; flex: 1; }\n  .prio-item .tag { font-size: 11px; color: var(--faint); font-family: var(--mono); }\n\n  .toggle-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding: 15px 0; border-top: 1px solid var(--border-soft); }\n  .toggle-row:first-child { border-top: 0; padding-top: 2px; }\n  .toggle-row .tinfo .tt { font-size: 14px; font-weight: 540; }\n  .toggle-row .tinfo .td { font-size: 12.5px; color: var(--muted); margin-top: 2px; max-width: 56ch; line-height: 1.45; }\n  .switch { flex-shrink: 0; width: 40px; height: 23px; border-radius: 999px; background: var(--surface-3); border: 1px solid var(--border); cursor: pointer; position: relative; transition: background .16s, border-color .16s; }\n  .switch::after { content: \"\"; position: absolute; top: 2px; left: 2px; width: 17px; height: 17px; border-radius: 50%; background: #8b8b93; transition: transform .16s, background .16s; }\n  .switch.on { background: var(--on); border-color: transparent; }\n  .switch.on::after { transform: translateX(17px); background: var(--on-ink); }\n\n  .input, .ta { width: 100%; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm);\n    padding: 10px 12px; color: var(--text); font-family: var(--sans); font-size: 13.5px; outline: none; transition: border-color .13s; }\n  .input:focus, .ta:focus { border-color: #45454d; }\n  .input::placeholder, .ta::placeholder { color: var(--faint); }\n  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }\n  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }\n  .stack { display: flex; flex-direction: column; gap: 6px; }\n  .lbl { font-size: 12.5px; color: var(--text-2); font-weight: 500; }\n  .sub-hint { font-size: 12px; color: var(--faint); line-height: 1.5; }\n  .sub-hint code { font-family: var(--mono); background: var(--surface-3); padding: 1px 5px; border-radius: 4px; color: var(--text-2); }\n\n  .collap summary { list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: space-between; }\n  .collap summary::-webkit-details-marker { display: none; }\n  .collap summary .caret { color: var(--muted); transition: transform .18s; display: flex; }\n  .collap[open] summary .caret { transform: rotate(90deg); }\n  .collap .body { margin-top: 18px; display: flex; flex-direction: column; gap: 14px; }\n\n  .price-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }\n  .price { border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; background: var(--surface-2); }\n  .price.feature { border-color: #3d3d44; }\n  .price .pkr { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 4px; }\n  .price .pn { font-size: 14px; font-weight: 600; }\n  .price .pp { font-family: var(--mono); font-size: 13px; color: var(--text-2); }\n  .price .pcap { font-size: 12.5px; color: var(--muted); margin: 0 0 14px; }\n  .price ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }\n  .price li { font-size: 13px; color: var(--text-2); display: flex; gap: 9px; align-items: flex-start; }\n  .price li svg { width: 14px; height: 14px; color: var(--text); flex-shrink: 0; margin-top: 2px; }\n\n  .faq { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 22px; }\n  .faq h4 { margin: 0 0 4px; font-size: 13.5px; font-weight: 600; }\n  .faq p { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.5; }\n\n  .notes { display: flex; flex-direction: column; gap: 12px; }\n  .note-item { display: flex; gap: 12px; font-size: 13px; color: var(--text-2); line-height: 1.5; }\n  .note-item b { color: var(--text); font-weight: 600; }\n  .note-item .nk { font-family: var(--mono); font-size: 11px; color: var(--faint); flex-shrink: 0; width: 70px; padding-top: 1px; }\n\n  .banner { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); padding: 16px 18px; display: flex; gap: 13px; align-items: flex-start; }\n  .banner .ico { color: var(--text); flex-shrink: 0; margin-top: 1px; }\n  .banner .bt { font-size: 13.5px; font-weight: 560; margin-bottom: 2px; }\n  .banner .bd { font-size: 12.5px; color: var(--muted); line-height: 1.5; }\n\n  .footer { border-top: 1px solid var(--border-soft); margin-top: 12px; padding-top: 22px; display: flex;\n    align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; font-size: 12.5px; color: var(--faint); }\n\n  .toast { position: fixed; bottom: 26px; left: 50%; transform: translateX(-50%) translateY(20px);\n    background: var(--surface-3); border: 1px solid var(--border); color: var(--text); padding: 11px 18px;\n    border-radius: 999px; font-size: 13px; opacity: 0; transition: all .25s; pointer-events: none; z-index: 100; box-shadow: 0 8px 30px rgba(0,0,0,.5); }\n  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }\n\n  .tabbar { display: flex; gap: 4px; padding: 4px; background: var(--surface); border: 1px solid var(--border); border-radius: 11px; position: sticky; top: 70px; z-index: 40; }\n  .tab { flex: 1; font-family: var(--sans); font-size: 13.5px; font-weight: 550; color: var(--muted); background: transparent; border: 0; padding: 10px 14px; border-radius: 8px; cursor: pointer; transition: all .14s; }\n  .tab:hover { color: var(--text-2); }\n  .tab.on { background: var(--surface-3); color: var(--text); }\n  .tabpanel { display: none; flex-direction: column; gap: 16px; }\n  .tabpanel.on { display: flex; animation: fade .2s ease; }\n  @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }\n  .rail-note { font-size: 12.5px; color: var(--muted); line-height: 1.55; padding: 2px 2px 0; }\n\n  .site-banner { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); padding: 16px 20px; }\n  .sb-main { display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap; }\n  .sb-badge { display: inline-flex; align-items: center; gap: 7px; font-size: 11px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); margin-bottom: 7px; }\n  .sb-badge .lt { width: 6px; height: 6px; border-radius: 50%; background: var(--green); }\n  .sb-title { font-size: 15.5px; font-weight: 620; letter-spacing: -.01em; margin-bottom: 3px; }\n  .sb-desc { font-size: 13px; color: var(--muted); max-width: 58ch; line-height: 1.45; }\n  .sb-actions { display: flex; gap: 8px; flex-shrink: 0; }\n  .sb-actions .btn { flex: 0 0 auto; padding: 9px 16px; }\n\n  .thanks-card { border: 1px solid var(--text); border-radius: var(--radius); background: var(--surface-2); padding: 15px 16px; }\n  .tc-head { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 650; letter-spacing: .01em; }\n  .tc-ico { display: flex; color: var(--text); }\n  .tc-sub { font-size: 12px; color: var(--muted); margin: 5px 0 11px; line-height: 1.45; }\n  .tc-names { display: flex; flex-wrap: wrap; gap: 6px; }\n  .tc-name { font-size: 12px; font-weight: 550; color: var(--on-ink); background: var(--on); border-radius: 999px; padding: 4px 11px; }\n\n  @media (max-width: 920px) {\n    .wrap { grid-template-columns: 1fr; gap: 24px; }\n    .rail { position: static; } .sidenav { display: none; }\n    .preset-grid, .provider-grid, .price-grid, .faq, .grid-2, .grid-3 { grid-template-columns: 1fr; }\n    .hero h1 { font-size: 27px; } .nav a:not(.pill) { display: none; }\n  }\n</style>\n</head>\n<body>\n  <header class=\"topbar\">\n    <div class=\"brand\">\n      <div class=\"brand-mark\"></div>\n      <div class=\"brand-name\">NebulaStreams <span>· Configure</span></div>\n    </div>\n    <nav class=\"nav\">\n      <a href=\"#\">Movie Site</a>\n      <a href=\"#\">Sports</a>\n      <a href=\"#support\">Support</a>\n      <span class=\"pill\"><span class=\"dot\"></span> Live · 115 providers</span>\n    </nav>\n  </header>\n\n  <div class=\"wrap\">\n    <aside class=\"rail\">\n      <div class=\"install\">\n        <h3>Install URL</h3>\n        <p class=\"sub\">The manifest NebulaStreams generates from your current settings. Updates in real time.</p>\n        <div class=\"url-box\"><b>https://</b>nebula.work.gd/manifest.json</div>\n        <div class=\"btn-row\">\n          <button class=\"btn primary\" id=\"installBtn\">\n            <svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.2\"><path d=\"M12 3v12m0 0l-4-4m4 4l4-4M4 19h16\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>\n            Install\n          </button>\n          <button class=\"btn\" id=\"copyBtn\">\n            <svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><rect x=\"9\" y=\"9\" width=\"11\" height=\"11\" rx=\"2\"/><path d=\"M5 15V5a2 2 0 012-2h10\"/></svg>\n            Copy URL\n          </button>\n        </div>\n        <div class=\"meta-row\">\n          <div class=\"meta\"><div class=\"v\">115</div><div class=\"l\">Providers</div></div>\n          <div class=\"meta\"><div class=\"v\">Custom</div><div class=\"l\">Quality</div></div>\n          <div class=\"meta\"><div class=\"v\">Ready</div><div class=\"l\">TorBox</div></div>\n        </div>\n      </div>\n\n      <div class=\"thanks-card\">\n        <div class=\"tc-head\"><span class=\"tc-ico\"><svg width=\"15\" height=\"15\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M12 21C6 16.5 3 13 3 9a4 4 0 017-2.5A4 4 0 0117 9c0 4-3 7.5-9 12z\" stroke-linejoin=\"round\"/></svg></span> Special thanks</div>\n        <div class=\"tc-sub\">Our supporters keep NebulaStreams free and online.</div>\n        <div class=\"tc-names\"><span class=\"tc-name\">Devon Durham</span><span class=\"tc-name\">Shadow</span></div>\n      </div>\n\n      <div class=\"rail-note\">\n        <p>Your manifest updates live as you change settings. Switch tabs to configure providers, filters, integrations, and support — nothing here affects free stream access.</p>\n      </div>\n    </aside>\n\n    <main class=\"content\">\n      <section class=\"hero\">\n        <span class=\"eyebrow\">Stremio Add-on Configuration</span>\n        <h1>Build your perfect<br>stream pipeline.</h1>\n        <p>Pick providers, sort qualities, fine-tune filters, then install in one click. Every change updates the install URL in real time. Browse movies and series with selectable stream sources — and watch live sports from Nebula Sports.</p>\n        <div class=\"feature-line\">\n          <span class=\"chip-static\">Live manifest</span>\n          <span class=\"chip-static\">Smart presets</span>\n          <span class=\"chip-static\">TorBox support</span>\n          <span class=\"chip-static\">Private configs</span>\n        </div>\n      </section>\n\n      <div class=\"site-banner\">\n        <div class=\"sb-main\">\n          <div class=\"sb-text\">\n            <span class=\"sb-badge\"><span class=\"lt\"></span> Now streaming</span>\n            <div class=\"sb-title\">NebulaStreams Movie Site &amp; Nebula Sports</div>\n            <div class=\"sb-desc\">Browse movies and series with selectable stream sources — and watch the World Cup and live sports from Nebula Sports.</div>\n          </div>\n          <div class=\"sb-actions\">\n            <a href=\"#\" class=\"btn primary\">\n              <svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><rect x=\"3\" y=\"5\" width=\"18\" height=\"14\" rx=\"2\"/><path d=\"M10 9l5 3-5 3z\" fill=\"currentColor\" stroke=\"none\"/></svg>\n              Movie Site\n            </a>\n            <a href=\"#\" class=\"btn\">\n              <svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M12 3a14 14 0 000 18M12 3a14 14 0 010 18M3.5 9h17M3.5 15h17\" stroke-linecap=\"round\"/></svg>\n              Nebula Sports\n            </a>\n          </div>\n        </div>\n      </div>\n\n      <div class=\"tabbar\" id=\"tabbar\">\n        <button class=\"tab on\" data-tab=\"simple\">Simple</button>\n        <button class=\"tab\" data-tab=\"advanced\">Advanced</button>\n        <button class=\"tab\" data-tab=\"integrations\">Integrations</button>\n        <button class=\"tab\" data-tab=\"support\">Support</button>\n      </div>\n\n      <div class=\"tabpanel on\" data-panel=\"simple\">\n      <!-- 01 Presets -->\n      <section class=\"card\" id=\"presets\">\n        <div class=\"card-head\"><div><h2>One-click presets</h2><p>Apply a ready-made profile, then tweak anything you want manually.</p></div></div>\n        <div class=\"preset-grid\" id=\"presetGrid\">\n          <button class=\"preset on\"><div class=\"pt\">Web Fast</div><div class=\"pd\">Direct-friendly playback, H.264 preference, aggressive dedupe.</div></button>\n          <button class=\"preset\"><div class=\"pt\">Mobile Data</div><div class=\"pd\">Smaller files &amp; resolutions, tighter caps for low-bandwidth.</div></button>\n          <button class=\"preset\"><div class=\"pt\">4K HDR</div><div class=\"pd\">Top-end quality and HDR releases, no size restrictions.</div></button>\n          <button class=\"preset\"><div class=\"pt\">Anime</div><div class=\"pd\">Anime-focused providers with Japanese audio preference.</div></button>\n          <button class=\"preset\"><div class=\"pt\">Indian Content</div><div class=\"pd\">Indian-focused providers, direct hosts preferred.</div></button>\n          <button class=\"preset\"><div class=\"pt\">Turkish Content</div><div class=\"pd\">Turkish-focused providers for movies and series.</div></button>\n          <button class=\"preset\"><div class=\"pt\">Italian Content</div><div class=\"pd\">Italian-focused providers for movies, series, anime.</div></button>\n          <button class=\"preset\"><div class=\"pt\">Latino Content</div><div class=\"pd\">Spanish and Latino-focused providers.</div></button>\n          <button class=\"preset\"><div class=\"pt\">French Content</div><div class=\"pd\">French movies, series, and anime providers.</div></button>\n          <button class=\"preset\"><div class=\"pt\">Arabic Content</div><div class=\"pd\">Arabic-focused providers for movies, series, anime.</div></button>\n        </div>\n        <div class=\"preset-foot\">Preset: Custom</div>\n      </section>\n\n      <!-- 02 Simple -->\n      <section class=\"card\" id=\"simple\">\n        <div class=\"card-head\"><div><h2>Simple settings</h2><p>Quick setup with common stream controls.</p></div></div>\n        <div class=\"field\">\n          <div class=\"field-label\">Video quality</div>\n          <div class=\"field-hint\">Choose qualities allowed in stream results.</div>\n          <div class=\"chips\" data-multi>\n            <span class=\"chip on\">2160p (4K)</span><span class=\"chip on\">1080p</span><span class=\"chip on\">720p</span><span class=\"chip\">480p</span>\n          </div>\n        </div>\n        <div class=\"field\">\n          <div class=\"field-label\">Content and sorting</div>\n          <div class=\"field-hint\">Set content scope and result order.</div>\n          <div class=\"seg-group\">\n            <div class=\"seg-line\"><span>Content selection</span><div class=\"seg\" data-seg><button class=\"on\">Default</button><button>Movies only</button><button>Series only</button></div></div>\n            <div class=\"seg-line\"><span>Default sorting</span><div class=\"seg\" data-seg><button class=\"on\">Highest quality</button><button>Highest non-4K</button><button>Balanced</button></div></div>\n          </div>\n        </div>\n        <div class=\"field\">\n          <div class=\"field-label\">Result limits</div>\n          <div class=\"field-hint\">Control duplicates without disabling providers.</div>\n          <div class=\"seg-group\">\n            <div class=\"seg-line\"><span>Max per quality</span><div class=\"seg\" data-seg><button class=\"on\">Unlimited</button><button>1</button><button>2</button><button>3</button><button>5</button></div></div>\n            <div class=\"seg-line\"><span>Max per provider</span><div class=\"seg\" data-seg><button class=\"on\">Unlimited</button><button>1</button><button>2</button><button>3</button><button>5</button></div></div>\n          </div>\n        </div>\n      </section>\n\n      </div>\n\n      <div class=\"tabpanel\" data-panel=\"advanced\">\n      <!-- 03 Providers -->\n      <section class=\"card\" id=\"providers\">\n        <div class=\"card-head\"><div><h2>Provider selection</h2><p>Pick any combination. Leaving everything unchecked falls back to all providers.</p></div></div>\n        <div class=\"toolbar\">\n          <div class=\"search\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><circle cx=\"11\" cy=\"11\" r=\"7\"/><path d=\"M21 21l-4-4\" stroke-linecap=\"round\"/></svg><input id=\"provSearch\" placeholder=\"Search providers…\" /></div>\n          <button class=\"ghost-btn\" id=\"selAll\">Select all</button>\n          <button class=\"ghost-btn\" id=\"clearAll\">Clear</button>\n        </div>\n        <div class=\"examples\">Examples: nuvio, nuvio-latino, nuvio-french, nuvio-italian, nuvio-2, cloudstream-phisher, r2-plugin, r3-plugin, r4-asian-drama-movies, r5-plugin, streamrip-plugin, pstream</div>\n        <div class=\"provider-grid\" id=\"provGrid\"></div>\n        <div class=\"count-note\" id=\"provCount\">All providers selected</div>\n      </section>\n\n      <!-- 04 Adapters -->\n      <section class=\"card\" id=\"adapters\">\n        <div class=\"card-head\"><div><h2>Adapter providers</h2><p>Open adapter groups and choose source providers inside plugins.</p></div></div>\n        <div class=\"adapter-empty\">Loading adapter providers…</div>\n      </section>\n\n      <!-- 05 Priority -->\n      <section class=\"card\" id=\"priority\">\n        <div class=\"card-head\"><div><h2>Quality priority</h2><p>Move preferred qualities up. Used for ranking results.</p></div><button class=\"ghost-btn\">Reset</button></div>\n        <div class=\"prio\" id=\"prioList\">\n          <div class=\"prio-item\"><span class=\"grip\"><svg viewBox=\"0 0 24 24\" fill=\"currentColor\"><circle cx=\"9\" cy=\"6\" r=\"1.6\"/><circle cx=\"15\" cy=\"6\" r=\"1.6\"/><circle cx=\"9\" cy=\"12\" r=\"1.6\"/><circle cx=\"15\" cy=\"12\" r=\"1.6\"/><circle cx=\"9\" cy=\"18\" r=\"1.6\"/><circle cx=\"15\" cy=\"18\" r=\"1.6\"/></svg></span><span class=\"rank\">01</span><span class=\"pq\">2160p (4K)</span><span class=\"tag\">UHD</span></div>\n          <div class=\"prio-item\"><span class=\"grip\"><svg viewBox=\"0 0 24 24\" fill=\"currentColor\"><circle cx=\"9\" cy=\"6\" r=\"1.6\"/><circle cx=\"15\" cy=\"6\" r=\"1.6\"/><circle cx=\"9\" cy=\"12\" r=\"1.6\"/><circle cx=\"15\" cy=\"12\" r=\"1.6\"/><circle cx=\"9\" cy=\"18\" r=\"1.6\"/><circle cx=\"15\" cy=\"18\" r=\"1.6\"/></svg></span><span class=\"rank\">02</span><span class=\"pq\">1080p</span><span class=\"tag\">FHD</span></div>\n          <div class=\"prio-item\"><span class=\"grip\"><svg viewBox=\"0 0 24 24\" fill=\"currentColor\"><circle cx=\"9\" cy=\"6\" r=\"1.6\"/><circle cx=\"15\" cy=\"6\" r=\"1.6\"/><circle cx=\"9\" cy=\"12\" r=\"1.6\"/><circle cx=\"15\" cy=\"12\" r=\"1.6\"/><circle cx=\"9\" cy=\"18\" r=\"1.6\"/><circle cx=\"15\" cy=\"18\" r=\"1.6\"/></svg></span><span class=\"rank\">03</span><span class=\"pq\">720p</span><span class=\"tag\">HD</span></div>\n          <div class=\"prio-item\"><span class=\"grip\"><svg viewBox=\"0 0 24 24\" fill=\"currentColor\"><circle cx=\"9\" cy=\"6\" r=\"1.6\"/><circle cx=\"15\" cy=\"6\" r=\"1.6\"/><circle cx=\"9\" cy=\"12\" r=\"1.6\"/><circle cx=\"15\" cy=\"12\" r=\"1.6\"/><circle cx=\"9\" cy=\"18\" r=\"1.6\"/><circle cx=\"15\" cy=\"18\" r=\"1.6\"/></svg></span><span class=\"rank\">04</span><span class=\"pq\">480p</span><span class=\"tag\">SD</span></div>\n        </div>\n      </section>\n\n      <!-- 06 Filters -->\n      <section class=\"card\" id=\"filters\">\n        <div class=\"card-head\"><div><h2>Playback filters</h2><p>Cut noisy results without losing unknown or unlabeled streams.</p></div></div>\n        <div class=\"toggle-row\"><div class=\"tinfo\"><div class=\"tt\">Web-ready only</div><div class=\"td\">Strict — only simple MP4-style links without proxy headers. Reduces results heavily.</div></div><div class=\"switch\" data-switch></div></div>\n        <div class=\"toggle-row\"><div class=\"tinfo\"><div class=\"tt\">Hide HEVC / HDR / 10-bit</div><div class=\"td\">For lighter playback devices that struggle with heavier codecs.</div></div><div class=\"switch\" data-switch></div></div>\n        <div class=\"field\" style=\"border-top:1px solid var(--border-soft)\">\n          <div class=\"seg-line\"><span>Stream card formatter</span><div class=\"seg\" data-seg><button class=\"on\">Clean</button><button>Detailed</button><button>Compact</button><button>Minimal</button></div></div>\n          <div class=\"field-hint\" style=\"margin:8px 0 0\">Choose how stream cards are displayed in Stremio.</div>\n        </div>\n        <div class=\"field\">\n          <div class=\"grid-2\">\n            <div class=\"stack\">\n              <span class=\"lbl\">Preferred audio language</span>\n              <div class=\"select-wrap\">\n                <select class=\"input\"><option>Any language</option><option>Hindi</option><option>English</option><option>Tamil</option><option>Telugu</option><option>Malayalam</option><option>Kannada</option><option>Japanese</option><option>Korean</option><option>Turkish</option><option>Italian</option><option>Latino</option><option>Spanish</option><option>Arabic</option></select>\n                <span class=\"chev\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M6 9l6 6 6-6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg></span>\n              </div>\n              <span class=\"sub-hint\">Keeps matches and unknown-language streams. Only clearly different audio is filtered.</span>\n            </div>\n            <div class=\"stack\">\n              <span class=\"lbl\">Maximum file size</span>\n              <div class=\"select-wrap\">\n                <select class=\"input\"><option>No limit</option><option>1.5 GB</option><option>3 GB</option><option>5 GB</option><option>10 GB</option><option>20 GB</option></select>\n                <span class=\"chev\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M6 9l6 6 6-6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg></span>\n              </div>\n              <span class=\"sub-hint\">Hide oversized files for lighter playback or smaller downloads.</span>\n            </div>\n          </div>\n        </div>\n        <div class=\"field\">\n          <div class=\"stack\">\n            <span class=\"lbl\">Blocked hosts</span>\n            <input class=\"input\" placeholder=\"Comma-separated host fragments to hide…\" />\n          </div>\n        </div>\n        <div class=\"field\">\n          <div class=\"stack\">\n            <span class=\"lbl\">Custom proxy URL</span>\n            <input class=\"input\" placeholder=\"https://your-proxy/…\" />\n            <span class=\"sub-hint\">Optional. HTTP streams will be rewritten through your proxy. Supports <code>{url}</code> and <code>{headers}</code> placeholders. Stored behind a private config id.</span>\n          </div>\n        </div>\n        <div class=\"field\">\n          <div class=\"stack\">\n            <span class=\"lbl\">Febbox UI cookie (ShowBox)</span>\n            <input class=\"input\" placeholder=\"Paste Febbox UI cookie…\" />\n            <span class=\"sub-hint\">Optional. Enables ShowBox with your own Febbox UI cookie. Stored behind a private config id.</span>\n          </div>\n        </div>\n        <div class=\"field\">\n          <div class=\"seg-line\"><span>Deduplication mode</span><div class=\"seg\" data-seg><button>Off</button><button class=\"on\">Smart</button><button>By filename</button><button>Host + quality</button></div></div>\n          <div class=\"field-hint\" style=\"margin:8px 0 0\">Collapse duplicates after ranking, keeping the best-scored copy.</div>\n        </div>\n      </section>\n\n      <!-- 07 Boosts -->\n      <section class=\"card\" id=\"boosts\">\n        <div class=\"card-head\"><div><h2>Preference boosts</h2><p>These don't remove streams — they push matching streams higher.</p></div></div>\n        <div class=\"toggle-row\"><div class=\"tinfo\"><div class=\"tt\">Prefer HDR</div><div class=\"td\">Push HDR &amp; Dolby Vision higher.</div></div><div class=\"switch\" data-switch></div></div>\n        <div class=\"toggle-row\"><div class=\"tinfo\"><div class=\"tt\">Prefer H.264 / x264</div><div class=\"td\">For players that struggle with HEVC.</div></div><div class=\"switch on\" data-switch></div></div>\n        <div class=\"toggle-row\"><div class=\"tinfo\"><div class=\"tt\">Prefer smaller files</div><div class=\"td\">When speed matters more than quality.</div></div><div class=\"switch\" data-switch></div></div>\n        <div class=\"toggle-row\"><div class=\"tinfo\"><div class=\"tt\">Prefer direct hosts</div><div class=\"td\">Direct HTTP above streams that need extra headers.</div></div><div class=\"switch on\" data-switch></div></div>\n      </section>\n\n      </div>\n\n      <div class=\"tabpanel\" data-panel=\"integrations\">\n      <!-- 08 TorBox -->\n      <section class=\"card\" id=\"torbox\">\n        <details class=\"collap\" open>\n          <summary><div><h2 style=\"font-size:17px;margin:0 0 4px;font-weight:620;letter-spacing:-.015em\">TorBox integration</h2><p style=\"margin:0;font-size:13.5px;color:var(--muted)\">Stream without buffering. Highly recommended.</p></div>\n            <span class=\"caret\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M9 6l6 6-6 6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg></span></summary>\n          <div class=\"body\">\n            <div class=\"stack\"><span class=\"lbl\">API key</span><input class=\"input\" placeholder=\"Paste your TorBox API key…\" /><span class=\"sub-hint\">Find your API key in your TorBox account settings.</span></div>\n            <div class=\"toggle-row\" style=\"padding-top:4px\"><div class=\"tinfo\"><div class=\"tt\">TorBox-only streams</div><div class=\"td\">Excludes normal search results.</div></div><div class=\"switch\" data-switch></div></div>\n            <div class=\"toggle-row\"><div class=\"tinfo\"><div class=\"tt\">TorBox Usenet</div><div class=\"td\">Searches TorBox Usenet and resolves NZB results through your Pro account.</div></div><div class=\"switch\" data-switch></div></div>\n          </div>\n        </details>\n      </section>\n\n      <!-- 09 IPTV -->\n      <section class=\"card\" id=\"iptv\">\n        <div class=\"card-head\"><div><h2>IPTV &amp; live TV</h2><p>Add private IPTV and public live TV catalogs. Credentials are stored only in the private manifest config and never placed in the public install URL.</p></div></div>\n\n        <details class=\"collap field\" style=\"border-top:0;padding-top:0\">\n          <summary><div><div class=\"field-label\">Xtream Codes IPTV</div><div class=\"field-hint\" style=\"margin-bottom:0\">Add private IPTV live TV, VOD, series, categories, and EPG.</div></div>\n            <span class=\"caret\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M9 6l6 6-6 6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg></span></summary>\n          <div class=\"body\">\n            <div class=\"stack\"><span class=\"lbl\">Server URL</span><input class=\"input\" placeholder=\"http://server:port\" /></div>\n            <div class=\"grid-2\"><div class=\"stack\"><span class=\"lbl\">Username</span><input class=\"input\" /></div><div class=\"stack\"><span class=\"lbl\">Password</span><input class=\"input\" type=\"password\" /></div></div>\n          </div>\n        </details>\n\n        <details class=\"collap field\">\n          <summary><div><div class=\"field-label\">Stalker / MAG Portal</div><div class=\"field-hint\" style=\"margin-bottom:0\">Add private MAG IPTV live TV catalogs from portal + MAC address.</div></div>\n            <span class=\"caret\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M9 6l6 6-6 6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg></span></summary>\n          <div class=\"body\">\n            <div class=\"stack\"><span class=\"lbl\">Stalker portal URL</span><input class=\"input\" placeholder=\"http://portal/c/\" /></div>\n            <div class=\"grid-2\">\n              <div class=\"stack\"><span class=\"lbl\">Stalker MAC address</span><input class=\"input\" placeholder=\"00:1A:79:xx:xx:xx\" /></div>\n              <div class=\"stack\"><span class=\"lbl\">STB type</span>\n                <div class=\"select-wrap\"><select class=\"input\"><option>MAG254</option><option>MAG250</option><option>MAG256</option><option>MAG270</option><option>MAG322</option><option>MAG324</option><option>MAG349</option><option>MAG351</option><option>MAG420</option></select>\n                  <span class=\"chev\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M6 9l6 6 6-6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg></span></div>\n              </div>\n            </div>\n            <div class=\"grid-3\">\n              <div class=\"stack\"><span class=\"lbl\">Serial number</span><input class=\"input\" /></div>\n              <div class=\"stack\"><span class=\"lbl\">Device ID</span><input class=\"input\" /></div>\n              <div class=\"stack\"><span class=\"lbl\">Device ID 2</span><input class=\"input\" /></div>\n            </div>\n            <div class=\"grid-2\">\n              <div class=\"stack\"><span class=\"lbl\">Category start</span><input class=\"input\" placeholder=\"0\" /></div>\n              <div class=\"stack\"><span class=\"lbl\">Category catalogs</span><input class=\"input\" /></div>\n            </div>\n            <span class=\"sub-hint\">Stremio limits manifest size. For portals with hundreds of categories, set Category Start to 0, 40, 80, 120… to choose the visible category page.</span>\n          </div>\n        </details>\n\n        <div class=\"toggle-row\"><div class=\"tinfo\"><div class=\"tt\">Famelack Public Live TV</div><div class=\"td\">Add public worldwide live TV catalogs from Famelack data.</div></div><div class=\"switch\" data-switch></div></div>\n        <div class=\"toggle-row\"><div class=\"tinfo\"><div class=\"tt\">Nflix Public Live TV</div><div class=\"td\">Add public TV channel catalogs from NflixMovies.</div></div><div class=\"switch\" data-switch></div></div>\n      </section>\n\n      </div>\n\n      <div class=\"tabpanel\" data-panel=\"support\">\n      <!-- 10 Support -->\n      <section class=\"card\" id=\"support\">\n        <div class=\"card-head\"><div><h2>Support NebulaStreams</h2><p>This add-on is completely free. Support only unlocks profile sync, backups, dashboard themes, and short install URLs — it never changes free provider access, stream quality, or stream count.</p></div></div>\n        <div class=\"banner\" style=\"margin-bottom:18px\">\n          <span class=\"ico\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M12 21C6 16.5 3 13 3 9a4 4 0 017-2.5A4 4 0 0117 9c0 4-3 7.5-9 12z\" stroke-linejoin=\"round\"/></svg></span>\n          <div><div class=\"bt\">50% donation pledge</div><div class=\"bd\">Half of supporter donations is set aside for charities and humanitarian programs such as UNICEF, UNFPA, and CRY — and similar child welfare and emergency aid efforts. Remaining funds cover NebulaStreams hosting and maintenance. If you would like to support without donating, <a href=\"https://omg10.com/4/11165437\" target=\"_blank\" rel=\"noopener sponsored\" style=\"color:var(--text);text-decoration:underline\">click here</a>, wait 20 seconds, then close the tab.</div></div>\n        </div>\n        <div class=\"price-grid\">\n          <div class=\"price\">\n            <div class=\"pkr\"><span class=\"pn\">Nebula Supporter</span><span class=\"pp\">$1 / month</span></div>\n            <p class=\"pcap\">Monthly supporter — cloud convenience while keeping every stream feature free.</p>\n            <ul>\n              <li><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\"><path d=\"M5 13l4 4L19 7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg> Supporter badge</li>\n              <li><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\"><path d=\"M5 13l4 4L19 7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg> Saved cloud profiles &amp; profile sync</li>\n              <li><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\"><path d=\"M5 13l4 4L19 7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg> Multiple config backups</li>\n              <li><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\"><path d=\"M5 13l4 4L19 7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg> Short install URLs</li>\n              <li><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\"><path d=\"M5 13l4 4L19 7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg> Early feature access &amp; priority support</li>\n            </ul>\n          </div>\n          <div class=\"price feature\">\n            <div class=\"pkr\"><span class=\"pn\">Nebula Founder</span><span class=\"pp\">$5 / lifetime</span></div>\n            <p class=\"pcap\">One-time support with founder status and lifetime perks.</p>\n            <ul>\n              <li><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\"><path d=\"M5 13l4 4L19 7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg> Everything in Supporter</li>\n              <li><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\"><path d=\"M5 13l4 4L19 7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg> Lifetime founder badge</li>\n              <li><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\"><path d=\"M5 13l4 4L19 7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg> Founder recognition wall</li>\n              <li><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\"><path d=\"M5 13l4 4L19 7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg> Exclusive themes</li>\n              <li><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\"><path d=\"M5 13l4 4L19 7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg> Future supporter perks included</li>\n            </ul>\n          </div>\n        </div>\n\n        <div class=\"field\" style=\"border-top:1px solid var(--border-soft);margin-top:6px\">\n          <div class=\"toolbar\" style=\"margin:0\">\n            <button class=\"btn\" style=\"flex:0 0 auto;padding:9px 16px\">Support on Ko-fi</button>\n            <button class=\"ghost-btn\">More ways to support</button>\n            <button class=\"ghost-btn\">Open dashboard</button>\n          </div>\n        </div>\n        <div class=\"grid-2\">\n          <div class=\"stack\"><span class=\"lbl\">Supporter code</span><input class=\"input\" placeholder=\"Enter your supporter code…\" /><span class=\"sub-hint\">Supporter perks do not change free stream results.</span></div>\n          <div class=\"stack\"><span class=\"lbl\">Cloud profile name</span><input class=\"input\" placeholder=\"e.g. Living room TV\" />\n            <div class=\"toolbar\" style=\"margin:6px 0 0\"><button class=\"ghost-btn\">Save current config</button></div>\n            <span class=\"sub-hint\">Save provider, quality, TorBox, IPTV, adapter, and advanced settings to supporter cloud.</span>\n          </div>\n        </div>\n\n        <div class=\"field\">\n          <div class=\"faq\">\n            <div><h4>Why support?</h4><p>Hosting, proxy traffic, provider fixes, and uptime work cost money and time.</p></div>\n            <div><h4>Free users?</h4><p>No provider, quality, stream count, or playback feature is ever gated.</p></div>\n            <div><h4>Payments?</h4><p>Ko-fi sends a webhook. Nebula creates a supporter code and emails it.</p></div>\n            <div><h4>Cloud sync?</h4><p>Supporters can sync, backup, restore, export, and use short install URLs.</p></div>\n          </div>\n        </div>\n      </section>\n\n      <!-- 11 Notes -->\n      <section class=\"card\" id=\"notes\">\n        <div class=\"card-head\"><div><h2>Operational notes</h2><p>A few practical details about how the add-on behaves.</p></div></div>\n        <div class=\"notes\">\n          <div class=\"note-item\"><span class=\"nk\">Quality order</span><span><b>Only affects ranking.</b> It can't invent missing qualities providers don't have.</span></div>\n          <div class=\"note-item\"><span class=\"nk\">Web-ready</span><span><b>Filters hard.</b> Use only for the safest direct-play subset.</span></div>\n          <div class=\"note-item\"><span class=\"nk\">Cold starts</span><span>First request can be slower while the backend wakes up and queries providers in parallel.</span></div>\n          <div class=\"note-item\"><span class=\"nk\">Media hosting</span><span>NebulaStreams does not store media. It discovers external links and passes them through configured playback.</span></div>\n        </div>\n      </section>\n\n      </div>\n\n      <footer class=\"footer\">\n        <span>NebulaStreams — community Stremio add-on</span>\n        <span>60,107 active users · 115 providers · 2 supporters</span>\n      </footer>\n    </main>\n  </div>\n\n  <div class=\"toast\" id=\"toast\">Manifest URL copied</div>\n\n<script>\n  const PROVIDERS = [\"nuvio\",\"nuvio-latino\",\"nuvio-french\",\"nuvio-italian\",\"nuvio-2\",\"cloudstream-phisher\",\"r2-plugin\",\"r3-plugin\",\"r4-asian-drama-movies\",\"r5-plugin\",\"streamrip-plugin\",\"pstream\",\"torrentio\",\"comet\",\"mediafusion\",\"orion\"];\n  const grid = document.getElementById('provGrid');\n  const countEl = document.getElementById('provCount');\n  function refreshCount(){\n    const all = grid.querySelectorAll('.provider').length;\n    const on = grid.querySelectorAll('.provider.on').length;\n    countEl.textContent = on === all ? 'All providers selected' : (on === 0 ? 'No providers selected — falls back to all' : on + ' of ' + all + ' providers selected');\n  }\n  PROVIDERS.forEach(name => {\n    const el = document.createElement('div');\n    el.className = 'provider on'; el.dataset.name = name;\n    el.innerHTML = '<span class=\"box\"></span><span class=\"pname\">' + name + '</span>';\n    el.addEventListener('click', () => { el.classList.toggle('on'); refreshCount(); });\n    grid.appendChild(el);\n  });\n  document.getElementById('selAll').onclick = () => { grid.querySelectorAll('.provider').forEach(p => p.classList.add('on')); refreshCount(); };\n  document.getElementById('clearAll').onclick = () => { grid.querySelectorAll('.provider').forEach(p => p.classList.remove('on')); refreshCount(); };\n  document.getElementById('provSearch').addEventListener('input', e => {\n    const q = e.target.value.toLowerCase();\n    grid.querySelectorAll('.provider').forEach(p => { p.style.display = p.dataset.name.includes(q) ? 'flex' : 'none'; });\n  });\n\n  document.querySelectorAll('[data-multi] .chip').forEach(c => c.addEventListener('click', () => c.classList.toggle('on')));\n  document.querySelectorAll('[data-seg]').forEach(seg => seg.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {\n    seg.querySelectorAll('button').forEach(x => x.classList.remove('on')); b.classList.add('on');\n  })));\n  document.querySelectorAll('[data-switch]').forEach(s => s.addEventListener('click', () => s.classList.toggle('on')));\n  document.querySelectorAll('#presetGrid .preset').forEach(p => p.addEventListener('click', () => {\n    document.querySelectorAll('#presetGrid .preset').forEach(x => x.classList.remove('on')); p.classList.add('on');\n    document.querySelector('.preset-foot').textContent = 'Preset: ' + p.querySelector('.pt').textContent;\n  }));\n\n  const toast = document.getElementById('toast');\n  function showToast(msg){ toast.textContent = msg; toast.classList.add('show'); setTimeout(()=>toast.classList.remove('show'), 1800); }\n  document.getElementById('copyBtn').onclick = () => { navigator.clipboard && navigator.clipboard.writeText('https://nebula.work.gd/manifest.json'); showToast('Manifest URL copied'); };\n  document.getElementById('installBtn').onclick = () => showToast('Opening Stremio…');\n\n  const tabs = [...document.querySelectorAll('#tabbar .tab')];\n  const panels = [...document.querySelectorAll('.tabpanel')];\n  tabs.forEach(t => t.addEventListener('click', () => {\n    tabs.forEach(x => x.classList.toggle('on', x === t));\n    const name = t.dataset.tab;\n    panels.forEach(p => p.classList.toggle('on', p.dataset.panel === name));\n    window.scrollTo({ top: 0, behavior: 'smooth' });\n  }));\n  refreshCount();\n</script>\n</body>\n</html>\n";
+
+  const configureRuntimeScript = String.raw`
+  const manifestBox = document.querySelector('.url-box');
+  let manifestUrl = window.location.origin + '/manifest.json';
+  let stremioInstallUrl = 'stremio://addon-install?addon=' + encodeURIComponent(manifestUrl);
+  let configTimer = null;
+  let configRequest = 0;
+  let configAbortController = null;
+
+  function textOf(selector, root = document) {
+    return root.querySelector(selector)?.textContent?.trim() || '';
+  }
+
+  function activeButtonValue(label) {
+    const line = [...document.querySelectorAll('.seg-line')].find((item) => textOf(':scope > span', item) === label);
+    return textOf('button.on', line).toLowerCase();
+  }
+
+  function switchEnabled(label) {
+    const row = [...document.querySelectorAll('.toggle-row')].find((item) => textOf('.tt', item) === label);
+    return Boolean(row?.querySelector('[data-switch].on'));
+  }
+
+  function inputByLabel(label, scope = document) {
+    const stack = [...scope.querySelectorAll('.stack')].find((item) => textOf('.lbl', item) === label);
+    return stack?.querySelector('input, select')?.value?.trim() || '';
+  }
+
+  function qualityKey(value) {
+    const match = String(value || '').match(/2160|1440|1080|720|480|360/);
+    return match ? match[0] + 'p' : String(value || '').trim().toLowerCase();
+  }
+
+  function numericChoice(label) {
+    const value = activeButtonValue(label);
+    return value === 'unlimited' ? 0 : (Number.parseInt(value, 10) || 0);
+  }
+
+  function setActiveButton(label, value) {
+    const line = [...document.querySelectorAll('.seg-line')].find((item) => textOf(':scope > span', item) === label);
+    if (!line) return;
+    const normalized = String(value).toLowerCase();
+    line.querySelectorAll('button').forEach((button) => {
+      button.classList.toggle('on', button.textContent.trim().toLowerCase() === normalized);
+    });
+  }
+
+  function setSwitch(label, enabled) {
+    const row = [...document.querySelectorAll('.toggle-row')].find((item) => textOf('.tt', item) === label);
+    row?.querySelector('[data-switch]')?.classList.toggle('on', Boolean(enabled));
+  }
+
+  function setInput(label, value, scope = document) {
+    const stack = [...scope.querySelectorAll('.stack')].find((item) => textOf('.lbl', item) === label);
+    const input = stack?.querySelector('input, select');
+    if (input) input.value = value ?? '';
+  }
+
+  function setAllowedQualities(qualities) {
+    const wanted = new Set(qualities);
+    document.querySelectorAll('#simple [data-multi] .chip').forEach((chip) => {
+      chip.classList.toggle('on', wanted.has(qualityKey(chip.textContent)));
+    });
+  }
+
+  function setProviders(providerIds = []) {
+    const wanted = new Set(providerIds);
+    grid.querySelectorAll('.provider').forEach((provider) => {
+      provider.classList.toggle('on', wanted.size === 0 || wanted.has(provider.dataset.name));
+    });
+    refreshCount();
+  }
+
+  function markCustom() {
+    document.querySelectorAll('#presetGrid .preset').forEach((preset) => preset.classList.remove('on'));
+    const footer = document.querySelector('.preset-foot');
+    if (footer) footer.textContent = 'Preset: Custom';
+  }
+
+  const PRESETS = {
+    'Web Fast': {
+      qualities: ['1080p', '720p', '480p'], sorting: 'Highest non-4K', maxPerQuality: '3',
+      switches: { 'Web-ready only': true, 'Hide HEVC / HDR / 10-bit': true, 'Prefer H.264 / x264': true, 'Prefer direct hosts': true },
+      dedupe: 'Smart', maxSize: '5 GB', audio: 'Any language', providers: []
+    },
+    'Mobile Data': {
+      qualities: ['720p', '480p'], sorting: 'Balanced', maxPerQuality: '2', maxPerProvider: '2',
+      switches: { 'Hide HEVC / HDR / 10-bit': true, 'Prefer H.264 / x264': true, 'Prefer smaller files': true },
+      dedupe: 'Smart', maxSize: '3 GB', audio: 'Any language', providers: []
+    },
+    '4K HDR': {
+      qualities: ['2160p', '1080p'], sorting: 'Highest quality',
+      switches: { 'Prefer HDR': true, 'Prefer direct hosts': true },
+      dedupe: 'Smart', maxSize: 'No limit', audio: 'Any language', providers: []
+    },
+    Anime: {
+      qualities: ['1080p', '720p', '480p'], sorting: 'Balanced',
+      switches: { 'Prefer H.264 / x264': true }, dedupe: 'Smart', maxSize: '5 GB', audio: 'Japanese',
+      providers: ['anime-nexus', 'anime-sama', 'animekai', 'animepahe', 'allwish', 'kisskh']
+    },
+    'Indian Content': {
+      qualities: ['1080p', '720p', '480p'], sorting: 'Balanced',
+      switches: { 'Prefer direct hosts': true }, dedupe: 'Smart', maxSize: '10 GB', audio: 'Hindi',
+      providers: ['hindmoviez', 'tamilian', 'gramcinema', 'isaidub', 'hdmovie2', 'flixindia']
+    },
+    'Turkish Content': {
+      qualities: ['1080p', '720p', '480p'], sorting: 'Balanced',
+      switches: {}, dedupe: 'Smart', maxSize: '10 GB', audio: 'Turkish',
+      providers: ['vidmody-tr', 'turkish-m3u', 'rectv-tr', 'diziyou']
+    },
+    'Italian Content': {
+      qualities: ['1080p', '720p', '480p'], sorting: 'Balanced',
+      switches: {}, dedupe: 'Smart', maxSize: '10 GB', audio: 'Italian',
+      providers: ['it-streamingcommunity', 'it-guardahd', 'it-guardaserie', 'it-animeunity', 'it-animeworld']
+    },
+    'Latino Content': {
+      qualities: ['1080p', '720p', '480p'], sorting: 'Balanced',
+      switches: {}, dedupe: 'Smart', maxSize: '10 GB', audio: 'Latino',
+      providers: ['nuvio-latino', 'latino-lamovie', 'latino-embed69', 'latino-cinecalidad', 'latino-seriesmetro']
+    },
+    'French Content': {
+      qualities: ['1080p', '720p', '480p'], sorting: 'Balanced',
+      switches: {}, dedupe: 'Smart', maxSize: '10 GB', audio: 'Any language',
+      providers: ['nuvio-french', 'fr-anime-sama', 'fr-frenchstream', 'fr-movix', 'fr-voiranime']
+    },
+    'Arabic Content': {
+      qualities: ['1080p', '720p', '480p'], sorting: 'Balanced',
+      switches: {}, dedupe: 'Smart', maxSize: '10 GB', audio: 'Arabic',
+      providers: ['arabic-faselhd', 'arabic-cineby', 'arabic-witanime', 'arabic-animecloud']
+    }
+  };
+
+  function applyPreset(name) {
+    const preset = PRESETS[name];
+    if (!preset) return;
+    document.querySelectorAll('#presetGrid .preset').forEach((button) => {
+      button.classList.toggle('on', textOf('.pt', button) === name);
+    });
+    const footer = document.querySelector('.preset-foot');
+    if (footer) footer.textContent = 'Preset: ' + name;
+    setAllowedQualities(preset.qualities);
+    setActiveButton('Default sorting', preset.sorting);
+    setActiveButton('Max per quality', preset.maxPerQuality || 'Unlimited');
+    setActiveButton('Max per provider', preset.maxPerProvider || 'Unlimited');
+    setActiveButton('Deduplication mode', preset.dedupe || 'Off');
+    setActiveButton('Content selection', 'Default');
+    setInput('Maximum file size', preset.maxSize || 'No limit');
+    setInput('Preferred audio language', preset.audio || 'Any language');
+    [
+      'Web-ready only', 'Hide HEVC / HDR / 10-bit', 'Prefer HDR', 'Prefer H.264 / x264',
+      'Prefer smaller files', 'Prefer direct hosts'
+    ].forEach((label) => setSwitch(label, Boolean(preset.switches?.[label])));
+    setProviders(preset.providers.filter((id) => PROVIDERS.includes(id)));
+  }
+
+  function adapterSelections() {
+    const selections = {};
+    document.querySelectorAll('[data-adapter-id]').forEach((group) => {
+      const selected = [...group.querySelectorAll('.adapter-provider.on')].map((item) => item.dataset.providerId);
+      if (selected.length) selections[group.dataset.adapterId] = selected;
+    });
+    return selections;
+  }
+
+  function buildConfigPayload() {
+    const selectedProviders = [...grid.querySelectorAll('.provider.on')].map((item) => item.dataset.name);
+    const providers = selectedProviders.length === PROVIDERS.length ? [] : selectedProviders;
+    const qualityChips = [...document.querySelectorAll('#simple [data-multi] .chip')];
+    const selectedQualityChips = qualityChips.filter((item) => item.classList.contains('on'));
+    const allowedQualities = selectedQualityChips.length === qualityChips.length
+      ? []
+      : selectedQualityChips.map((item) => qualityKey(item.textContent));
+    const manualQualityPriority = [...document.querySelectorAll('#prioList .pq')].map((item) => qualityKey(item.textContent));
+    const sortingValue = activeButtonValue('Default sorting');
+    const qualityPriority = sortingValue === 'highest non-4k'
+      ? ['1080p', '720p', '480p', '360p', '2160p', '1440p', 'auto', 'unknown']
+      : sortingValue === 'balanced'
+        ? ['1080p', '720p', '2160p', '480p', '1440p', '360p', 'auto', 'unknown']
+        : manualQualityPriority;
+    const contentValue = activeButtonValue('Content selection');
+    const audio = inputByLabel('Preferred audio language');
+    const maxSize = Number.parseFloat(inputByLabel('Maximum file size')) || 0;
+    const blockedHosts = inputByLabel('Blocked hosts').split(',').map((value) => value.trim()).filter(Boolean);
+    const dedupeText = activeButtonValue('Deduplication mode');
+    const formatterStyle = activeButtonValue('Stream card formatter') || 'clean';
+    const torboxScope = document.querySelector('#torbox');
+    const iptvScope = document.querySelector('#iptv');
+    const xtream = iptvScope?.querySelectorAll('details')[0];
+    const stalker = iptvScope?.querySelectorAll('details')[1];
+    const presetCodes = {
+      'Web Fast': 'wf', 'Mobile Data': 'md', '4K HDR': '4k', Anime: 'an',
+      'Indian Content': 'in', 'Turkish Content': 'tr', 'Italian Content': 'it',
+      'Latino Content': 'la', 'French Content': 'fr', 'Arabic Content': 'ar'
+    };
+    const presetName = textOf('#presetGrid .preset.on .pt');
+
+    return {
+      providers,
+      qualityPriority,
+      profileCode: presetCodes[presetName] || null,
+      streamOptions: {
+        allowedQualities,
+        contentSelection: contentValue.startsWith('movies') ? 'movie' : contentValue.startsWith('series') ? 'series' : 'default',
+        maxPerQuality: numericChoice('Max per quality'),
+        maxPerProvider: numericChoice('Max per provider'),
+        webReadyOnly: switchEnabled('Web-ready only'),
+        hideHeavyFormats: switchEnabled('Hide HEVC / HDR / 10-bit'),
+        formatterStyle,
+        preferredAudioLanguage: audio === 'Any language' ? null : audio.toLowerCase(),
+        maxSizeGb: maxSize,
+        blockHosts: blockedHosts,
+        customProxyUrl: inputByLabel('Custom proxy URL') || null,
+        dedupeMode: dedupeText === 'smart' ? 'smart' : dedupeText.startsWith('by filename') ? 'filename' : dedupeText.startsWith('host') ? 'host-quality' : 'off',
+        preferHdr: switchEnabled('Prefer HDR'),
+        preferH264: switchEnabled('Prefer H.264 / x264'),
+        preferSmallerFiles: switchEnabled('Prefer smaller files'),
+        preferDirectHosts: switchEnabled('Prefer direct hosts'),
+        torboxOnlyStreams: switchEnabled('TorBox-only streams'),
+        torboxUsenet: switchEnabled('TorBox Usenet'),
+        pluginProviderSelections: adapterSelections()
+      },
+      privateProviderSettings: {
+        febboxUiCookie: inputByLabel('Febbox UI cookie (ShowBox)') || null,
+        torboxApiKey: inputByLabel('API key', torboxScope) || null,
+        xtreamServerUrl: inputByLabel('Server URL', xtream) || null,
+        xtreamUsername: inputByLabel('Username', xtream) || null,
+        xtreamPassword: inputByLabel('Password', xtream) || null,
+        stalkerPortalUrl: inputByLabel('Stalker portal URL', stalker) || null,
+        stalkerMacAddress: inputByLabel('Stalker MAC address', stalker) || null,
+        stalkerStbType: inputByLabel('STB type', stalker) || null,
+        stalkerSerialNumber: inputByLabel('Serial number', stalker) || null,
+        stalkerDeviceId: inputByLabel('Device ID', stalker) || null,
+        stalkerDeviceId2: inputByLabel('Device ID 2', stalker) || null,
+        stalkerCategoryOffset: Number.parseInt(inputByLabel('Category start', stalker), 10) || 0,
+        stalkerCategoryLimit: Number.parseInt(inputByLabel('Category catalogs', stalker), 10) || 40,
+        famelackLiveEnabled: switchEnabled('Famelack Public Live TV'),
+        nflixLiveEnabled: switchEnabled('Nflix Public Live TV')
+      },
+      supporterCode: inputByLabel('Supporter code') || ''
+    };
+  }
+
+  function renderManifestUrl(url, installUrl = '') {
+    manifestUrl = url;
+    stremioInstallUrl = installUrl || 'stremio://addon-install?addon=' + encodeURIComponent(url);
+    manifestBox.textContent = url;
+  }
+
+  async function refreshManifestUrl() {
+    const requestId = ++configRequest;
+    if (configAbortController) {
+      configAbortController.abort();
+    }
+    configAbortController = new AbortController();
+    manifestBox.textContent = 'Generating private install URL...';
+    try {
+      const response = await fetch('/configure/private-config', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify(buildConfigPayload()),
+        signal: configAbortController.signal
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Could not create config');
+      if (requestId !== configRequest) return;
+      renderManifestUrl(result.manifestUrl || window.location.origin + result.manifestPath, result.stremioInstallUrl);
+    } catch (error) {
+      if (error?.name === 'AbortError') return;
+      if (requestId !== configRequest) return;
+      manifestBox.textContent = error.message || 'Could not create install URL';
+    }
+  }
+
+  function scheduleManifestRefresh(delayMs = 350) {
+    window.clearTimeout(configTimer);
+    configTimer = window.setTimeout(refreshManifestUrl, delayMs);
+  }
+
+  function getManifestRefreshDelay(target) {
+    if (!target) return 350;
+    const input = target.closest?.('input');
+    if (!input) return 350;
+    const inputType = String(input.type || '').toLowerCase();
+    if (inputType === 'checkbox' || inputType === 'radio' || inputType === 'number') return 350;
+    return 1000;
+  }
+
+  document.addEventListener('click', (event) => {
+    const preset = event.target.closest('#presetGrid .preset');
+    if (preset) {
+      applyPreset(textOf('.pt', preset));
+    } else if (event.target.closest('.chip, [data-seg] button, [data-switch], .provider, #selAll, #clearAll, .adapter-provider')) {
+      markCustom();
+    }
+    if (event.target.closest('.chip, [data-seg] button, [data-switch], .provider, .preset, #selAll, #clearAll, .adapter-provider')) {
+      scheduleManifestRefresh();
+    }
+  });
+  document.addEventListener('input', (event) => {
+    if (event.target.matches('input, select')) scheduleManifestRefresh(getManifestRefreshDelay(event.target));
+  });
+  document.addEventListener('change', (event) => {
+    if (event.target.matches('input, select')) scheduleManifestRefresh();
+  });
+
+  document.getElementById('copyBtn').onclick = async () => {
+    await navigator.clipboard?.writeText(manifestUrl);
+    showToast('Manifest URL copied');
+  };
+  document.getElementById('installBtn').onclick = () => {
+    window.location.href = stremioInstallUrl;
+  };
+
+  async function loadAdapterProviders() {
+    const container = document.querySelector('#adapters .adapter-empty');
+    if (!container) return;
+    try {
+      const response = await fetch('/configure/adapter-providers', { headers: { accept: 'application/json' } });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Could not load adapter providers');
+      const groups = (result.groups || []).filter((group) => Array.isArray(group.providers) && group.providers.length);
+      if (!groups.length) {
+        container.textContent = 'No adapter provider selections are available.';
+        return;
+      }
+      container.className = '';
+      container.innerHTML = groups.map((group) =>
+        '<details class="collap field" data-adapter-id="' + String(group.adapterId || group.id).replace(/"/g, '&quot;') + '">' +
+          '<summary><div><div class="field-label">' + group.label + '</div><div class="field-hint" style="margin-bottom:0">Choose sources, or leave all unchecked to use every source.</div></div>' +
+          '<span class="caret">›</span></summary><div class="body"><div class="chips">' +
+          group.providers.map((provider) => '<span class="chip adapter-provider" data-provider-id="' + String(provider.id).replace(/"/g, '&quot;') + '">' + provider.label + '</span>').join('') +
+          '</div></div></details>'
+      ).join('');
+      container.querySelectorAll('.adapter-provider').forEach((item) => {
+        item.addEventListener('click', () => item.classList.toggle('on'));
+      });
+    } catch (error) {
+      container.textContent = error.message || 'Could not load adapter providers.';
+    }
+  }
+
+  const priorityList = document.getElementById('prioList');
+  function refreshPriorityRanks() {
+    priorityList?.querySelectorAll('.prio-item').forEach((item, index) => {
+      const rank = item.querySelector('.rank');
+      if (rank) rank.textContent = String(index + 1).padStart(2, '0');
+    });
+  }
+  priorityList?.querySelectorAll('.prio-item').forEach((item) => {
+    item.draggable = true;
+    item.addEventListener('dragstart', () => item.classList.add('dragging'));
+    item.addEventListener('dragend', () => {
+      item.classList.remove('dragging');
+      refreshPriorityRanks();
+      setActiveButton('Default sorting', 'Highest quality');
+      markCustom();
+      scheduleManifestRefresh();
+    });
+  });
+  priorityList?.addEventListener('dragover', (event) => {
+    event.preventDefault();
+    const dragging = priorityList.querySelector('.dragging');
+    if (!dragging) return;
+    const siblings = [...priorityList.querySelectorAll('.prio-item:not(.dragging)')];
+    const next = siblings.find((item) => event.clientY < item.getBoundingClientRect().top + item.offsetHeight / 2);
+    priorityList.insertBefore(dragging, next || null);
+  });
+
+  const resetPriorityButton = document.querySelector('#priority .ghost-btn');
+  resetPriorityButton?.addEventListener('click', () => {
+    const order = ['2160p', '1440p', '1080p', '720p', '480p', '360p', 'auto', 'unknown'];
+    order.forEach((quality) => {
+      const item = [...priorityList.querySelectorAll('.prio-item')].find((row) => qualityKey(textOf('.pq', row)) === quality);
+      if (item) priorityList.appendChild(item);
+    });
+    refreshPriorityRanks();
+    setActiveButton('Default sorting', 'Highest quality');
+    markCustom();
+    scheduleManifestRefresh();
+  });
+
+  const supportButtons = [...document.querySelectorAll('#support button')];
+  const supportUrl = ${JSON.stringify(config.DONATION_PRIMARY_URL || 'https://ko-fi.com/redx115775')};
+  function openSupportPage() {
+    window.open(supportUrl, '_blank', 'noopener,noreferrer');
+  }
+  document.querySelectorAll('#support .price').forEach((card) => {
+    card.tabIndex = 0;
+    card.setAttribute('role', 'link');
+    card.setAttribute('aria-label', textOf('.pn', card) + ' — open Ko-fi');
+    card.style.cursor = 'pointer';
+    card.addEventListener('click', openSupportPage);
+    card.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        openSupportPage();
+      }
+    });
+  });
+  supportButtons.find((button) => button.textContent.trim() === 'Support on Ko-fi')?.addEventListener('click', () => {
+    openSupportPage();
+  });
+  supportButtons.find((button) => button.textContent.trim() === 'More ways to support')?.addEventListener('click', () => {
+    window.location.href = '/dashboard';
+  });
+  supportButtons.find((button) => button.textContent.trim() === 'Open dashboard')?.addEventListener('click', () => {
+    window.location.href = '/dashboard';
+  });
+  supportButtons.find((button) => button.textContent.trim() === 'Save current config')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    const supporterCode = inputByLabel('Supporter code');
+    const name = inputByLabel('Cloud profile name') || 'Default';
+    if (!supporterCode) {
+      showToast('Enter a supporter code first');
+      return;
+    }
+    button.disabled = true;
+    try {
+      const response = await fetch('/configure/supporter-profile', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify({ supporterCode, name, configJson: buildConfigPayload() })
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Could not save profile');
+      showToast('Cloud profile saved');
+      if (result.shortUrl) renderManifestUrl(result.shortUrl + '/manifest.json');
+    } catch (error) {
+      showToast(error.message || 'Could not save profile');
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  applyPreset(textOf('#presetGrid .preset.on .pt'));
+  loadAdapterProviders();
+  refreshManifestUrl();`;
 
   html = html
+    .replaceAll(
+      '.brand-name { font-weight: 650;',
+      '.brand-logo { width: 30px; height: 30px; border-radius: 8px; object-fit: cover; flex-shrink: 0; }\n  .brand-name { font-weight: 650;'
+    )
+    .replaceAll(
+      '<div class="brand-mark"></div>',
+      '<img class="brand-logo" src="' + escapedBaseUrl + '/assets/WhatsApp%20Image%202026-04-25%20at%2012.16.53%20AM.jpeg" alt="NebulaStreams logo">'
+    )
     .replaceAll('https://nebula.work.gd/manifest.json', escapedBaseUrl + '/manifest.json')
     .replaceAll('nebula.work.gd/manifest.json', escapedBaseUrl.replace(/^https?:\/\//u, '') + '/manifest.json')
     .replaceAll('Live · 115 providers', 'Live · ' + providerCount + ' providers')
     .replaceAll('115 providers', providerCount + ' providers')
     .replaceAll('<div class="meta"><div class="v">115</div><div class="l">Providers</div></div>', '<div class="meta"><div class="v">' + providerCount + '</div><div class="l">Providers</div></div>')
     .replaceAll('60,107 active users · 115 providers · 2 supporters', activeUserCount + ' active users · ' + providerCount + ' providers · ' + supporterCount + ' supporters')
+    .replaceAll('<span class="tc-name">Shadow</span>', '<span class="tc-name">Shadow</span><span class="tc-name">S10skillz</span>')
+    .replaceAll('<button class="preset on"><div class="pt">Web Fast</div>', '<button class="preset"><div class="pt">Web Fast</div>')
+    .replaceAll('<span class="chip on">2160p (4K)</span><span class="chip on">1080p</span><span class="chip on">720p</span><span class="chip">480p</span>', '<span class="chip on">2160p (4K)</span><span class="chip on">1080p</span><span class="chip on">720p</span><span class="chip on">480p</span>')
+    .replaceAll('<button>Off</button><button class="on">Smart</button>', '<button class="on">Off</button><button>Smart</button>')
+    .replaceAll('<div class="tt">Prefer H.264 / x264</div><div class="td">For players that struggle with HEVC.</div></div><div class="switch on" data-switch></div>', '<div class="tt">Prefer H.264 / x264</div><div class="td">For players that struggle with HEVC.</div></div><div class="switch" data-switch></div>')
+    .replaceAll('<div class="tt">Prefer direct hosts</div><div class="td">Direct HTTP above streams that need extra headers.</div></div><div class="switch on" data-switch></div>', '<div class="tt">Prefer direct hosts</div><div class="td">Direct HTTP above streams that need extra headers.</div></div><div class="switch" data-switch></div>')
     .replaceAll('href="#" class="btn primary"', 'href="' + escapedBaseUrl + '/movies" class="btn primary"')
     .replaceAll('href="#" class="btn"', 'href="' + escapedBaseUrl + '/sports" class="btn"')
+    .replaceAll(
+      '              Nebula Sports\n            </a>',
+      '              Nebula Sports\n            </a>\n            <a href="' + escapedBaseUrl + '/watch-together" class="btn">\n              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 5v14l11-7z" fill="currentColor" stroke="none"/></svg>\n              Sports web\n            </a>'
+    )
     .replaceAll('<a href="#">Movie Site</a>', '<a href="' + escapedBaseUrl + '/movies">Movie Site</a>')
     .replaceAll('<a href="#">Sports</a>', '<a href="' + escapedBaseUrl + '/sports">Sports</a>');
+
+  html = html.replace(
+    "document.getElementById('copyBtn').onclick = () => { navigator.clipboard && navigator.clipboard.writeText('" + escapedBaseUrl + "/manifest.json'); showToast('Manifest URL copied'); };\n  document.getElementById('installBtn').onclick = () => showToast('Opening Stremio…');",
+    configureRuntimeScript
+  );
 
   html = html.replace("const PROVIDERS = [\"nuvio\",\"nuvio-latino\",\"nuvio-french\",\"nuvio-italian\",\"nuvio-2\",\"cloudstream-phisher\",\"r2-plugin\",\"r3-plugin\",\"r4-asian-drama-movies\",\"r5-plugin\",\"streamrip-plugin\",\"pstream\",\"torrentio\",\"comet\",\"mediafusion\",\"orion\"];", 'const PROVIDERS = ' + JSON.stringify(providerIds) + ';');
   return html;
@@ -1667,9 +2561,29 @@ const renderDashboardPage = ({ baseUrl, account = null, wall = [], activeSection
 const renderSportsPage = ({ baseUrl, account = null, errorMessage = '', successMessage = '', stats = {}, availableSports = [], trendingEvents = [] }) => {
   const sportsBase = String(baseUrl || '').replace(/\/+$/u, '') + '/sports';
   const installUrl = account?.installKey ? sportsBase + '/i/' + account.installKey + '/manifest.json' : '';
-  const kofiUrl = escapeHtml(config.DONATION_PRIMARY_URL || 'https://ko-fi.com/nebulastreams');
+  const canConfigureSports = ['monthly', 'lifetime', 'premium-future', 'trial', 'community-week'].includes(String(account?.tier || '').toLowerCase());
+  const kofiUrlRaw = config.DONATION_PRIMARY_URL || 'https://ko-fi.com/redx115775';
+  const kofiPageNameJson = JSON.stringify(getKofiPageName(kofiUrlRaw));
+  const kofiUrl = escapeHtml(kofiUrlRaw);
   const accountCount = escapeHtml(String(stats.accounts || 0));
   const activeCount = escapeHtml(String(stats.active || 0));
+  const promoActive = isSportsLaunchPromoActive();
+  const monthlyPriceLabel = promoActive ? '$1' : '$3';
+  const lifetimePriceLabel = promoActive ? '$3' : '$7';
+  const pricingHeadingLabel = promoActive ? 'Launch pricing ends June 29' : 'Sports supporter pricing';
+  const pricingIntroLabel = promoActive
+    ? 'Launch pricing is $1/month or $3 once until June 29, 2026. After that pricing becomes $3/month or $7 lifetime. Premium Future Support is $15 once. Your one-use setup code is emailed automatically after payment.'
+    : 'Pricing is $3/month, $7 lifetime, or $15 Premium Future Support. Pay through Ko-fi and include &ldquo;Nebula Sports&rdquo; in the note. Your one-use setup code is emailed automatically after payment.';
+  const monthlyDescriptionLabel = 'Full supporter access while your subscription runs: all playable sources, Live TV catalogs, private Stremio install, catalog filters, live-only mode, and timezone settings.';
+  const lifetimeDescriptionLabel = 'Permanent Nebula Sports access with all playable sources, Live TV catalogs, private Stremio install, catalog filters, live-only mode, and timezone settings.';
+  const premiumFutureCardHtml = '          <a class="btn btn-primary btn-block" href="#account">Get lifetime access</a>\n        </div>\n        <div class="plan">\n          <span class="badge">Future access</span>\n          <div class="pname">Premium Future Support</div>\n          <div class="price">$15<span> / once</span></div>\n          <p class="pdesc">Lifetime Nebula Sports plus premium access to future Nebula addons and projects.</p>\n          <a class="btn btn-ghost btn-block" href="#account">Get premium future support</a>\n        </div>\n      </div>';
+  const freeInstallUrl = `${sportsBase}/i/free/manifest.json`;
+  const freeStremioUrl = `stremio://${freeInstallUrl.replace(/^https?:\/\//u, '')}`;
+  const freeTierCardHtml = '<div class="plan">\n          <span class="badge">Free preview</span>\n          <div class="pname">Free</div>\n          <div class="price">$0<span> / preview</span></div>\n          <p class="pdesc">Free tier installs show one easiest available stream per event. Subscribe to unlock every playable source.</p>\n          <a class="btn btn-ghost btn-block" href="' + escapeHtml(freeStremioUrl) + '">Install free tier</a>\n          <button class="btn btn-ghost btn-block" type="button" data-copy="' + escapeHtml(freeInstallUrl) + '" style="margin-top:10px">Copy manifest URL</button>\n        </div>\n        ';
+  const sportsMoreStreamsNoteHtml = '<div style="margin-top:18px;max-width:760px;padding:16px 18px;border:1px solid var(--line-strong);border-radius:12px;background:var(--surface-2)"><strong style="display:block;color:var(--ink);font-size:15px;margin-bottom:4px">More streams coming in a few days</strong><span style="color:var(--ink-soft);font-size:14px">All active Nebula Sports supporters will get the new stream sources automatically. No plan change needed.</span></div>';
+  const sportsLiveTvNoteHtml = '<div style="max-width:760px;margin:-12px 0 24px;padding:16px 18px;border:1px solid var(--line-strong);border-radius:12px;background:var(--surface-2)"><strong style="display:block;color:var(--ink);font-size:15px;margin-bottom:4px">Live TV is available for supporters</strong><span style="color:var(--ink-soft);font-size:14px">Monthly and lifetime supporters get the Live TV catalog inside Stremio with their private Nebula Sports install.</span></div>';
+  const sportsDnsNoteHtml = '<p style="margin-top:18px;color:var(--ink-soft);font-size:14px;max-width:62ch">Change your DNS to <strong style="color:var(--ink)">1.1.1.1</strong> if the catalogs are not loading or streams are buffering.</p>';
+  const sportsClaimAlertHtml = '<div role="alert" style="max-width:760px;margin:-12px 0 24px;padding:16px 18px;border:2px solid var(--accent);border-radius:9px;background:var(--accent-soft);color:#bbf7d0"><strong style="display:block;font-size:16px;color:#d1fae5;margin-bottom:4px">Email setup codes are back</strong><span style="font-size:14px">After Ko-fi payment, check your inbox for your one-use Nebula Sports setup code. If it is not there, check spam or junk.</span></div>';
   const flashHtml = [
     errorMessage ? '<div class="wrap" style="padding-top:18px"><div class="card" style="border-color:rgba(251,113,133,.4);color:#fecdd3">' + escapeHtml(errorMessage) + '</div></div>' : '',
     successMessage ? '<div class="wrap" style="padding-top:18px"><div class="card" style="border-color:rgba(31,170,110,.42);color:#bbf7d0">' + escapeHtml(successMessage) + '</div></div>' : ''
@@ -1677,13 +2591,33 @@ const renderSportsPage = ({ baseUrl, account = null, errorMessage = '', successM
   let html = "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"UTF-8\" />\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n<title>Nebula Sports — Live sports for Stremio</title>\n<style>\n  :root {\n    --ink: #e7ebf0;\n    --ink-soft: #aeb7c2;\n    --muted: #7c8794;\n    --line: #232a33;\n    --line-strong: #333c47;\n    --surface: #0e1116;\n    --surface-2: #161b22;\n    --surface-3: #1d232c;\n    --accent: #1faa6e;\n    --accent-hover: #28b878;\n    --accent-soft: rgba(31,170,110,.15);\n    --radius: 12px;\n    --radius-sm: 9px;\n    --shadow: 0 1px 2px rgba(15,20,25,.04), 0 8px 24px rgba(15,20,25,.05);\n    --font: \"Inter\", -apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, Helvetica, Arial, sans-serif;\n    --mono: ui-monospace, SFMono-Regular, \"SF Mono\", Menlo, Consolas, monospace;\n  }\n\n  * { box-sizing: border-box; }\n  html { scroll-behavior: smooth; }\n  body {\n    margin: 0;\n    font-family: var(--font);\n    color: var(--ink);\n    background: var(--surface);\n    line-height: 1.55;\n    -webkit-font-smoothing: antialiased;\n    text-rendering: optimizeLegibility;\n  }\n  h1, h2, h3 { letter-spacing: -0.02em; line-height: 1.15; margin: 0; }\n  p { margin: 0; }\n  a { color: inherit; text-decoration: none; }\n\n  .wrap { width: 100%; max-width: 1080px; margin: 0 auto; padding: 0 24px; }\n\n  /* ---------- Header ---------- */\n  header.site {\n    position: sticky; top: 0; z-index: 50;\n    background: rgba(14,17,22,.82);\n    backdrop-filter: saturate(180%) blur(12px);\n    border-bottom: 1px solid var(--line);\n  }\n  .nav { display: flex; align-items: center; justify-content: space-between; height: 64px; }\n  .brand { display: flex; align-items: center; gap: 10px; font-weight: 650; font-size: 16px; }\n  .brand .mark {\n    width: 28px; height: 28px; border-radius: 8px;\n    background: var(--accent); color: #fff;\n    display: grid; place-items: center; font-weight: 700; font-size: 15px;\n  }\n  .brand .tag {\n    font-size: 11px; font-weight: 600; color: var(--muted);\n    border: 1px solid var(--line-strong); border-radius: 999px;\n    padding: 2px 9px; margin-left: 4px; letter-spacing: .01em;\n  }\n  .nav-links { display: flex; align-items: center; gap: 28px; }\n  .nav-links a { font-size: 14px; color: var(--ink-soft); font-weight: 500; }\n  .nav-links a:hover { color: var(--ink); }\n\n  .btn {\n    display: inline-flex; align-items: center; justify-content: center; gap: 8px;\n    font-family: inherit; font-size: 14px; font-weight: 600; cursor: pointer;\n    border-radius: var(--radius-sm); padding: 10px 18px; border: 1px solid transparent;\n    transition: background .15s ease, border-color .15s ease, color .15s ease, transform .05s ease;\n  }\n  .btn:active { transform: translateY(1px); }\n  .btn-primary { background: var(--accent); color: #fff; }\n  .btn-primary:hover { background: var(--accent-hover); }\n  .btn-ghost { background: transparent; color: var(--ink); border-color: var(--line-strong); }\n  .btn-ghost:hover { background: var(--surface-2); }\n  .btn-block { width: 100%; padding: 12px 18px; }\n\n  /* ---------- Hero ---------- */\n  .hero { padding: 92px 0 64px; border-bottom: 1px solid var(--line); }\n  .hero .eyebrow {\n    display: inline-flex; align-items: center; gap: 8px;\n    font-size: 13px; font-weight: 600; color: var(--accent);\n    background: var(--accent-soft); border-radius: 999px; padding: 5px 13px;\n    margin-bottom: 22px;\n  }\n  .hero .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }\n  .hero h1 { font-size: 52px; max-width: 14ch; }\n  .hero p.lead { font-size: 18px; color: var(--ink-soft); max-width: 60ch; margin-top: 20px; }\n  .hero .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 32px; }\n\n  /* ---------- Stats ---------- */\n  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 56px; }\n  .stat {\n    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);\n    padding: 22px 24px;\n  }\n  .stat .num { font-size: 34px; font-weight: 700; letter-spacing: -0.03em; }\n  .stat .lbl { font-size: 13px; color: var(--muted); margin-top: 4px; font-weight: 500; }\n\n  /* ---------- Sections ---------- */\n  section.block { padding: 72px 0; border-bottom: 1px solid var(--line); }\n  .section-head { margin-bottom: 36px; }\n  .section-head .kicker { font-size: 13px; font-weight: 650; color: var(--accent); text-transform: uppercase; letter-spacing: .06em; }\n  .section-head h2 { font-size: 30px; margin-top: 10px; }\n  .section-head p { color: var(--ink-soft); font-size: 16px; margin-top: 10px; max-width: 60ch; }\n\n  /* sports chips */\n  .chips { display: flex; flex-wrap: wrap; gap: 10px; }\n  .chip {\n    font-size: 14px; font-weight: 550; color: var(--ink-soft);\n    background: var(--surface-2); border: 1px solid var(--line);\n    border-radius: 999px; padding: 9px 16px;\n  }\n  .chip:hover { border-color: var(--line-strong); color: var(--ink); }\n\n  /* events */\n  .events { display: grid; gap: 0; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }\n  .event { display: flex; align-items: center; gap: 18px; padding: 18px 22px; border-bottom: 1px solid var(--line); background: var(--surface); }\n  .event:last-child { border-bottom: 0; }\n  .event:hover { background: var(--surface-2); }\n  .event .name { font-weight: 600; font-size: 15px; flex: 1; }\n  .event .meta { font-size: 13px; color: var(--muted); white-space: nowrap; }\n  .event .cat {\n    font-size: 11px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase;\n    color: var(--ink-soft); background: var(--surface-3);\n    border-radius: 6px; padding: 4px 9px; white-space: nowrap;\n  }\n\n  /* pricing */\n  .pricing { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; max-width: 760px; }\n  .plan { border: 1px solid var(--line); border-radius: var(--radius); padding: 30px; background: var(--surface); position: relative; }\n  .plan.featured { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 8px 30px rgba(0,0,0,.35); }\n  .plan .badge {\n    position: absolute; top: 22px; right: 22px;\n    font-size: 11px; font-weight: 650; color: var(--accent);\n    background: var(--accent-soft); border-radius: 999px; padding: 4px 11px;\n  }\n  .plan .pname { font-size: 15px; font-weight: 650; color: var(--ink-soft); }\n  .plan .price { font-size: 42px; font-weight: 700; letter-spacing: -0.03em; margin-top: 10px; }\n  .plan .price span { font-size: 16px; font-weight: 500; color: var(--muted); }\n  .plan .pdesc { font-size: 14px; color: var(--ink-soft); margin-top: 14px; min-height: 42px; }\n  .plan .btn { margin-top: 22px; }\n\n  /* steps */\n  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }\n  .step { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 26px; }\n  .step .n { width: 30px; height: 30px; border-radius: 8px; background: var(--accent); color: #fff; display: grid; place-items: center; font-weight: 700; font-size: 14px; }\n  .step h3 { font-size: 16px; margin-top: 16px; }\n  .step p { font-size: 14px; color: var(--ink-soft); margin-top: 8px; }\n\n  /* ---------- Auth / forms ---------- */\n  .auth { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }\n  .card { border: 1px solid var(--line); border-radius: var(--radius); padding: 30px; background: var(--surface); }\n  .card h3 { font-size: 19px; }\n  .card .hint { font-size: 13.5px; color: var(--muted); margin-top: 8px; }\n  .field { margin-top: 16px; }\n  .field label { display: block; font-size: 13px; font-weight: 600; color: var(--ink-soft); margin-bottom: 6px; }\n  .field input {\n    width: 100%; font-family: inherit; font-size: 14.5px; color: var(--ink);\n    background: var(--surface); border: 1px solid var(--line-strong);\n    border-radius: var(--radius-sm); padding: 11px 13px; transition: border-color .15s ease, box-shadow .15s ease;\n  }\n  .field input::placeholder { color: #5f6a76; }\n  .field input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }\n  .field input.mono { font-family: var(--mono); letter-spacing: .02em; }\n\n  .trial {\n    border: 1px solid var(--line); border-radius: var(--radius); padding: 30px 32px;\n    background: var(--surface-2); display: flex; align-items: center; justify-content: space-between; gap: 28px; flex-wrap: wrap;\n  }\n  .trial .copy h3 { font-size: 20px; }\n  .trial .copy p { font-size: 14px; color: var(--ink-soft); margin-top: 8px; max-width: 46ch; }\n  .trial form { display: flex; gap: 10px; flex: 1; min-width: 280px; }\n  .trial form input { flex: 1; }\n\n  /* ---------- Footer ---------- */\n  footer.site { padding: 44px 0; }\n  .foot { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }\n  .foot .muted { font-size: 13px; color: var(--muted); }\n  .foot .links { display: flex; gap: 22px; }\n  .foot .links a { font-size: 13px; color: var(--ink-soft); }\n  .foot .links a:hover { color: var(--ink); }\n\n  @media (max-width: 820px) {\n    .nav-links { display: none; }\n    .hero { padding: 64px 0 48px; }\n    .hero h1 { font-size: 38px; }\n    .stats, .pricing, .steps, .auth { grid-template-columns: 1fr; }\n    .stats { margin-top: 40px; }\n  }\n</style>\n</head>\n<body>\n\n<header class=\"site\">\n  <div class=\"wrap nav\">\n    <div class=\"brand\">\n      <span class=\"mark\">N</span>\n      Nebula Sports\n      <span class=\"tag\">NebulaStreams addon</span>\n    </div>\n    <nav class=\"nav-links\">\n      <a href=\"#sports\">Sports</a>\n      <a href=\"#events\">Events</a>\n      <a href=\"#pricing\">Pricing</a>\n      <a href=\"#account\">Account</a>\n    </nav>\n    <a class=\"btn btn-primary\" href=\"#account\">Sign in</a>\n  </div>\n</header>\n\n<main>\n  <!-- HERO -->\n  <section class=\"hero\">\n    <div class=\"wrap\">\n      <span class=\"eyebrow\"><span class=\"dot\"></span> Private sports addon</span>\n      <h1>Live sports events for Stremio.</h1>\n      <p class=\"lead\">A private sports addon with clean catalogs, a small manifest, and username/password access. Built separately from the main NebulaStreams addon so sports catalogs stay fast on TV clients.</p>\n      <div class=\"actions\">\n        <a class=\"btn btn-primary\" href=\"#trial\">Start 24-hour free trial</a>\n        <a class=\"btn btn-ghost\" href=\"#pricing\">View pricing</a>\n      </div>\n\n      <div class=\"stats\">\n        <div class=\"stat\"><div class=\"num\">10</div><div class=\"lbl\">Sports accounts</div></div>\n        <div class=\"stat\"><div class=\"num\">6</div><div class=\"lbl\">Active now</div></div>\n        <div class=\"stat\"><div class=\"num\">18</div><div class=\"lbl\">Catalogs</div></div>\n      </div>\n    </div>\n  </section>\n\n  <!-- SPORTS -->\n  <section class=\"block\" id=\"sports\">\n    <div class=\"wrap\">\n      <div class=\"section-head\">\n        <div class=\"kicker\">Coverage</div>\n        <h2>Sports included</h2>\n        <p>Live, today, and popular catalogs, plus dedicated catalogs for every sport below.</p>\n      </div>\n      <div class=\"chips\">\n        <span class=\"chip\">FIFA World Cup</span>\n        <span class=\"chip\">Basketball</span>\n        <span class=\"chip\">Football</span>\n        <span class=\"chip\">American Football</span>\n        <span class=\"chip\">Hockey</span>\n        <span class=\"chip\">Baseball</span>\n        <span class=\"chip\">Motor Sports</span>\n        <span class=\"chip\">Fight (UFC, Boxing)</span>\n        <span class=\"chip\">Tennis</span>\n        <span class=\"chip\">Rugby</span>\n        <span class=\"chip\">Golf</span>\n        <span class=\"chip\">Billiards</span>\n        <span class=\"chip\">AFL</span>\n        <span class=\"chip\">Darts</span>\n      </div>\n    </div>\n  </section>\n\n  <!-- EVENTS -->\n  <section class=\"block\" id=\"events\">\n    <div class=\"wrap\">\n      <div class=\"section-head\">\n        <div class=\"kicker\">Live feed</div>\n        <h2>Trending events</h2>\n        <p>Preview updates pulled from current Streamed event data.</p>\n      </div>\n      <div class=\"events\">\n        <div class=\"event\"><span class=\"name\">FIFA World Cup 2026</span><span class=\"meta\">2026 tournament coverage</span><span class=\"cat\">Football</span></div>\n        <div class=\"event\"><span class=\"name\">Spring Nationals — North Georgia</span><span class=\"meta\">Jun 19, 2026 · 00:00 UTC</span><span class=\"cat\">Other</span></div>\n        <div class=\"event\"><span class=\"name\">betr Darwin Triple Crown — Race 17</span><span class=\"meta\">Jun 19, 2026 · 00:00 UTC</span><span class=\"cat\">Motor Sports</span></div>\n        <div class=\"event\"><span class=\"name\">Summer Nationals Late Models — Dubuque</span><span class=\"meta\">Jun 19, 2026 · 00:10 UTC</span><span class=\"cat\">Other</span></div>\n        <div class=\"event\"><span class=\"name\">NARC Super Dirt Cup — Skagit</span><span class=\"meta\">Jun 19, 2026 · 01:00 UTC</span><span class=\"cat\">Other</span></div>\n        <div class=\"event\"><span class=\"name\">MotoGP Czech Republic Grand Prix</span><span class=\"meta\">Jun 19, 2026 · 07:00 UTC</span><span class=\"cat\">Motor Sports</span></div>\n      </div>\n    </div>\n  </section>\n\n  <!-- PRICING -->\n  <section class=\"block\" id=\"pricing\">\n    <div class=\"wrap\">\n      <div class=\"section-head\">\n        <div class=\"kicker\">Pricing</div>\n        <h2>Simple, one-off pricing</h2>\n        <p>Pay through Ko-fi and include &ldquo;Nebula Sports&rdquo; in the note. Your access token is emailed automatically.</p>\n      </div>\n      <div class=\"pricing\">\n        <div class=\"plan\">\n          <div class=\"pname\">Monthly</div>\n          <div class=\"price\">$1<span> / month</span></div>\n          <p class=\"pdesc\">Access stays active while the subscription is running. Include &ldquo;Nebula Sports&rdquo; in your Ko-fi note.</p>\n          <a class=\"btn btn-ghost btn-block\" href=\"#account\">Choose monthly</a>\n        </div>\n        <div class=\"plan featured\">\n          <span class=\"badge\">Best value</span>\n          <div class=\"pname\">Lifetime</div>\n          <div class=\"price\">$3<span> / once</span></div>\n          <p class=\"pdesc\">One payment, permanent access. The webhook treats a $3 sports payment as lifetime access.</p>\n          <a class=\"btn btn-primary btn-block\" href=\"#account\">Get lifetime access</a>\n        </div>\n      </div>\n    </div>\n  </section>\n\n  <!-- HOW IT WORKS -->\n  <section class=\"block\" id=\"how\">\n    <div class=\"wrap\">\n      <div class=\"section-head\">\n        <div class=\"kicker\">Getting started</div>\n        <h2>How it works</h2>\n      </div>\n      <div class=\"steps\">\n        <div class=\"step\">\n          <div class=\"n\">1</div>\n          <h3>Pay on Ko-fi</h3>\n          <p>After payment, the Ko-fi webhook emails you a one-use secret token.</p>\n        </div>\n        <div class=\"step\">\n          <div class=\"n\">2</div>\n          <h3>Create your account</h3>\n          <p>Set a username and password here, then paste the token to verify.</p>\n        </div>\n        <div class=\"step\">\n          <div class=\"n\">3</div>\n          <h3>Install your manifest</h3>\n          <p>Add your private manifest to Stremio and start streaming live sports.</p>\n        </div>\n      </div>\n    </div>\n  </section>\n\n  <!-- TRIAL -->\n  <section class=\"block\" id=\"trial\">\n    <div class=\"wrap\">\n      <div class=\"trial\">\n        <div class=\"copy\">\n          <h3>Try free for 24 hours</h3>\n          <p>Enter your email. If eligible, a one-use trial token arrives by email. One trial per user.</p>\n        </div>\n        <form method=\"post\" action=\"/sports/trial\">\n          <input type=\"email\" name=\"email\" placeholder=\"you@email.com\" required />\n          <button class=\"btn btn-primary\" type=\"submit\">Get free trial</button>\n        </form>\n      </div>\n    </div>\n  </section>\n\n  <!-- ACCOUNT -->\n  <section class=\"block\" id=\"account\">\n    <div class=\"wrap\">\n      <div class=\"section-head\">\n        <div class=\"kicker\">Access</div>\n        <h2>Sign in or create your account</h2>\n      </div>\n      <div class=\"auth\">\n        <div class=\"card\">\n          <h3>Sign in</h3>\n          <p class=\"hint\">Use the username and password you created.</p>\n          <form method=\"post\" action=\"/sports/login\">\n            <div class=\"field\">\n              <label for=\"si-user\">Username</label>\n              <input id=\"si-user\" type=\"text\" name=\"username\" placeholder=\"username\" autocomplete=\"username\" required />\n            </div>\n            <div class=\"field\">\n              <label for=\"si-pass\">Password</label>\n              <input id=\"si-pass\" type=\"password\" name=\"password\" placeholder=\"••••••••\" autocomplete=\"current-password\" required />\n            </div>\n            <button class=\"btn btn-ghost btn-block\" style=\"margin-top:18px\" type=\"submit\">Sign in</button>\n          </form>\n        </div>\n\n        <div class=\"card\">\n          <h3>Create account</h3>\n          <p class=\"hint\">Use the one-use token from your Nebula Sports email.</p>\n          <form method=\"post\" action=\"/sports/register\">\n            <div class=\"field\">\n              <label for=\"ca-user\">Username</label>\n              <input id=\"ca-user\" type=\"text\" name=\"username\" placeholder=\"choose a username\" autocomplete=\"username\" required />\n            </div>\n            <div class=\"field\">\n              <label for=\"ca-pass\">Password</label>\n              <input id=\"ca-pass\" type=\"password\" name=\"password\" placeholder=\"choose a password\" autocomplete=\"new-password\" required />\n            </div>\n            <div class=\"field\">\n              <label for=\"ca-token\">Secret token</label>\n              <input id=\"ca-token\" class=\"mono\" type=\"text\" name=\"token\" placeholder=\"paste your one-use token\" required />\n            </div>\n            <button class=\"btn btn-primary btn-block\" style=\"margin-top:18px\" type=\"submit\">Create account</button>\n          </form>\n        </div>\n      </div>\n    </div>\n  </section>\n</main>\n\n<footer class=\"site\">\n  <div class=\"wrap foot\">\n    <span class=\"muted\">© 2026 Nebula Sports · A NebulaStreams addon</span>\n    <div class=\"links\">\n      <a href=\"#pricing\">Pricing</a>\n      <a href=\"#how\">How it works</a>\n      <a href=\"#account\">Sign in</a>\n    </div>\n  </div>\n</footer>\n\n</body>\n</html>\n";
 
   html = html
+    .replace('.pricing { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; max-width: 760px; }', '.pricing { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; max-width: 1080px; }')
     .replace('<div class="stat"><div class="num">10</div><div class="lbl">Sports accounts</div></div>', '<div class="stat"><div class="num">' + accountCount + '</div><div class="lbl">Sports accounts</div></div>')
     .replace('<div class="stat"><div class="num">6</div><div class="lbl">Active now</div></div>', '<div class="stat"><div class="num">' + activeCount + '</div><div class="lbl">Active now</div></div>')
     .replace('action="/sports/trial"', 'action="/sports/trial/request"')
     .replace('action="/sports/register"', 'action="/sports/signup"')
     .replace('name="token" placeholder="paste your one-use token"', 'name="tokenCode" placeholder="paste your one-use token"')
+    .replace('Simple, one-off pricing', pricingHeadingLabel)
+    .replace('Pay through Ko-fi and include &ldquo;Nebula Sports&rdquo; in the note. Your access token is emailed automatically.', pricingIntroLabel)
+    .replace('$1<span> / month</span>', monthlyPriceLabel + '<span> / month</span>')
+    .replace('$3<span> / once</span>', lifetimePriceLabel + '<span> / once</span>')
+    .replace('<div class="pricing">', sportsClaimAlertHtml + '\n      ' + sportsLiveTvNoteHtml + '\n      <div class="pricing">\n        ' + freeTierCardHtml)
+    .replace('Access stays active while the subscription is running. Include &ldquo;Nebula Sports&rdquo; in your Ko-fi note.', monthlyDescriptionLabel)
+    .replace('One payment, permanent access. The webhook treats a $3 sports payment as lifetime access.', lifetimeDescriptionLabel)
+    .replace('          <a class="btn btn-primary btn-block" href="#account">Get lifetime access</a>\n        </div>\n      </div>', premiumFutureCardHtml)
+    .replace('<span class="chip">Darts</span>\n      </div>', '<span class="chip">Darts</span>\n      </div>\n      ' + sportsMoreStreamsNoteHtml + '\n      ' + sportsDnsNoteHtml)
     .replaceAll('href="#account">Choose monthly</a>', 'href="' + kofiUrl + '" target="_blank" rel="noopener">Choose monthly</a>')
     .replaceAll('href="#account">Get lifetime access</a>', 'href="' + kofiUrl + '" target="_blank" rel="noopener">Get lifetime access</a>')
+    .replaceAll('href="#account">Get premium future support</a>', 'href="' + kofiUrl + '" target="_blank" rel="noopener">Get premium future support</a>')
+    .replace('Enter your email. If eligible, a one-use trial token arrives by email. One trial per user.', 'Enter your email. If eligible, a trial setup email arrives. One trial per user.')
+    .replace(
+      '<a class="btn btn-ghost" href="#pricing">View pricing</a>',
+      '<a class="btn btn-ghost" href="#pricing">View pricing</a><a class="btn btn-ghost" href="https://discord.gg/YMjzX8AER" target="_blank" rel="noopener noreferrer">Join Discord</a>'
+    )
+    .replace(
+      '<a href="#account">Sign in</a>\n    </div>\n  </div>\n</footer>',
+      '<a href="#account">Sign in</a>\n      <a href="https://discord.gg/YMjzX8AER" target="_blank" rel="noopener noreferrer">Discord</a>\n    </div>\n  </div>\n</footer>'
+    )
     .replace('<main>', '<main>' + flashHtml);
 
   if (account) {
@@ -1706,6 +2640,7 @@ const renderSportsPage = ({ baseUrl, account = null, errorMessage = '', successM
           '</div>' +
           '<div class="actions" style="margin-top:18px">' +
             '<a class="btn btn-primary" href="' + escapeHtml(installUrl) + '">Install manifest</a>' +
+            (canConfigureSports ? '<a class="btn btn-ghost" href="/sports/configure">Configure catalogs</a>' : '') +
             '<button class="btn btn-ghost" type="button" data-copy="' + escapeHtml(installUrl) + '">Copy URL</button>' +
             '<form method="post" action="/sports/logout" style="display:inline"><button class="btn btn-ghost" type="submit">Sign out</button></form>' +
           '</div>' +
@@ -1715,8 +2650,58 @@ const renderSportsPage = ({ baseUrl, account = null, errorMessage = '', successM
     html = html.replace(/<section class="block" id="account">[\s\S]*?<\/section>\n<\/main>/u, accountSection + '\n</main>');
   }
 
-  html = html.replace('</body>', '<script>document.querySelectorAll("[data-copy]").forEach((btn)=>btn.addEventListener("click",async()=>{const value=btn.getAttribute("data-copy")||"";if(!value)return;await navigator.clipboard.writeText(value);btn.textContent="Copied";setTimeout(()=>btn.textContent="Copy URL",1400)}));</script>\n</body>');
+  html = html.replace('</body>', '<a id="sportsKofiFallback" href="' + kofiUrl + '" target="_blank" rel="noopener noreferrer" style="position:fixed;right:18px;bottom:18px;z-index:80;border:1px solid var(--line-strong);border-radius:999px;background:var(--accent);color:#fff;padding:11px 16px;font-weight:750;box-shadow:0 12px 30px rgba(0,0,0,.35)">Support on Ko-fi</a><script>document.querySelectorAll("[data-copy]").forEach((btn)=>btn.addEventListener("click",async()=>{const value=btn.getAttribute("data-copy")||"";if(!value)return;const label=btn.dataset.copyLabel||btn.textContent||"Copy URL";btn.dataset.copyLabel=label;await navigator.clipboard.writeText(value);btn.textContent="Copied";setTimeout(()=>btn.textContent=label,1400)}));(()=>{if(window.__nebulaSportsKofiWidgetLoaded)return;window.__nebulaSportsKofiWidgetLoaded=true;const draw=()=>{if(!window.kofiWidgetOverlay?.draw)return;window.kofiWidgetOverlay.draw(' + kofiPageNameJson + ',{type:"floating-chat","floating-chat.donateButton.text":"Support","floating-chat.donateButton.background-color":"#1faa6e","floating-chat.donateButton.text-color":"#ffffff"});document.getElementById("sportsKofiFallback")?.remove()};const existing=document.querySelector("script[data-nebula-sports-kofi-widget]");if(existing){existing.addEventListener("load",draw,{once:true});draw();return}const script=document.createElement("script");script.src="https://storage.ko-fi.com/cdn/scripts/overlay-widget.js";script.async=true;script.defer=true;script.dataset.nebulaSportsKofiWidget="true";script.addEventListener("load",draw,{once:true});document.body.appendChild(script)})();</script>\n</body>');
   return html;
+};
+
+const renderSportsConfigurePage = ({ baseUrl, account, catalogs = [], errorMessage = '', successMessage = '' }) => {
+  const sportsBase = String(baseUrl || '').replace(/\/+$/u, '') + '/sports';
+  const manifestUrl = `${sportsBase}/i/${encodeURIComponent(account.installKey)}/manifest.json`;
+  const stremioUrl = `stremio://${manifestUrl.replace(/^https?:\/\//u, '')}`;
+  const current = account.sportsConfig || {};
+  const selected = new Set(Array.isArray(current.sports) ? current.sports : []);
+  const timezone = String(current.timezone || 'UTC');
+  const timezoneOptions = [
+    ['UTC', 'UTC'],
+    ['Asia/Kolkata', 'India (IST)'],
+    ['Europe/London', 'United Kingdom'],
+    ['Europe/Amsterdam', 'Central Europe'],
+    ['America/New_York', 'US Eastern'],
+    ['America/Chicago', 'US Central'],
+    ['America/Denver', 'US Mountain'],
+    ['America/Los_Angeles', 'US Pacific'],
+    ['Asia/Dubai', 'Gulf'],
+    ['Asia/Singapore', 'Singapore'],
+    ['Australia/Sydney', 'Sydney']
+  ];
+  const sportOptions = catalogs
+    .filter((catalog) => !['streamed-events-live', 'streamed-events-today', 'streamed-events-popular'].includes(catalog.id))
+    .map((catalog) => {
+      const label = String(catalog.name || '').replace(/^Sports Events:\s*/u, '').trim();
+      return `<label class="sport"><input type="checkbox" name="sports" value="${escapeHtml(catalog.id)}"${selected.has(catalog.id) ? ' checked' : ''}><span>${escapeHtml(label)}</span></label>`;
+    }).join('');
+  const flash = errorMessage
+    ? `<div class="flash error">${escapeHtml(errorMessage)}</div>`
+    : (successMessage ? `<div class="flash">${escapeHtml(successMessage)}</div>` : '');
+
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Nebula Sports Configure</title>
+<style>
+:root{color-scheme:dark;--bg:#0c0f13;--panel:#151a21;--panel2:#1b222b;--line:#303945;--text:#f2f5f8;--muted:#9aa6b3;--green:#27b877}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 Inter,system-ui,sans-serif}a{color:inherit;text-decoration:none}.top{height:64px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 24px;position:sticky;top:0;background:rgba(12,15,19,.94);z-index:2}.brand{font-weight:750}.top a{color:var(--muted)}main{width:min(920px,calc(100% - 32px));margin:42px auto 72px}.hero{margin-bottom:28px}.hero span{color:var(--green);font-size:12px;font-weight:700;text-transform:uppercase}.hero h1{font-size:36px;line-height:1.1;margin:8px 0 10px}.hero p,.hint{color:var(--muted)}.grid{display:grid;grid-template-columns:minmax(0,1fr) 290px;gap:18px;align-items:start}.card{border:1px solid var(--line);background:var(--panel);border-radius:8px;padding:22px;margin-bottom:16px}.card h2{font-size:18px;margin:0 0 4px}.field{padding-top:18px;margin-top:18px;border-top:1px solid var(--line)}.toggle{display:flex;justify-content:space-between;gap:20px;align-items:center}.toggle input{width:22px;height:22px;accent-color:var(--green)}select{width:100%;margin-top:10px;background:var(--panel2);border:1px solid var(--line);color:var(--text);padding:11px;border-radius:7px}.sports{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin-top:14px}.sport{display:flex;align-items:center;gap:9px;border:1px solid var(--line);background:var(--panel2);border-radius:7px;padding:10px 12px}.sport input{accent-color:var(--green)}button,.button{display:inline-flex;align-items:center;justify-content:center;border:0;border-radius:7px;padding:11px 15px;font-weight:700;cursor:pointer}.primary{background:var(--green);color:#07130e}.secondary{background:var(--panel2);border:1px solid var(--line);color:var(--text)}.actions{display:flex;gap:10px;flex-wrap:wrap}.url{font:12px/1.45 ui-monospace,monospace;word-break:break-all;background:#090b0e;border:1px solid var(--line);padding:11px;border-radius:7px;margin:12px 0}.flash{border:1px solid rgba(39,184,119,.5);padding:11px 13px;border-radius:7px;margin-bottom:16px;color:#baf4d7}.flash.error{border-color:#7f3943;color:#fecdd3}.perks{padding-left:18px;color:var(--muted)}.perks li{margin:7px 0}@media(max-width:760px){.grid{grid-template-columns:1fr}.sports{grid-template-columns:1fr}.hero h1{font-size:30px}}
+</style></head><body>
+<header class="top"><div class="brand">Nebula Sports</div><a href="/sports">Back to account</a></header>
+<main>${flash}<div class="hero"><span>Supporter controls</span><h1>Configure your sports catalogs</h1><p>Settings save to your account. Reinstall or refresh addon after changes.</p></div>
+<div class="grid"><form method="post" action="/sports/configure">
+<section class="card"><h2>Catalog preferences</h2><p class="hint">Control what appears in Stremio.</p>
+<div class="field toggle"><div><strong>Live matches only</strong><div class="hint">Hide Today and Popular catalog choices.</div></div><input type="checkbox" name="liveOnly" value="1"${current.liveOnly ? ' checked' : ''}></div>
+<div class="field"><strong>Sports</strong><div class="hint">Select sports to keep. No selection means all sports.</div><div class="sports">${sportOptions}</div></div>
+<div class="field"><strong>Poster timezone</strong><div class="hint">Event times are converted from UTC where possible.</div><select name="timezone">${timezoneOptions.map(([value, label]) => `<option value="${escapeHtml(value)}"${timezone === value ? ' selected' : ''}>${escapeHtml(label)}</option>`).join('')}</select></div>
+</section><button class="primary" type="submit">Save configuration</button></form>
+<aside><section class="card"><h2>Private install</h2><p class="hint">Keep this URL private.</p><div class="url" id="manifest-url">${escapeHtml(manifestUrl)}</div><div class="actions"><a class="button primary" href="${escapeHtml(stremioUrl)}">Install in Stremio</a><button class="secondary" type="button" data-copy>Copy</button></div></section>
+<section class="card"><h2>Supporter benefits</h2><ul class="perks"><li>Live-only catalog mode</li><li>Choose included sports</li><li>Live TV for monthly and lifetime supporters</li><li>Local event timezone</li><li>Private supporter manifest</li></ul></section></aside></div></main>
+<script>document.querySelector("[data-copy]").addEventListener("click",async(e)=>{await navigator.clipboard.writeText(document.querySelector("#manifest-url").textContent.trim());e.currentTarget.textContent="Copied";setTimeout(()=>e.currentTarget.textContent="Copy",1200)});</script>
+</body></html>`;
 };
 
 const WATCH_TOGETHER_NOTICE = Object.freeze({
@@ -2787,6 +3772,7 @@ const isBotProtectionIgnoredPath = (pathName) =>
   || pathName === '/watch-together/api/live-count'
   || pathName === '/webhooks/kofi'
   || pathName === '/webhooks/ko-fi'
+  || pathName === '/webhooks/smtp2go'
   || pathName.startsWith('/admin')
   || pathName.startsWith('/assets/')
   || /^\/private\/[^/]+\/(?:stalker|xtream|nflix|streamed)\//u.test(pathName)
@@ -3480,6 +4466,162 @@ const bootstrap = async () => {
     maxAge: '7d',
     immutable: true
   }));
+  app.get('/sports/poster/:version/:sig.jpg', async (req, res) => {
+    const title = clampPosterText(req.query?.title || 'Sports Event', 80);
+    const meta = clampPosterText(req.query?.meta || req.query?.genre || 'Sports', 44);
+    const timeLabel = clampPosterText(req.query?.time || 'Starting soon', 44);
+    const badge = clampPosterText(req.query?.badge || 'EVENT', 18);
+    const sources = clampPosterText(req.query?.sources || 'Nebula Sports', 24);
+    const cacheKey = `${SPORTS_POSTER_VERSION}:${title}:${meta}:${timeLabel}:${badge}:${sources}:${req.params.sig || ''}`;
+    const cached = posterJpgCache.get(cacheKey);
+    if (cached) {
+      res.type('image/jpeg').setHeader('Cache-Control', 'public, max-age=300').send(cached);
+      return;
+    }
+    const params = new URLSearchParams({
+      v: '5',
+      title,
+      meta,
+      time: timeLabel,
+      badge,
+      sources
+    });
+    try {
+      const response = await fetch(`${SPORTS_FLIX_POSTER_BASE_URL}?${params.toString()}`, {
+        signal: AbortSignal.timeout(4_000)
+      });
+      if (!response.ok) throw new Error(`Flix poster HTTP ${response.status}`);
+      const contentType = String(response.headers.get('content-type') || '');
+      if (!contentType.includes('image/')) throw new Error(`Flix poster content-type ${contentType || 'missing'}`);
+      const buffer = Buffer.from(await response.arrayBuffer());
+      if (buffer.length < 1024) throw new Error('Flix poster too small');
+      posterJpgCache.set(cacheKey, buffer);
+      while (posterJpgCache.size > POSTER_JPG_CACHE_MAX) {
+        posterJpgCache.delete(posterJpgCache.keys().next().value);
+      }
+      res.type('image/jpeg').setHeader('Cache-Control', 'public, max-age=300').send(buffer);
+    } catch (error) {
+      const genre = clampPosterText(req.query?.genre || meta || 'Sports', 32);
+      const infoLabel = clampPosterText(req.query?.info || `${meta} event`, 70);
+      const kind = String(req.query?.kind || 'event').toLowerCase() === 'channel' ? 'channel' : 'event';
+      const seed = crypto.createHash('sha1').update(`${title}:${genre}:${kind}:${req.query?.sig || ''}`).digest();
+      const png = buildSportsPosterPng({ title, genre, timeLabel, infoLabel, kind, seed });
+      logger.warn('nebula sports flix-style poster fallback used', {
+        error: error?.message || String(error)
+      });
+      res.type('image/png').setHeader('Cache-Control', 'public, max-age=300').send(png);
+    }
+  });
+  app.get(['/sports/poster.png', '/sports/poster/:version/:sig.png'], (req, res) => {
+    const title = clampPosterText(req.query?.title || 'Sports Event', 80);
+    const genre = clampPosterText(req.query?.genre || 'Sports', 32);
+    const timeLabel = clampPosterText(req.query?.time || 'Starting soon', 44);
+    const infoLabel = clampPosterText(req.query?.info || 'Live event stream', 70);
+    const kind = String(req.query?.kind || 'event').toLowerCase() === 'channel' ? 'channel' : 'event';
+    const seed = crypto.createHash('sha1').update(`${title}:${genre}:${kind}:${req.query?.sig || ''}`).digest();
+    const png = buildSportsPosterPng({ title, genre, timeLabel, infoLabel, kind, seed });
+    res
+      .type('image/png')
+      .setHeader('Cache-Control', 'public, max-age=300')
+      .send(png);
+  });
+  app.get(['/sports/poster.svg', '/sports/poster/:version/:sig.svg'], (req, res) => {
+    const title = clampPosterText(req.query?.title || 'Sports Event', 80);
+    const genre = clampPosterText(req.query?.genre || 'Sports', 32);
+    const timeLabel = clampPosterText(req.query?.time || 'Starting soon', 44);
+    const infoLabel = clampPosterText(req.query?.info || 'Live event stream', 70);
+    const kind = String(req.query?.kind || 'event').toLowerCase() === 'channel' ? 'channel' : 'event';
+    const initials = getPosterInitials(title);
+    const seed = crypto.createHash('sha1').update(`${title}:${genre}:${kind}:${req.query?.sig || ''}`).digest();
+    const hue = seed[0] % 360;
+    const hue2 = (hue + 38 + (seed[1] % 74)) % 360;
+    const hue3 = (hue + 158 + (seed[2] % 46)) % 360;
+    const accent = `hsl(${hue} 86% 58%)`;
+    const accent2 = `hsl(${hue2} 84% 54%)`;
+    const accent3 = `hsl(${hue3} 88% 60%)`;
+    const label = kind === 'channel' ? 'LIVE TV' : 'LIVE SPORTS';
+    const safeTitle = escapeHtml(title);
+    const safeGenre = escapeHtml(genre.toUpperCase());
+    const safeTime = escapeHtml(timeLabel);
+    const safeInfo = escapeHtml(infoLabel);
+    const safeInitials = escapeHtml(initials);
+    const titleLines = (() => {
+      const lines = [];
+      let current = '';
+      for (const word of title.split(/\s+/u).filter(Boolean)) {
+        const next = current ? `${current} ${word}` : word;
+        if (next.length > 22 && current) {
+          lines.push(current);
+          current = word;
+        } else {
+          current = next;
+        }
+        if (lines.length >= 2) break;
+      }
+      if (current && lines.length < 3) lines.push(current);
+      return lines.length ? lines : [title];
+    })();
+    const titleSvg = titleLines.slice(0, 3).map((line, index) =>
+      `<text x="300" y="${348 + (index * 48)}" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="${index === 0 ? 38 : 33}" font-weight="850" fill="#f7fafc">${escapeHtml(clampPosterText(line, 28))}</text>`
+    ).join('\n  ');
+    const channelLogoBody = `
+  <text x="300" y="324" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="50" font-weight="850" fill="#f7fafc">${safeTitle}</text>
+  <text x="300" y="384" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="22" font-weight="750" fill="#ffffff" fill-opacity="0.8">${label}</text>
+  <text x="300" y="432" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="18" font-weight="700" fill="#d9fff1" fill-opacity="0.86">${safeInfo}</text>`;
+    const eventPosterBody = `
+  <circle cx="300" cy="162" r="82" fill="#07111f" stroke="url(#ring)" stroke-width="10"/>
+  <circle cx="300" cy="162" r="54" fill="${accent}" opacity="0.95"/>
+  <text x="300" y="184" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="54" font-weight="900" fill="#fff">${safeInitials}</text>
+  <rect x="106" y="258" width="388" height="38" rx="19" fill="#07111f" fill-opacity="0.74" stroke="#ffffff" stroke-opacity="0.12"/>
+  <text x="300" y="282" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="17" font-weight="850" fill="#d9fff1" letter-spacing="2">${safeGenre}</text>
+  ${titleSvg}
+  <rect x="88" y="520" width="424" height="92" rx="22" fill="#07111f" fill-opacity="0.68" stroke="#ffffff" stroke-opacity="0.14"/>
+  <text x="300" y="552" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="14" font-weight="850" fill="#ffffff" fill-opacity="0.7" letter-spacing="2">START TIME</text>
+  <text x="300" y="584" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="24" font-weight="850" fill="#f7fafc">${safeTime}</text>
+  <text x="300" y="642" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="18" font-weight="750" fill="#d9fff1" fill-opacity="0.9">${safeInfo}</text>`;
+    const svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="600" height="900" viewBox="0 0 600 900" role="img" aria-label="${safeTitle}">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#12051f"/>
+      <stop offset="0.42" stop-color="#071d2b"/>
+      <stop offset="1" stop-color="#04110b"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="24%" cy="18%" r="70%">
+      <stop offset="0" stop-color="${accent}" stop-opacity="0.72"/>
+      <stop offset="0.52" stop-color="${accent2}" stop-opacity="0.26"/>
+      <stop offset="1" stop-color="#050608" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow2" cx="82%" cy="24%" r="64%">
+      <stop offset="0" stop-color="${accent3}" stop-opacity="0.58"/>
+      <stop offset="0.46" stop-color="${accent2}" stop-opacity="0.2"/>
+      <stop offset="1" stop-color="#050608" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="ring" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="${accent}"/>
+      <stop offset="0.52" stop-color="${accent2}"/>
+      <stop offset="1" stop-color="${accent3}"/>
+    </linearGradient>
+  </defs>
+  <rect width="600" height="900" fill="url(#bg)"/>
+  <rect width="600" height="900" fill="url(#glow)"/>
+  <rect width="600" height="900" fill="url(#glow2)"/>
+  <circle cx="82" cy="92" r="4" fill="#fff" opacity="0.74"/><circle cx="510" cy="146" r="3" fill="#fff" opacity="0.6"/><circle cx="444" cy="746" r="4" fill="#fff" opacity="0.5"/><circle cx="130" cy="705" r="3" fill="#fff" opacity="0.55"/>
+  <path d="M-40 682 C92 602 202 760 350 675 C462 610 518 644 640 568 L640 900 L-40 900 Z" fill="${accent2}" opacity="0.33"/>
+  <path d="M-20 752 C112 680 220 798 348 732 C466 671 520 690 624 640 L624 900 L-20 900 Z" fill="${accent3}" opacity="0.22"/>
+  <rect x="34" y="34" width="532" height="832" rx="34" fill="#ffffff" opacity="0.055" stroke="#ffffff" stroke-opacity="0.22" stroke-width="2"/>
+  <text x="300" y="82" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="16" font-weight="900" fill="#ffffff" fill-opacity="0.82" letter-spacing="4">NEBULA SPORTS</text>
+  ${kind === 'channel' ? channelLogoBody : eventPosterBody}
+  <rect x="142" y="704" width="316" height="46" rx="23" fill="#07111f" fill-opacity="0.72" stroke="#ffffff" stroke-opacity="0.14"/>
+  <circle cx="178" cy="727" r="7" fill="#45d483"/>
+  <text x="200" y="734" font-family="Inter,Arial,sans-serif" font-size="16" font-weight="850" fill="#edf7f1">${label}</text>
+  <text x="300" y="812" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="18" font-weight="800" fill="#ffffff" fill-opacity="0.78">Direct playable streams in Stremio</text>
+</svg>`;
+    res
+      .type('image/svg+xml')
+      .setHeader('Cache-Control', 'public, max-age=300')
+      .send(svg);
+  });
   app.get('/webos/repo.json', (_req, res) => {
     res
       .type('application/json')
@@ -3691,7 +4833,7 @@ const bootstrap = async () => {
     }
 
     const availableSports = catalogs
-      .filter((catalog) => !['streamed-events-live', 'streamed-events-today', 'streamed-events-popular'].includes(catalog.id))
+      .filter((catalog) => !['streamed-events-live', 'streamed-events-today', 'streamed-events-popular', 'streamed-events-dlhd-channels'].includes(catalog.id))
       .map((catalog) => String(catalog.name || '').replace(/^Sports Events:\s*/u, '').trim())
       .filter(Boolean)
       .slice(0, 14);
@@ -3980,13 +5122,56 @@ const bootstrap = async () => {
 
   const getSportsAccountFromInstall = async (req, res) => {
     await sportsSupporterService.initialize();
-    const account = sportsSupporterService.getAccountByInstallKey(req.params.installKey);
+    const installKey = String(req.params.installKey || '').trim();
+    const account = installKey === 'free'
+      ? await sportsSupporterService.getOrCreateFreePreviewAccount()
+      : sportsSupporterService.getAccountByInstallKey(installKey);
     if (!sportsSupporterService.isAccountActive(account)) {
       res.status(402).json({ error: 'Nebula Sports account inactive or expired' });
       return null;
     }
     return account;
   };
+
+  const isPaidSportsSupporter = (account) =>
+    sportsSupporterService.isAccountActive(account)
+    && ['monthly', 'lifetime', 'premium-future', 'trial', 'community-week'].includes(String(account?.tier || '').toLowerCase());
+
+  const isFreeSportsTier = (account) =>
+    sportsSupporterService.isAccountActive(account)
+    && String(account?.tier || '').toLowerCase() === 'free';
+
+  const isCdnLiveTvSportsStream = (stream) => {
+    const text = [
+      stream?.source,
+      stream?.name,
+      stream?.title,
+      stream?.url,
+      stream?.externalUrl
+    ].map((value) => String(value || '').toLowerCase()).join(' ');
+    return text.includes('cdnlivetv') || text.includes('cdn live tv');
+  };
+
+  const shouldShowSportsUpdateNotice = (account) => {
+    const seenVersion = String(account?.sportsManifestVersion || '').trim();
+    return !seenVersion || compareVersionParts(seenVersion, SPORTS_ADDON_VERSION) < 0;
+  };
+
+  const DLHD_CHANNEL_CATALOG_ID = 'streamed-events-dlhd-channels';
+  const hasDlhdChannelAccess = (account) =>
+    sportsSupporterService.isAccountActive(account)
+    && (Boolean(account?.lifetime)
+      || ['monthly', 'lifetime', 'sports-lifetime', 'founder', 'premium-future'].includes(String(account?.tier || '').toLowerCase()));
+  const filterSportsCatalogsForAccount = (catalogs, account) =>
+    (Array.isArray(catalogs) ? catalogs : []).filter((catalog) =>
+      catalog?.id !== DLHD_CHANNEL_CATALOG_ID || hasDlhdChannelAccess(account)
+    );
+
+  const getSportsConfig = (account) => ({
+    liveOnly: Boolean(account?.sportsConfig?.liveOnly),
+    sports: Array.isArray(account?.sportsConfig?.sports) ? account.sportsConfig.sports : [],
+    timezone: String(account?.sportsConfig?.timezone || 'UTC')
+  });
 
   const getCatalogSearchValue = (req) => {
     const extra = String(req.params.extra || '');
@@ -3996,6 +5181,7 @@ const bootstrap = async () => {
 
   const SPORTS_MAIN_CATALOG_ID = 'all';
   const SPORTS_LEGACY_CATALOG_ID = 'nebula-sports-events';
+  const SPORTS_STREMIO_TYPE = 'sports';
 
   const getCatalogGenreValue = (req) => {
     const extra = String(req.params.extra || '');
@@ -4060,10 +5246,10 @@ const bootstrap = async () => {
     const name = decodeURIComponent(rawId.replace(/^streamed:/u, ''))
       .replace(/[-_]+/gu, ' ')
       .replace(/\s+/gu, ' ')
-      .trim() || 'Nebula Sports Event';
+      .trim() || 'Live Sports Event';
     return {
       id: rawId,
-      type: 'tv',
+      type: SPORTS_STREMIO_TYPE,
       name,
       posterShape: 'landscape',
       genres: ['Sports'],
@@ -4073,25 +5259,56 @@ const bootstrap = async () => {
     };
   };
 
-  const decorateSportsMeta = (meta, reqOrBaseUrl) => {
+  const decorateSportsMeta = (meta, reqOrBaseUrl, account = null) => {
     const baseUrl = typeof reqOrBaseUrl === 'string' ? reqOrBaseUrl : getPublicBaseUrl(reqOrBaseUrl);
-    const defaultImage = `${baseUrl}/assets/nebula-sports-logo.png`;
     const genres = Array.isArray(meta?.genres) && meta.genres.length ? meta.genres : ['Sports'];
     const primaryGenre = genres.find((genre) => genre && genre !== 'Sports') || genres[0] || 'Sports';
+    const metaName = String(meta?.name || 'Live Sports Event').trim();
+    const isLiveTv = primaryGenre.toLowerCase() === 'live tv'
+      || String(meta?.id || '').includes('dlhd-channel')
+      || genres.some((genre) => String(genre || '').toLowerCase() === 'live tv');
+    const configuredTimezone = getSportsConfig(account).timezone;
+    let displayTime = meta?.releaseInfo || null;
+    const utcMatch = String(displayTime || '').match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})\s+UTC$/u);
+    if (utcMatch && configuredTimezone !== 'UTC') {
+      try {
+        displayTime = new Intl.DateTimeFormat('en', {
+          timeZone: configuredTimezone,
+          month: 'short',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false,
+          timeZoneName: 'short'
+        }).format(new Date(`${utcMatch[1]}T${utcMatch[2]}:00Z`));
+      } catch {}
+    }
+    const generatedPoster = buildSportsPosterUrl(baseUrl, {
+      id: meta?.id || metaName,
+      name: metaName,
+      genre: primaryGenre,
+      kind: isLiveTv ? 'channel' : 'event',
+      time: displayTime || (isLiveTv ? 'Live now' : 'Starting soon'),
+      info: isLiveTv
+        ? `${primaryGenre} channel`
+        : `${primaryGenre} event${displayTime ? ` · ${displayTime}` : ''}`
+    });
+    const poster = generatedPoster;
     return {
       ...meta,
       id: String(meta?.id || ''),
-      type: 'tv',
-      name: String(meta?.name || 'Nebula Sports Event'),
+      type: SPORTS_STREMIO_TYPE,
+      name: metaName,
       genre: primaryGenre,
       genres,
-      poster: meta?.poster || defaultImage,
-      logo: meta?.logo || meta?.poster || defaultImage,
-      background: meta?.background || meta?.poster || defaultImage,
-      posterShape: meta?.posterShape || 'landscape',
+      poster,
+      logo: poster,
+      background: poster,
+      posterShape: 'poster',
       country: 'Sports',
       countryCode: 'sports',
-      time: meta?.releaseInfo || null,
+      releaseInfo: displayTime,
+      time: displayTime,
       streams: []
     };
   };
@@ -4111,7 +5328,7 @@ const bootstrap = async () => {
         limit: 24,
         signal: AbortSignal.timeout(2_500)
       });
-      cacheSportsTvMetas(account, metas.map((meta) => decorateSportsMeta(meta, baseUrl)));
+      cacheSportsTvMetas(account, metas.map((meta) => decorateSportsMeta(meta, baseUrl, account)));
     }));
     const failures = results.filter((result) => result.status === 'rejected').length;
     if (failures) {
@@ -4128,39 +5345,59 @@ const bootstrap = async () => {
       if (!account) return;
       const baseUrl = getPublicBaseUrl(req);
       const tvClient = isSportsTvClient(req);
-      const catalogDefinitions = await getSportsCatalogDefinitions({ timeoutMs: tvClient ? 1_500 : 6_000 });
+      const catalogDefinitions = filterSportsCatalogsForAccount(
+        await getSportsCatalogDefinitions({ timeoutMs: tvClient ? 1_500 : 6_000 }),
+        account
+      );
+      const sportsConfig = getSportsConfig(account);
+      const selectedSports = new Set(sportsConfig.sports);
       const genreOptions = catalogDefinitions
+        .filter((catalog) => !sportsConfig.liveOnly || catalog.id === 'streamed-events-live' || selectedSports.has(catalog.id))
+        .filter((catalog) => selectedSports.size === 0
+          || ['streamed-events-live', 'streamed-events-today', 'streamed-events-popular', DLHD_CHANNEL_CATALOG_ID].includes(catalog.id)
+          || selectedSports.has(catalog.id))
         .map((catalog) => String(catalog.name || '').replace(/^Sports Events:\s*/u, '').trim())
         .filter(Boolean);
       const catalogs = [{
-        type: 'tv',
+        type: SPORTS_STREMIO_TYPE,
         id: SPORTS_MAIN_CATALOG_ID,
         name: 'Nebula Sports',
         extra: [
           { name: 'genre', options: genreOptions, isRequired: false }
         ]
       }];
-      streamManager.streamedSportsAdapter.prewarmCatalogs(catalogDefinitions);
-      void prewarmSportsTvMetaCache(account, catalogDefinitions, req).catch((error) => {
-        logger.debug('nebula sports tv meta prewarm failed', {
-          error: error?.message || String(error)
+      const liveTvCatalog = catalogDefinitions.find((catalog) => catalog.id === DLHD_CHANNEL_CATALOG_ID);
+      if (liveTvCatalog && hasDlhdChannelAccess(account)) {
+        catalogs.push({
+          type: SPORTS_STREMIO_TYPE,
+          id: DLHD_CHANNEL_CATALOG_ID,
+          name: 'Nebula Sports: Live TV'
         });
-      });
+      }
+      if (!isFreeSportsTier(account)) {
+        streamManager.streamedSportsAdapter.prewarmCatalogs(catalogDefinitions);
+        void prewarmSportsTvMetaCache(account, catalogDefinitions, req).catch((error) => {
+          logger.debug('nebula sports tv meta prewarm failed', {
+            error: error?.message || String(error)
+          });
+        });
+      }
       await sportsSupporterService.increment(account.id, 'manifests', 1);
+      await sportsSupporterService.setSportsManifestVersion(account.id, SPORTS_ADDON_VERSION);
       res
         .setHeader('Cache-Control', 'private, max-age=120')
         .json({
           id: 'org.nebulastreams.sports',
-          version: '1.0.0',
+          version: SPORTS_ADDON_VERSION,
           name: 'Nebula Sports',
-          description: 'Paid Nebula Sports addon for live sports event catalogs and Stremio playback.',
+          description: 'Stremio addon for live sports streams and event catalogs.',
           logo: `${baseUrl}/assets/nebula-sports-logo.png`,
           background: `${baseUrl}/assets/nebula-sports-logo.png`,
           behaviorHints: {
             configurable: true
           },
           resources: ['catalog', 'stream', 'meta'],
-          types: ['tv'],
+          types: [SPORTS_STREMIO_TYPE],
           idPrefixes: ['streamed'],
           catalogs
         });
@@ -4174,17 +5411,33 @@ const bootstrap = async () => {
       const account = await getSportsAccountFromInstall(req, res);
       if (!account) return;
       const type = String(req.params.type || '').trim().toLowerCase();
-      if (type !== 'tv' && type !== 'events' && type !== 'channel' && type !== 'live') {
+      if (type !== SPORTS_STREMIO_TYPE && type !== 'tv' && type !== 'events' && type !== 'channel' && type !== 'live') {
         res.json({ metas: [] });
         return;
       }
       const tvClient = isSportsTvClient(req);
-      const catalogs = await getSportsCatalogDefinitions({ timeoutMs: tvClient ? 1_500 : 6_000 });
+      const catalogs = filterSportsCatalogsForAccount(
+        await getSportsCatalogDefinitions({ timeoutMs: tvClient ? 1_500 : 6_000 }),
+        account
+      );
+      const sportsConfig = getSportsConfig(account);
+      const selectedCatalogs = catalogs.filter((entry) => sportsConfig.sports.includes(entry.id));
+      const selectedSportNames = selectedCatalogs
+        .map((entry) => String(entry.name || '').replace(/^Sports Events:\s*/u, '').trim().toLowerCase())
+        .filter(Boolean);
       const requestedCatalogId = String(req.params.id || '').trim();
+      if (requestedCatalogId === 'streamed-events-flix-dlstreams') {
+        res.setHeader('Cache-Control', 'private, max-age=15').json({ metas: [] });
+        return;
+      }
       const requestedGenre = getCatalogGenreValue(req);
       const useUnifiedCatalog = requestedCatalogId === SPORTS_MAIN_CATALOG_ID || requestedCatalogId === SPORTS_LEGACY_CATALOG_ID;
-      const catalog = useUnifiedCatalog
+      const catalog = sportsConfig.liveOnly
+        ? catalogs.find((entry) => entry.id === 'streamed-events-live')
+        : useUnifiedCatalog
         ? (catalogs.find((entry) => String(entry.name || '').replace(/^Sports Events:\s*/u, '').trim() === requestedGenre)
+          || catalogs.find((entry) => entry.id === 'streamed-events-sportsbite')
+          || catalogs.find((entry) => entry.id === 'streamed-events-today')
           || catalogs.find((entry) => entry.id === 'streamed-events-live')
           || catalogs[0])
         : catalogs.find((entry) => entry.id === requestedCatalogId);
@@ -4198,7 +5451,7 @@ const bootstrap = async () => {
           catalog,
           search: getCatalogSearchValue(req),
           skip: getCatalogSkipValue(req),
-          limit: tvClient ? 24 : 50,
+          limit: catalog.id === DLHD_CHANNEL_CATALOG_ID ? 200 : (tvClient ? 24 : 50),
           signal: AbortSignal.timeout(tvClient ? 3_500 : 6_000)
         });
       } catch (error) {
@@ -4209,7 +5462,16 @@ const bootstrap = async () => {
         });
       }
       await sportsSupporterService.increment(account.id, 'catalogs', 1);
-      const decoratedMetas = metas.map((meta) => decorateSportsMeta(meta, req));
+      const decoratedMetas = metas
+        .map((meta) => decorateSportsMeta(meta, req, account))
+        .filter((meta) => {
+          if (catalog.id === DLHD_CHANNEL_CATALOG_ID) return true;
+          if (!selectedSportNames.length) return true;
+          const text = [meta.genre, ...(meta.genres || []), meta.name, meta.description]
+            .join(' ')
+            .toLowerCase();
+          return selectedSportNames.some((sport) => text.includes(sport));
+        });
       if (tvClient) {
         cacheSportsTvMetas(account, decoratedMetas);
       }
@@ -4238,7 +5500,7 @@ const bootstrap = async () => {
           error: error?.message || String(error)
         });
       }
-      const decoratedMeta = decorateSportsMeta(meta || buildFallbackSportsMeta(req.params.id), req);
+      const decoratedMeta = decorateSportsMeta(meta || buildFallbackSportsMeta(req.params.id), req, account);
       if (tvClient) {
         cacheSportsTvMetas(account, [decoratedMeta]);
       }
@@ -4248,18 +5510,181 @@ const bootstrap = async () => {
     }
   };
 
+  const buildSportsTrialExpiryStreamCard = (account, req) => {
+    if (String(account?.tier || '').trim().toLowerCase() !== 'community-week') {
+      return null;
+    }
+
+    const expiresAtMs = Date.parse(account?.expiresAt || '');
+    if (!Number.isFinite(expiresAtMs)) return null;
+
+    const remainingMs = expiresAtMs - Date.now();
+    if (remainingMs <= 0) return null;
+
+    const dayCount = Math.ceil(remainingMs / (24 * 60 * 60 * 1000));
+    const hourCount = Math.ceil(remainingMs / (60 * 60 * 1000));
+    const remainingLabel = dayCount >= 1
+      ? `${dayCount} ${dayCount === 1 ? 'day' : 'days'}`
+      : `${hourCount} ${hourCount === 1 ? 'hour' : 'hours'}`;
+
+    const baseUrl = getPublicBaseUrl(req);
+    return {
+      name: 'Nebula Sports Trial',
+      title: [
+        `Your trial expires in ${remainingLabel}`,
+        'Click to continue using Nebula Sports',
+        'Normal sports streams are below'
+      ].join('\n'),
+      externalUrl: `${baseUrl}/sports`,
+      behaviorHints: {
+        notWebReady: true,
+        bingeGroup: 'nebula-sports-trial-expiry'
+      }
+    };
+  };
+
+  const buildSportsNoStreamsCard = (req) => {
+    const baseUrl = getPublicBaseUrl(req);
+    return {
+      name: 'Nebula Sports',
+      title: 'No streams currently available for this event',
+      externalUrl: `${baseUrl}/sports`,
+      behaviorHints: {
+        notWebReady: true,
+        bingeGroup: `nebula-sports-empty-${String(req.params.id || 'event').slice(0, 120)}`
+      }
+    };
+  };
+
+  const buildSportsFreeUpgradeStreamCard = (req) => {
+    const baseUrl = getPublicBaseUrl(req);
+    return {
+      name: 'Nebula Sports Supporter',
+      title: [
+        'Subscribe to unlock more streams',
+        'Free tier shows the easiest available stream only',
+        'Click to get every playable source'
+      ].join('\n'),
+      externalUrl: `${baseUrl}/sports`,
+      behaviorHints: {
+        notWebReady: true,
+        bingeGroup: `nebula-sports-upgrade-${String(req.params.id || 'event').slice(0, 120)}`
+      }
+    };
+  };
+
+  const buildSportsUpdateNoticeStreamCard = (req) => {
+    const baseUrl = getPublicBaseUrl(req);
+    return {
+      name: 'Nebula Sports Update',
+      title: [
+        'Nebula Sports update available',
+        'Refresh or reinstall addon to load new colorful posters',
+        'Click to open update page'
+      ].join('\n'),
+      externalUrl: `${baseUrl}/sports`,
+      behaviorHints: {
+        notWebReady: true,
+        bingeGroup: 'nebula-sports-update-1-0-5'
+      }
+    };
+  };
+
+  const SPORTS_STREAM_RESPONSE_CACHE_MAX = 500;
+  const SPORTS_STREAM_RESPONSE_TTL_MS = 15_000;
+  const SPORTS_STREAM_RESPONSE_PAID_TTL_MS = 60_000;
+  const SPORTS_STREAM_EMPTY_TTL_MS = 4_000;
+  const sportsStreamResponseCache = new Map();
+  const sportsStreamResponseInFlight = new Map();
+
+  const pruneSportsStreamResponseCache = () => {
+    const now = Date.now();
+    for (const [key, entry] of sportsStreamResponseCache) {
+      if (entry.expiresAt <= now) sportsStreamResponseCache.delete(key);
+    }
+    while (sportsStreamResponseCache.size > SPORTS_STREAM_RESPONSE_CACHE_MAX) {
+      sportsStreamResponseCache.delete(sportsStreamResponseCache.keys().next().value);
+    }
+  };
+
+  const resolveSportsEventStreams = async ({ eventId, baseUrl, playbackConfigId, prewarm = true, cacheTtlMs = SPORTS_STREAM_RESPONSE_TTL_MS }) => {
+    const cacheKey = `${playbackConfigId}:${eventId}`;
+    const cached = sportsStreamResponseCache.get(cacheKey);
+    if (cached?.expiresAt > Date.now()) return cached.streams;
+    if (sportsStreamResponseInFlight.has(cacheKey)) return sportsStreamResponseInFlight.get(cacheKey);
+
+    const task = (async () => {
+      const deadlineController = new AbortController();
+      let deadlineTimer = null;
+      try {
+        const deadline = new Promise((_, reject) => {
+          deadlineTimer = setTimeout(() => {
+            const error = new Error('Nebula Sports stream resolution exceeded 20 seconds');
+            deadlineController.abort(error);
+            reject(error);
+          }, 20_000);
+          deadlineTimer.unref?.();
+        });
+        const streams = await Promise.race([
+          streamManager.streamedSportsAdapter.getEventStreams(eventId, {
+            baseUrl,
+            privateConfigId: playbackConfigId,
+            prewarm,
+            signal: deadlineController.signal
+          }),
+          deadline
+        ]);
+        sportsStreamResponseCache.set(cacheKey, {
+          streams,
+          expiresAt: Date.now() + (streams.length ? cacheTtlMs : SPORTS_STREAM_EMPTY_TTL_MS)
+        });
+        pruneSportsStreamResponseCache();
+        return streams;
+      } finally {
+        if (deadlineTimer) clearTimeout(deadlineTimer);
+      }
+    })().finally(() => {
+      sportsStreamResponseInFlight.delete(cacheKey);
+    });
+    sportsStreamResponseInFlight.set(cacheKey, task);
+    return task;
+  };
+
   const sendSportsStreams = async (req, res, next) => {
     try {
       const account = await getSportsAccountFromInstall(req, res);
       if (!account) return;
+      const freeTier = isFreeSportsTier(account);
       const playbackConfigId = await ensureSportsPlaybackConfigId(account);
-      const streams = await streamManager.streamedSportsAdapter.getEventStreams(req.params.id, {
-        baseUrl: getPublicBaseUrl(req),
-        privateConfigId: playbackConfigId,
-        signal: req.signal || null
-      });
+      let streams = [];
+      try {
+        streams = await resolveSportsEventStreams({
+          eventId: req.params.id,
+          baseUrl: getPublicBaseUrl(req),
+          playbackConfigId,
+          prewarm: !freeTier,
+          cacheTtlMs: freeTier ? SPORTS_STREAM_RESPONSE_TTL_MS : SPORTS_STREAM_RESPONSE_PAID_TTL_MS
+        });
+      } catch (error) {
+        logger.warn('nebula sports stream resolution deadline reached', {
+          id: String(req.params.id || '').slice(0, 160),
+          error: error?.message || String(error)
+        });
+      }
+      const expiryCard = buildSportsTrialExpiryStreamCard(account, req);
+      const updateCard = shouldShowSportsUpdateNotice(account) ? buildSportsUpdateNoticeStreamCard(req) : null;
+      const freeTierEligibleStreams = freeTier
+        ? streams.filter((stream) => !isCdnLiveTvSportsStream(stream))
+        : streams;
+      const playableStreams = freeTier && freeTierEligibleStreams.length ? freeTierEligibleStreams.slice(0, 1) : freeTierEligibleStreams;
+      const responseStreams = [
+        ...(expiryCard ? [expiryCard] : []),
+        ...(playableStreams.length ? playableStreams : [buildSportsNoStreamsCard(req)]),
+        ...(freeTier && streams.length ? [buildSportsFreeUpgradeStreamCard(req)] : []),
+        ...(updateCard ? [updateCard] : [])
+      ];
       await sportsSupporterService.increment(account.id, 'streams', 1);
-      res.setHeader('Cache-Control', 'no-store').json({ streams });
+      res.setHeader('Cache-Control', 'no-store').json({ streams: responseStreams });
     } catch (error) {
       next(error);
     }
@@ -4281,21 +5706,76 @@ const bootstrap = async () => {
     }
   });
 
-  app.get(['/sports', '/sports/configure'], async (req, res, next) => {
+  app.get('/sports', async (req, res, next) => {
     try {
       const account = await getSportsAccountFromRequest(req);
       const preview = await getSportsPagePreview();
       res.status(200).type('html').send(renderSportsPage({
         baseUrl: getPublicBaseUrl(req),
         account,
-        stats: sportsSupporterService.getStats(),
-        availableSports: preview.availableSports,
-        trendingEvents: preview.trendingEvents,
+	        stats: sportsSupporterService.getStats(),
+	        availableSports: preview.availableSports,
+	        trendingEvents: preview.trendingEvents,
+	        errorMessage: typeof req.query.error === 'string' ? req.query.error : '',
+        successMessage: typeof req.query.success === 'string' ? req.query.success : ''
+      }));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/sports/configure', async (req, res, next) => {
+    try {
+      const account = await getSportsAccountFromRequest(req);
+      if (!isPaidSportsSupporter(account)) {
+        redirectSports(res, { error: 'Sign in with an active supporter account to open sports configuration' });
+        return;
+      }
+      const catalogs = filterSportsCatalogsForAccount(
+        await getSportsCatalogDefinitions({ timeoutMs: 4_000 }),
+        account
+      );
+      res.status(200).type('html').send(renderSportsConfigurePage({
+        baseUrl: getPublicBaseUrl(req),
+        account,
+        catalogs,
         errorMessage: typeof req.query.error === 'string' ? req.query.error : '',
         successMessage: typeof req.query.success === 'string' ? req.query.success : ''
       }));
     } catch (error) {
       next(error);
+    }
+  });
+
+  app.post('/sports/configure', async (req, res, next) => {
+    try {
+      const account = await getSportsAccountFromRequest(req);
+      if (!isPaidSportsSupporter(account)) {
+        redirectSports(res, { error: 'Active supporter access required' });
+        return;
+      }
+      const catalogs = filterSportsCatalogsForAccount(
+        await getSportsCatalogDefinitions({ timeoutMs: 4_000 }),
+        account
+      );
+      const allowedSports = new Set(catalogs.map((catalog) => catalog.id));
+      const requestedSports = Array.isArray(req.body?.sports)
+        ? req.body.sports
+        : (req.body?.sports ? [req.body.sports] : []);
+      const timezone = String(req.body?.timezone || 'UTC').trim();
+      try {
+        new Intl.DateTimeFormat('en', { timeZone: timezone }).format();
+      } catch {
+        throw new Error('Invalid timezone');
+      }
+      await sportsSupporterService.updateSportsConfig(account.id, {
+        liveOnly: req.body?.liveOnly === '1',
+        sports: requestedSports.map(String).filter((value) => allowedSports.has(value)),
+        timezone
+      });
+      res.redirect(302, '/sports/configure?success=Configuration saved. Refresh or reinstall addon to apply.');
+    } catch (error) {
+      res.redirect(302, `/sports/configure?error=${encodeURIComponent(error?.message || 'Configuration failed')}`);
     }
   });
 
@@ -4946,7 +6426,10 @@ render();
 
   app.get('/watch-together/api/catalogs', async (req, res, next) => {
     try {
-      const catalogs = await getSportsCatalogDefinitions({ timeoutMs: 4_000 });
+      const catalogs = filterSportsCatalogsForAccount(
+        await getSportsCatalogDefinitions({ timeoutMs: 4_000 }),
+        null
+      );
       res
         .setHeader('Cache-Control', 'public, max-age=30')
         .json({ catalogs });
@@ -4961,7 +6444,10 @@ render();
     const skip = Number.parseInt(req.query.skip || '0', 10) || 0;
     const cacheKey = `${requestedCatalogId}:${skip}:${search.toLowerCase()}`;
     try {
-      const catalogs = await getSportsCatalogDefinitions({ timeoutMs: 4_000 });
+      const catalogs = filterSportsCatalogsForAccount(
+        await getSportsCatalogDefinitions({ timeoutMs: 4_000 }),
+        null
+      );
       const catalog = catalogs.find((entry) => entry.id === requestedCatalogId)
         || catalogs.find((entry) => entry.id === 'streamed-events-live')
         || catalogs[0];
@@ -5050,6 +6536,7 @@ render();
   app.get('/watch-together/hls/:source/:streamId/:streamNo.:extension', async (req, res, next) => {
     try {
       let hlsHeaders = null;
+      let hlsContextUrl = '';
       const routeSignal = req.signal && typeof AbortSignal.any === 'function'
         ? AbortSignal.any([req.signal, AbortSignal.timeout(18_000)])
         : AbortSignal.timeout(18_000);
@@ -5062,6 +6549,7 @@ render();
           signal: routeSignal
         }).then((hls) => {
           hlsHeaders = hls?.headers || null;
+          hlsContextUrl = hls?.contextUrl || '';
           return hls?.url;
         }).catch(async (error) => {
           logger.warn('watch together public hls primary failed; trying fallback', {
@@ -5076,8 +6564,12 @@ render();
             signal: routeSignal
           });
           hlsHeaders = fallback?.headers || null;
+          hlsContextUrl = fallback?.contextUrl || '';
           return fallback?.url;
         }));
+      if (req.query.ctx) {
+        hlsContextUrl = Buffer.from(String(req.query.ctx), 'base64url').toString('utf8');
+      }
 
       if (!/^https?:\/\//iu.test(String(upstreamUrl || ''))) {
         throw new Error('Invalid watch together HLS URL');
@@ -5096,7 +6588,8 @@ render();
         source: req.params.source,
         streamId: req.params.streamId,
         streamNo: req.params.streamNo,
-        hlsHeaders
+        hlsHeaders,
+        hlsContextUrl
       });
     } catch (error) {
       next(error);
@@ -5236,12 +6729,17 @@ render();
       });
 
       if (created.created) {
-        await emailService.sendSportsTrialToken({
-          to: created.normalizedEmail || email,
-          code: created.code,
-          expiresAt: created.expiresAt,
-          baseUrl: getPublicBaseUrl(req)
-        });
+        try {
+          await emailService.sendSportsTrialToken({
+            to: created.normalizedEmail || email,
+            code: created.code,
+            expiresAt: created.expiresAt,
+            baseUrl: getPublicBaseUrl(req)
+          });
+        } catch (error) {
+          await sportsSupporterService.revokeToken(created.hash, { releaseTrial: true });
+          throw error;
+        }
         logger.info('nebula sports trial token sent', {
           tokenHashPrefix: String(created.hash || '').slice(0, 12),
           ip: getClientAddress(req),
@@ -5277,6 +6775,22 @@ render();
       redirectSports(res, { success: 'Sports account created' });
     } catch (error) {
       redirectSports(res, { error: error?.message || 'Signup failed' });
+    }
+  });
+
+  app.post('/sports/claim', async (req, res, next) => {
+    try {
+      const account = await sportsSupporterService.claimPayment({
+        username: req.body?.username,
+        password: req.body?.password,
+        email: req.body?.email,
+        transactionId: req.body?.transactionId
+      });
+      const token = await sportsSupporterService.createSession(account.id);
+      setSportsSessionCookie(req, res, token);
+      redirectSports(res, { success: 'Sports account created from Ko-fi payment' });
+    } catch (error) {
+      redirectSports(res, { error: error?.message || 'Could not find unclaimed Ko-fi payment' });
     }
   });
 
@@ -5316,6 +6830,18 @@ render();
         await sportsSupporterService.increment(account.id, 'installs', 1);
       }
       res.redirect(302, `/sports/i/${encodeURIComponent(req.params.installKey)}/manifest.json`);
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.get('/sports/i/:installKey/configure', async (req, res, next) => {
+    try {
+      const account = sportsSupporterService.getAccountByInstallKey(req.params.installKey);
+      if (!isPaidSportsSupporter(account)) {
+        redirectSports(res, { error: 'Sign in with an active supporter account to configure Nebula Sports' });
+        return;
+      }
+      res.redirect(302, '/sports/configure');
     } catch (error) {
       next(error);
     }
@@ -5659,6 +7185,36 @@ render();
       }));
   });
 
+  app.post('/webhooks/smtp2go', async (req, res, next) => {
+    try {
+      const configuredSecret = config.SMTP2GO_WEBHOOK_SECRET;
+      const providedSecret = String(
+        req.get('x-nebula-webhook-secret')
+          || req.get('x-smtp2go-webhook-secret')
+          || req.query?.secret
+          || ''
+      ).trim();
+
+      if (configuredSecret && providedSecret !== configuredSecret) {
+        res.status(401).json({ ok: false, error: 'Invalid webhook secret' });
+        return;
+      }
+
+      const events = getSmtp2goEvents(req.body || {});
+      if (!events.length) {
+        res.status(400).json({ ok: false, error: 'Missing SMTP2GO event payload' });
+        return;
+      }
+
+      const result = await recordSmtp2goWebhookEvents(events);
+      logger.info('smtp2go webhook received', result);
+      res.status(200).json({ ok: true, ...result });
+    } catch (error) {
+      logger.error('smtp2go webhook failed', { error });
+      next(error);
+    }
+  });
+
   app.post(['/webhooks/kofi', '/webhooks/ko-fi'], async (req, res, next) => {
     try {
       if (!config.KOFI_WEBHOOK_TOKEN) {
@@ -5678,11 +7234,6 @@ render();
         res.status(401).json({ ok: false, error: 'Invalid Ko-fi token' });
         return;
       }
-      if (!emailService.isConfigured()) {
-        res.status(503).json({ ok: false, error: 'Supporter email not configured' });
-        return;
-      }
-
       const transactionId = getKofiTransactionId(payload);
       const email = String(payload.email || '').trim();
       const amount = getKofiAmount(payload);
@@ -5711,24 +7262,33 @@ render();
         return;
       }
       if (sportsPayment) {
+        if (!emailService.isConfigured()) {
+          res.status(503).json({ ok: false, error: 'Sports email not configured' });
+          return;
+        }
         if (sportsSupporterService.hasPayment(transactionId)) {
           res.status(200).json({ ok: true, duplicate: true, product: 'sports' });
           return;
         }
-        const sportsTier = amount >= 3 ? 'lifetime' : 'monthly';
+        const sportsTier = getSportsKofiTier(amount);
         const created = await sportsSupporterService.createToken({
           label: payload.from_name || email,
           email,
           tier: sportsTier,
           months: sportsTier === 'lifetime' ? 36 : config.KOFI_SUPPORTER_CODE_MONTHS
         });
-        await emailService.sendSportsToken({
-          to: email,
-          name: payload.from_name,
-          code: created.code,
-          expiresAt: created.expiresAt,
-          baseUrl: getPublicBaseUrl(req)
-        });
+        try {
+          await emailService.sendSportsToken({
+            to: email,
+            name: payload.from_name,
+            code: created.code,
+            expiresAt: created.expiresAt,
+            baseUrl: getPublicBaseUrl(req)
+          });
+        } catch (error) {
+          await sportsSupporterService.revokeToken(created.hash);
+          throw error;
+        }
         await sportsSupporterService.recordPayment({
           transactionId,
           email,
@@ -5747,6 +7307,10 @@ render();
           sportsTier
         });
         res.status(200).json({ ok: true, product: 'sports' });
+        return;
+      }
+      if (!emailService.isConfigured()) {
+        res.status(503).json({ ok: false, error: 'Supporter email not configured' });
         return;
       }
       if (supporterService.hasPayment(transactionId)) {
@@ -6192,6 +7756,7 @@ render();
   app.post('/add-source', streamManager.handleAddSource.bind(streamManager));
   app.get('/torbox/webdl', streamManager.handleTorBoxWebDownload.bind(streamManager));
   app.get('/torbox/torrent', streamManager.handleTorBoxTorrentDownload.bind(streamManager));
+  app.get('/torbox/usenet', streamManager.handleTorBoxUsenetDownload.bind(streamManager));
   app.get('/stream', streamManager.handleUnifiedStream.bind(streamManager));
   app.get('/http-stream', streamManager.handleHttpStream.bind(streamManager));
   app.get('/stream/http', streamManager.handleHttpStream.bind(streamManager));

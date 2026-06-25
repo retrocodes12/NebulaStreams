@@ -6,5 +6,6 @@ cache/
 .agents/
 skills-lock.json
 services/scrapling_service/.venv/
+graphify-out/
 __pycache__/
 *.pyc

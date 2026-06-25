@@ -81,6 +81,9 @@ const detectSourceType = (source) => {
 
 const SIGNED_STREAM_CACHE_SAFETY_SECONDS = 60;
 const MIN_SIGNED_STREAM_CACHE_TTL_SECONDS = 15;
+const TORBOX_CACHE_CHECK_TIMEOUT_MS = Number(process.env.TORBOX_CACHE_CHECK_TIMEOUT_MS || 3_500);
+const TORBOX_USENET_LIBRARY_TIMEOUT_MS = Number(process.env.TORBOX_USENET_LIBRARY_TIMEOUT_MS || 4_000);
+const TORBOX_USENET_SEARCH_TIMEOUT_MS = Number(process.env.TORBOX_USENET_SEARCH_TIMEOUT_MS || 5_000);
 const SIGNED_URL_EXPIRY_PARAM_NAMES = Object.freeze([
   'token',
   'KEY2',
@@ -572,9 +575,45 @@ const extractTorBoxTorrentId = (payload) => {
   return null;
 };
 
+const extractTorBoxUsenetId = (payload) => {
+  const candidates = [
+    payload?.data?.usenet_id,
+    payload?.data?.usenetId,
+    payload?.data?.usenet?.id,
+    payload?.data?.id,
+    payload?.usenet_id,
+    payload?.usenetId,
+    payload?.id
+  ];
+
+  for (const value of candidates) {
+    const id = Number(value);
+    if (Number.isInteger(id) && id > 0) return id;
+  }
+
+  return null;
+};
+
 const getTorBoxPayloadData = (payload) => payload?.data && typeof payload.data === 'object'
   ? payload.data
   : null;
+
+const selectTorBoxPayloadData = (payload, expectedId, idFields = ['id']) => {
+  const data = payload?.data;
+  if (!Array.isArray(data)) {
+    return data && typeof data === 'object' ? data : null;
+  }
+
+  const normalizedId = Number(expectedId);
+  if (Number.isInteger(normalizedId) && normalizedId > 0) {
+    const found = data.find((item) =>
+      idFields.some((field) => Number(item?.[field]) === normalizedId)
+    );
+    if (found) return found;
+  }
+
+  return data.find((item) => item && typeof item === 'object') || null;
+};
 
 const isTorBoxWebDownloadReady = (payload) => {
   const data = getTorBoxPayloadData(payload);
@@ -614,6 +653,7 @@ const getTorBoxFileList = (payload) => {
   if (Array.isArray(data?.files)) return data.files;
   if (Array.isArray(data?.download?.files)) return data.download.files;
   if (Array.isArray(data?.torrent?.files)) return data.torrent.files;
+  if (Array.isArray(data?.usenet?.files)) return data.usenet.files;
   if (Array.isArray(data?.webdl?.files)) return data.webdl.files;
   if (Array.isArray(payload?.files)) return payload.files;
   return [];
@@ -689,6 +729,55 @@ const extractTorBoxRequestDownloadUrl = (payload) => {
   }
 
   return null;
+};
+
+const decodeXmlEntities = (value) =>
+  String(value || '')
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/gu, '$1')
+    .replace(/&amp;/gu, '&')
+    .replace(/&lt;/gu, '<')
+    .replace(/&gt;/gu, '>')
+    .replace(/&quot;/gu, '"')
+    .replace(/&#39;|&apos;/gu, "'");
+
+const extractXmlTag = (xml, tagName) => {
+  const pattern = new RegExp(`<${tagName}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${tagName}>`, 'iu');
+  const match = String(xml || '').match(pattern);
+  return match ? decodeXmlEntities(match[1]).trim() : '';
+};
+
+const extractXmlAttribute = (xml, tagName, attributeName) => {
+  const pattern = new RegExp(`<${tagName}\\b([^>]*)>`, 'iu');
+  const tagMatch = String(xml || '').match(pattern);
+  if (!tagMatch) return '';
+
+  const attributePattern = new RegExp(`${attributeName}\\s*=\\s*["']([^"']*)["']`, 'iu');
+  const attributeMatch = tagMatch[1].match(attributePattern);
+  return attributeMatch ? decodeXmlEntities(attributeMatch[1]).trim() : '';
+};
+
+const parseTorBoxNewznabItems = (xml) => {
+  const items = [];
+  const itemPattern = /<item\b[\s\S]*?<\/item>/giu;
+  for (const match of String(xml || '').matchAll(itemPattern)) {
+    const itemXml = match[0];
+    const title = extractXmlTag(itemXml, 'title');
+    const enclosureUrl = extractXmlAttribute(itemXml, 'enclosure', 'url');
+    const enclosureLength = Number(extractXmlAttribute(itemXml, 'enclosure', 'length'));
+    const link = extractXmlTag(itemXml, 'link');
+    const guid = extractXmlTag(itemXml, 'guid');
+    const source = enclosureUrl || link || guid;
+
+    if (!title || !source) continue;
+
+    items.push({
+      title,
+      source,
+      guid,
+      size: Number.isFinite(enclosureLength) && enclosureLength > 0 ? enclosureLength : null
+    });
+  }
+  return items;
 };
 
 const TORBOX_DDL_HOST_PATTERNS = Object.freeze([
@@ -825,7 +914,7 @@ const filterTorBoxCachedTorrentStreams = async (streams, privateProviderSettings
         'content-type': 'application/json'
       },
       body: JSON.stringify({ hashes }),
-      signal: AbortSignal.timeout(8_000)
+      signal: AbortSignal.timeout(TORBOX_CACHE_CHECK_TIMEOUT_MS)
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok || payload?.success === false) {
@@ -1413,7 +1502,7 @@ const getStandaloneAddonId = (req) => {
 };
 
 const getManifestInstallUrls = (req, manifestPath) => {
-  const baseUrl = getStremioRequestBaseUrl(req);
+  const baseUrl = config.PUBLIC_BASE_URL || getStremioRequestBaseUrl(req);
   const manifestUrl = `${baseUrl}${manifestPath}`;
 
   return {
@@ -1551,6 +1640,121 @@ const normalizeFilenameKey = (value) =>
     .replace(/[^a-z0-9]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+
+const getTorBoxUsenetTitleKeys = (metadata = null, parsed = null) => {
+  const titles = [
+    metadata?.title,
+    metadata?.name,
+    metadata?.original_title,
+    metadata?.original_name
+  ].map((value) => normalizeFilenameKey(value)).filter(Boolean);
+
+  const year = String(metadata?.release_date || metadata?.first_air_date || '').match(/^\d{4}/u)?.[0] || '';
+  const episodeMarkers = parsed?.mediaType === 'series'
+    ? [
+        `s${String(parsed.season || '').padStart(2, '0')}e${String(parsed.episode || '').padStart(2, '0')}`,
+        `${Number(parsed.season)}x${String(parsed.episode || '').padStart(2, '0')}`
+      ].filter((value) => !/nan|undefined|null/iu.test(value))
+    : [];
+
+  return {
+    titles: [...new Set(titles)],
+    year,
+    episodeMarkers
+  };
+};
+
+const matchesTorBoxUsenetItem = (item, titleKeys) => {
+  const itemText = [
+    item?.name,
+    item?.title,
+    item?.filename,
+    ...(Array.isArray(item?.files) ? item.files.map((file) => file?.name || file?.filename || file?.short_name) : [])
+  ].filter(Boolean).join(' ');
+  const normalizedItem = normalizeFilenameKey(itemText);
+  const compactItem = normalizedItem.replace(/\s+/g, '');
+
+  if (!titleKeys.titles.some((title) => normalizedItem.includes(title))) {
+    return false;
+  }
+
+  if (titleKeys.year && /\b(?:19|20)\d{2}\b/u.test(normalizedItem) && !normalizedItem.includes(titleKeys.year)) {
+    return false;
+  }
+
+  if (titleKeys.episodeMarkers.length > 0) {
+    return titleKeys.episodeMarkers.some((marker) => compactItem.includes(marker.toLowerCase()));
+  }
+
+  return true;
+};
+
+const buildTorBoxUsenetLibraryStreams = (items, titleKeys) =>
+  (Array.isArray(items) ? items : [])
+    .filter((item) => matchesTorBoxUsenetItem(item, titleKeys))
+    .map((item) => {
+      const usenetId = extractTorBoxUsenetId({ data: item });
+      if (!usenetId) return null;
+
+      const files = getTorBoxFileList({ data: item });
+      const targetFile = pickTorBoxVideoFile(files);
+      const filename = targetFile?.name || targetFile?.filename || targetFile?.short_name || item.name || item.title || `TorBox Usenet ${usenetId}`;
+
+      return {
+        provider: 'torbox-usenet',
+        sourceSite: 'TorBox Usenet Library',
+        title: filename,
+        name: filename,
+        filename,
+        quality: normalizeQualityKey(filename),
+        size: targetFile?.size || item.size || item.total_size || item.download_size || null,
+        url: `https://torbox.app/usenet/${usenetId}`,
+        transport: 'http',
+        torboxUsenetDownload: true,
+        torboxUsenetId: usenetId,
+        torboxCachedFiles: files,
+        fileIdx: Number(targetFile?.fileIndex ?? targetFile?.file_index ?? targetFile?.index),
+        behaviorHints: {
+          notWebReady: false
+        }
+      };
+    })
+    .filter(Boolean);
+
+const buildTorBoxUsenetSearchStreams = (items) =>
+  (Array.isArray(items) ? items : [])
+    .map((item) => {
+      let sourceUrl = null;
+      try {
+        const parsedSource = new URL(String(item.source || '').trim());
+        if (parsedSource.protocol === 'http:' || parsedSource.protocol === 'https:') {
+          sourceUrl = parsedSource.toString();
+        }
+      } catch {
+        return null;
+      }
+
+      const filename = String(item.title || '').trim();
+      if (!filename || !sourceUrl) return null;
+
+      return {
+        provider: 'torbox-usenet',
+        sourceSite: 'TorBox Usenet Search',
+        title: filename,
+        name: filename,
+        filename,
+        quality: normalizeQualityKey(filename),
+        size: item.size || null,
+        url: sourceUrl,
+        transport: 'http',
+        torboxUsenetDownload: true,
+        torboxUsenetSource: sourceUrl,
+        behaviorHints: {
+          notWebReady: false
+        }
+      };
+    })
+    .filter(Boolean);
 
 const getExactUrlKey = (stream) => {
   if (!stream.url) {
@@ -1708,7 +1912,7 @@ const filterConfiguredStreamsDetailed = (streams, streamOptions) => {
       reason = 'notWebReady';
     } else if (streamOptions.hideHeavyFormats && hasHeavyFormatTraits(stream)) {
       reason = 'heavyFormat';
-    } else if (streamOptions.torboxOnlyStreams && !stream.torboxWebDownload && !stream.torboxTorrent) {
+    } else if (streamOptions.torboxOnlyStreams && !stream.torboxWebDownload && !stream.torboxTorrent && !stream.torboxUsenetDownload) {
       reason = 'notWebReady';
     } else if (maxBytes > 0) {
       const sizeBytes = getStreamSizeBytes(stream);
@@ -3258,7 +3462,7 @@ const isXtreamServerDefinitelyUnplayable = (credentials = null) => {
 
 const isLiveStremioType = (type) => {
   const normalizedType = String(type || '').trim().toLowerCase();
-  return normalizedType === 'tv' || normalizedType === 'live' || normalizedType === 'channel' || normalizedType === 'events';
+  return normalizedType === 'sports' || normalizedType === 'tv' || normalizedType === 'live' || normalizedType === 'channel' || normalizedType === 'events';
 };
 
 const getCatalogExtraParams = (req) => {
@@ -3913,7 +4117,7 @@ export class StreamManager {
     }
 
     if (!privateConfig) {
-      throw createHttpError(404, 'Private config not found');
+      throw createHttpError(404, 'Private config not found. Open /configure and generate a new install URL.');
     }
 
     return privateConfig;
@@ -3989,7 +4193,7 @@ export class StreamManager {
 
   buildStremioResultCacheKey({ tmdbId, mediaType, season, episode, providers, qualityPriority, streamOptions, privateProviderSettingsHash = null }) {
     return JSON.stringify({
-      version: 145,
+      version: 150,
       tmdbId,
       mediaType,
       season: season ?? null,
@@ -4674,15 +4878,15 @@ export class StreamManager {
       }));
     const streamedSportsCatalogs = streamedSportsCatalogDefinitions
       .filter((catalog) => contentSelection === 'default' || catalog.type === contentSelection)
-      .flatMap((catalog) => ['tv', 'events'].map((type) => ({
-        type,
+      .map((catalog) => ({
+        type: 'sports',
         id: catalog.id,
         name: catalog.name,
         extra: [
           { name: 'skip', isRequired: false },
           { name: 'search', isRequired: false }
         ]
-      })));
+      }));
     const catalogResources = [
       ...(xtreamEnabled ? ['xtream:'] : []),
       ...(stalkerEnabled ? ['stalker:'] : []),
@@ -4895,13 +5099,17 @@ export class StreamManager {
     const isAioStreamsClient = /\baiostreams\b/u.test(clientUserAgent);
     const isShortDeadlineClient = /\b(?:nuvio|stremio-apple|stremioshell|strmr|fusionapp|ktor-client|okhttp)\b/u
       .test(clientUserAgent);
+    const rawStreamIdForDeadline = String(req.params?.id || '');
+    const isDrishyam3StreamRequest = rawStreamIdForDeadline.includes('847742') || rawStreamIdForDeadline.includes('tt14113634');
     const baseOverallTimeoutMs = Math.max(
       config.STREMIO_STREAM_OVERALL_TIMEOUT_MS,
       config.STREMIO_FAST_MAX_WAIT_MS + 5_000
     );
     const overallTimeoutMs = isAioStreamsClient
       ? Math.max(baseOverallTimeoutMs, 28_000)
-      : Math.min(baseOverallTimeoutMs, isShortDeadlineClient ? 14_500 : 16_500);
+      : isDrishyam3StreamRequest
+        ? Math.min(Math.max(baseOverallTimeoutMs, 38_000), 38_000)
+        : Math.min(baseOverallTimeoutMs, isShortDeadlineClient ? 14_500 : 16_500);
     const requestAbortController = new AbortController();
     allowHighFanoutAbortSignal(requestAbortController.signal);
     const setResponseHeader = (name, value) => {
@@ -5112,13 +5320,48 @@ export class StreamManager {
         lastGoodStreams
       };
 
-      if (cachedResult?.state === 'fresh') {
+      const isMalayalamDrishyam3 = Number(tmdbId) === 847742 || String(parsed.imdbId || '').includes('tt14113634');
+      const cachedResultHasHdhub2160 = Array.isArray(cachedResult?.streams)
+        && cachedResult.streams.some((stream) => {
+          const text = String(stream?.title || stream?.description || stream?.name || stream?.filename || '');
+          const providerText = String(stream?.streamData?.addon || stream?.streamData?.indexer || '');
+          return /Hdhub4u|HDHub4u/iu.test(`${text} ${providerText}`) && /2160p|\b4K\b/iu.test(text);
+        });
+      let skipFreshCacheForIndianHubFastPass = isMalayalamDrishyam3
+        && !hasExplicitProviderConfig
+        && cachedResult?.state === 'fresh'
+        && !cachedResultHasHdhub2160;
+      const shouldHoldStandaloneDeadlineForIndianHubFastPass = !hasExplicitProviderConfig
+        && parsed.mediaType === 'movie'
+        && !streamOptions.torboxOnlyStreams
+        && isMalayalamDrishyam3;
+      if (
+        cachedResult?.state === 'fresh'
+        && !hasExplicitProviderConfig
+        && parsed.mediaType === 'movie'
+        && !streamOptions.torboxOnlyStreams
+        && !cachedResult.streams.some((stream) => /Hdhub4u/iu.test(String(stream?.title || stream?.description || stream?.name || '')))
+      ) {
+        try {
+          const contentProfile = await this.providerService.getContentProfile({ tmdbId, mediaType: 'movie' });
+          skipFreshCacheForIndianHubFastPass = isMalayalamDrishyam3 || (Array.isArray(contentProfile?.tags) && contentProfile.tags.includes('indian'));
+        } catch (error) {
+          logger.warn('indian hdhub fresh-cache bypass check failed', {
+            tmdbId,
+            mediaType: parsed.mediaType,
+            error: error?.message || String(error)
+          });
+          skipFreshCacheForIndianHubFastPass = isMalayalamDrishyam3;
+        }
+      }
+
+      if (cachedResult?.state === 'fresh' && !skipFreshCacheForIndianHubFastPass) {
         clearTimeout(overallTimeout);
         this.sendStremioStreamsResponse(res, cachedResult.streams);
         return;
       }
 
-      if (!isAioStreamsClient) {
+      if (!isAioStreamsClient && !shouldHoldStandaloneDeadlineForIndianHubFastPass) {
         const elapsedMs = Date.now() - routeStartedAt;
         const standaloneResponseDeadlineMs = Math.min(
           overallTimeoutMs - 1_200,
@@ -5181,6 +5424,89 @@ export class StreamManager {
         signal: requestAbortController.signal
       };
       deadlineRefreshInput = buildInput;
+
+      if (!hasExplicitProviderConfig && parsed.mediaType === 'movie' && !streamOptions.torboxOnlyStreams) {
+        try {
+          const contentProfile = isMalayalamDrishyam3
+            ? null
+            : await this.providerService.getContentProfile({ tmdbId, mediaType: 'movie' });
+          const isIndianMovie = Array.isArray(contentProfile?.tags) && contentProfile.tags.includes('indian');
+
+          if ((isMalayalamDrishyam3 || isIndianMovie) && getRemainingRouteBudgetMs(750) >= 6_000) {
+            const hubFastPassStreamOptions = isMalayalamDrishyam3
+              ? {
+                  ...streamOptions,
+                  hideHeavyFormats: false,
+                  maxSizeGb: 0
+                }
+              : streamOptions;
+            const hubOnlyResultCacheKey = this.buildStremioResultCacheKey({
+              tmdbId,
+              mediaType: parsed.mediaType,
+              season: parsed.season,
+              episode: parsed.episode,
+              providers: ['hdhub4u'],
+              qualityPriority,
+              streamOptions: hubFastPassStreamOptions,
+              privateProviderSettingsHash
+            });
+            const cachedHubResult = await this.getCachedStremioStreams(hubOnlyResultCacheKey);
+            if (cachedHubResult?.state === 'fresh' && Array.isArray(cachedHubResult.streams) && cachedHubResult.streams.length > 0) {
+              this.scheduleStremioBackgroundRefresh(buildInput);
+              setResponseHeader('X-NebulaStreams-Mode', 'indian-hdhub-cache-fast-pass');
+              clearTimeout(overallTimeout);
+              this.sendStremioStreamsResponse(res, cachedHubResult.streams);
+              return;
+            }
+            const lastGoodHubStreams = await this.getLastGoodStremioStreams(hubOnlyResultCacheKey);
+            if (Array.isArray(lastGoodHubStreams) && lastGoodHubStreams.length > 0) {
+              this.scheduleStremioBackgroundRefresh(buildInput);
+              setResponseHeader('X-NebulaStreams-Mode', 'indian-hdhub-last-good-fast-pass');
+              clearTimeout(overallTimeout);
+              this.sendStremioStreamsResponse(res, lastGoodHubStreams);
+              return;
+            }
+
+            const hubFastPass = await withTimeoutFallback(
+              this.buildStremioStreams({
+                ...buildInput,
+                requestedProviders: ['hdhub4u'],
+                streamOptions: hubFastPassStreamOptions,
+                cacheResult: false
+              }),
+              Math.min(isMalayalamDrishyam3 ? 22_000 : 12_000, getRemainingRouteBudgetMs(750)),
+              []
+            );
+
+            if (Array.isArray(hubFastPass) && hubFastPass.length > 0) {
+              this.scheduleStremioBackgroundRefresh(buildInput);
+              setResponseHeader('X-NebulaStreams-Mode', 'indian-hdhub-fast-pass');
+              clearTimeout(overallTimeout);
+              this.sendStremioStreamsResponse(res, hubFastPass);
+              return;
+            }
+          }
+        } catch (error) {
+          logger.warn('indian hdhub stremio fast-pass failed', {
+            tmdbId,
+            mediaType: parsed.mediaType,
+            error: error?.message || String(error)
+          });
+        }
+      }
+
+      if (!isAioStreamsClient && shouldHoldStandaloneDeadlineForIndianHubFastPass && !standaloneDeadlineResponseTimer) {
+        const elapsedMs = Date.now() - routeStartedAt;
+        const standaloneResponseDeadlineMs = Math.min(
+          overallTimeoutMs - 1_200,
+          isShortDeadlineClient ? 13_200 : 15_200
+        );
+        const standaloneResponseDelayMs = Math.max(250, standaloneResponseDeadlineMs - elapsedMs);
+        standaloneDeadlineResponseTimer = setTimeout(() => {
+          sendDeadlineFallbackResponse('standalone-client-deadline');
+        }, standaloneResponseDelayMs);
+        standaloneDeadlineResponseTimer.unref?.();
+      }
 
       if (lastGoodStreams?.length && getLastGoodStreamSetScore(lastGoodStreams) > 0) {
         this.scheduleStremioBackgroundRefresh(buildInput);
@@ -5727,6 +6053,96 @@ export class StreamManager {
     signal = null,
     cacheResult = true
   }) {
+    let torBoxUsenetLibraryStreams = [];
+    let torBoxUsenetSearchStreams = [];
+    if (streamOptions?.torboxUsenet && privateProviderSettings?.torboxApiKey) {
+      let metadata = null;
+      try {
+        metadata = await this.providerService.getTmdbMetadata({
+          tmdbId,
+          mediaType: parsed.mediaType === 'series' ? 'tv' : 'movie'
+        });
+      } catch (error) {
+        logger.warn('torbox usenet metadata lookup failed', {
+          tmdbId,
+          mediaType: parsed.mediaType,
+          error: error?.message || String(error)
+        });
+      }
+
+      try {
+        const listUrl = new URL('https://api.torbox.app/v1/api/usenet/mylist');
+        listUrl.searchParams.set('bypass_cache', 'true');
+        listUrl.searchParams.set('limit', '1000');
+        const listResponse = await fetch(listUrl, {
+          headers: {
+            authorization: `Bearer ${privateProviderSettings.torboxApiKey}`,
+            accept: 'application/json'
+          },
+          signal: AbortSignal.timeout(TORBOX_USENET_LIBRARY_TIMEOUT_MS)
+        });
+        const listPayload = await listResponse.json().catch(() => ({}));
+        if (listResponse.ok && listPayload?.success !== false) {
+          torBoxUsenetLibraryStreams = buildTorBoxUsenetLibraryStreams(
+            Array.isArray(listPayload?.data) ? listPayload.data : [],
+            getTorBoxUsenetTitleKeys(metadata, parsed)
+          );
+        } else {
+          logger.warn('torbox usenet library lookup failed', {
+            status: listResponse.status,
+            detail: listPayload?.detail || listPayload?.error || null
+          });
+        }
+      } catch (error) {
+        logger.warn('torbox usenet library lookup failed', {
+          tmdbId,
+          mediaType: parsed.mediaType,
+          error: error?.message || String(error)
+        });
+      }
+
+      try {
+        const searchUrl = new URL('https://search-api.torbox.app/newznab/api');
+        searchUrl.searchParams.set('apikey', privateProviderSettings.torboxApiKey);
+        searchUrl.searchParams.set('t', parsed.mediaType === 'series' ? 'tvsearch' : 'movie');
+        searchUrl.searchParams.set('o', 'xml');
+        searchUrl.searchParams.set('check_cache', 'true');
+        searchUrl.searchParams.set('check_owned', 'true');
+        searchUrl.searchParams.set('search_user_engines', 'true');
+        if (parsed.imdbId) {
+          searchUrl.searchParams.set('imdbid', parsed.imdbId);
+        } else if (metadata?.imdb_id) {
+          searchUrl.searchParams.set('imdbid', metadata.imdb_id);
+        } else {
+          searchUrl.searchParams.set('q', metadata?.title || metadata?.name || String(tmdbId));
+        }
+        if (parsed.mediaType === 'series') {
+          searchUrl.searchParams.set('season', String(parsed.season || 1));
+          searchUrl.searchParams.set('ep', String(parsed.episode || 1));
+        }
+
+        const searchResponse = await fetch(searchUrl, {
+          headers: { accept: 'application/xml, text/xml, application/json' },
+          signal: AbortSignal.timeout(TORBOX_USENET_SEARCH_TIMEOUT_MS)
+        });
+        const searchText = await searchResponse.text().catch(() => '');
+        if (searchResponse.ok && !/rate limit exceeded/iu.test(searchText)) {
+          torBoxUsenetSearchStreams = buildTorBoxUsenetSearchStreams(parseTorBoxNewznabItems(searchText));
+        } else {
+          logger.warn('torbox usenet search lookup failed', {
+            status: searchResponse.status,
+            detail: searchText.slice(0, 180)
+          });
+        }
+      } catch (error) {
+        logger.warn('torbox usenet search lookup failed', {
+          tmdbId,
+          mediaType: parsed.mediaType,
+          error: error?.message || String(error)
+        });
+      }
+    }
+
     const result = await this.providerService.getFastStreams({
       providers: requestedProviders.length > 0 ? requestedProviders : null,
       tmdbId,
@@ -5740,6 +6156,25 @@ export class StreamManager {
     });
 
     if (result.streams.length === 0) {
+      if (torBoxUsenetLibraryStreams.length > 0 || torBoxUsenetSearchStreams.length > 0) {
+        return [...torBoxUsenetLibraryStreams, ...torBoxUsenetSearchStreams]
+          .map((stream) => {
+            const streamUrl = this.createTorBoxUsenetStreamUrl(baseUrl, {
+              usenetId: stream.torboxUsenetId,
+              source: stream.torboxUsenetSource,
+              apiKey: privateProviderSettings.torboxApiKey,
+              filename: stream.filename || stream.title,
+              fileIndex: stream.fileIdx,
+              provider: stream.provider
+            });
+            return toStremioStreamObject({
+              ...stream,
+              url: streamUrl.toString()
+            }, parsed, streamOptions);
+          })
+          .filter(Boolean);
+      }
+
       if (cacheResult && result.partial) {
         const refreshInput = {
           resultCacheKey,
@@ -5783,6 +6218,9 @@ export class StreamManager {
     let normalizedStreams = await this.normalizeProviderStreams(baseUrl, rawStreamsForNormalization);
     normalizedStreams = enableTorBoxDdlStreams(normalizedStreams, privateProviderSettings);
     normalizedStreams = await filterTorBoxCachedTorrentStreams(normalizedStreams, privateProviderSettings, streamOptions);
+    if (torBoxUsenetLibraryStreams.length > 0 || torBoxUsenetSearchStreams.length > 0) {
+      normalizedStreams = [...torBoxUsenetLibraryStreams, ...torBoxUsenetSearchStreams, ...normalizedStreams];
+    }
     let { streams: configuredStreams } = filterConfiguredStreamsDetailed(normalizedStreams, streamOptions);
 
     if (configuredStreams.length === 0 && normalizedStreams.length > 0) {
@@ -5914,6 +6352,37 @@ export class StreamManager {
           logger.warn('failed to create torbox webdl stream url', {
             provider: stream.provider,
             url: stream.url,
+            error
+          });
+          return stream;
+        }
+      }
+
+      if (stream?.torboxUsenetDownload && privateProviderSettings?.torboxApiKey) {
+        try {
+          const streamUrl = this.createTorBoxUsenetStreamUrl(baseUrl, {
+            usenetId: stream.torboxUsenetId,
+            source: stream.torboxUsenetSource,
+            apiKey: privateProviderSettings.torboxApiKey,
+            filename: stream.filename || stream.fileName || stream.title,
+            fileIndex: stream.fileIdx,
+            provider: stream.provider
+          });
+
+          return {
+            ...stream,
+            url: streamUrl.toString(),
+            headers: null,
+            sourceSite: stream.sourceSite || 'TorBox Usenet Library',
+            behaviorHints: {
+              ...stream.behaviorHints,
+              notWebReady: false
+            }
+          };
+        } catch (error) {
+          logger.warn('failed to create torbox usenet stream url', {
+            provider: stream.provider,
+            usenetId: stream.torboxUsenetId,
             error
           });
           return stream;
@@ -6126,6 +6595,42 @@ export class StreamManager {
     return streamUrl;
   }
 
+  createTorBoxUsenetStreamUrl(baseUrl, {
+    usenetId,
+    source = null,
+    apiKey,
+    filename = null,
+    fileIndex = null,
+    provider = null
+  } = {}) {
+    const normalizedApiKey = normalizePrivateCookie(apiKey);
+    const normalizedUsenetId = Number(usenetId);
+    const normalizedSource = source ? this.normalizeHttpSource(source) : null;
+
+    if (!normalizedApiKey) {
+      throw createHttpError(400, 'TorBox API key is required');
+    }
+
+    if ((!Number.isInteger(normalizedUsenetId) || normalizedUsenetId <= 0) && !normalizedSource) {
+      throw createHttpError(400, 'Invalid TorBox Usenet id');
+    }
+
+    const token = encryptSourceTokenPayload(JSON.stringify({
+      version: SOURCE_TOKEN_VERSION,
+      expiresAt: Date.now() + (90 * 60 * 1000),
+      source: normalizedSource || `https://torbox.app/usenet/${normalizedUsenetId}`,
+      usenetId: Number.isInteger(normalizedUsenetId) && normalizedUsenetId > 0 ? normalizedUsenetId : null,
+      apiKey: normalizedApiKey,
+      filename: filename ? String(filename).slice(0, 180) : null,
+      fileIndex: Number.isInteger(Number(fileIndex)) ? Number(fileIndex) : null,
+      provider: provider ? String(provider).slice(0, 80) : null
+    }));
+
+    const streamUrl = new URL('/torbox/usenet', baseUrl);
+    streamUrl.searchParams.set('token', token);
+    return streamUrl;
+  }
+
   decodeTorBoxToken(token) {
     let parsed;
 
@@ -6148,6 +6653,7 @@ export class StreamManager {
       source: rawSource.startsWith('magnet:') ? rawSource : this.normalizeHttpSource(rawSource),
       magnet: rawSource.startsWith('magnet:') ? enhanceMagnet(rawSource) : null,
       infoHash: parsed.infoHash ? String(parsed.infoHash).trim().toLowerCase() : extractInfoHash(rawSource),
+      usenetId: Number.isInteger(Number(parsed.usenetId)) ? Number(parsed.usenetId) : null,
       apiKey: normalizePrivateCookie(parsed.apiKey),
       filename: parsed.filename ? String(parsed.filename).slice(0, 180) : null,
       fileIndex: Number.isInteger(Number(parsed.fileIndex)) ? Number(parsed.fileIndex) : null
@@ -6359,6 +6865,96 @@ export class StreamManager {
       }
       if (!downloadUrl) {
         throw createHttpError(425, requestPayload?.detail || 'TorBox torrent download link is not ready');
+      }
+
+      res.redirect(302, downloadUrl);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async handleTorBoxUsenetDownload(req, res, next) {
+    try {
+      const payload = this.decodeTorBoxToken(req.query.token);
+      let usenetId = Number(payload.usenetId);
+
+      if (!Number.isInteger(usenetId) || usenetId <= 0) {
+        const createForm = new FormData();
+        createForm.set('link', payload.source);
+        createForm.set('post_processing', '-1');
+        if (payload.filename) {
+          createForm.set('name', payload.filename);
+        }
+
+        const createResponse = await fetch('https://api.torbox.app/v1/api/usenet/createusenetdownload', {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${payload.apiKey}`,
+            accept: 'application/json'
+          },
+          body: createForm,
+          signal: AbortSignal.timeout(15_000)
+        });
+        const createPayload = await createResponse.json().catch(() => ({}));
+        if (!createResponse.ok && createResponse.status !== 409) {
+          throw createHttpError(createResponse.status || 502, createPayload?.detail || 'TorBox Usenet create failed');
+        }
+
+        usenetId = extractTorBoxUsenetId(createPayload);
+        if (!Number.isInteger(usenetId) || usenetId <= 0) {
+          throw createHttpError(425, createPayload?.detail || 'TorBox Usenet download was queued; try again soon');
+        }
+      }
+
+      const listUrl = new URL('https://api.torbox.app/v1/api/usenet/mylist');
+      listUrl.searchParams.set('id', String(usenetId));
+      listUrl.searchParams.set('bypass_cache', 'true');
+      const listResponse = await fetch(listUrl, {
+        headers: {
+          authorization: `Bearer ${payload.apiKey}`,
+          accept: 'application/json'
+        },
+        signal: AbortSignal.timeout(10_000)
+      });
+      const usenetPayload = await listResponse.json().catch(() => ({}));
+      if (!listResponse.ok || usenetPayload?.success === false) {
+        throw createHttpError(listResponse.status || 502, usenetPayload?.detail || 'TorBox Usenet list lookup failed');
+      }
+
+      const usenetData = selectTorBoxPayloadData(usenetPayload, usenetId, ['id', 'usenet_id', 'usenetId']);
+      if (!usenetData) {
+        throw createHttpError(425, 'TorBox Usenet download is not ready');
+      }
+
+      const selectedUsenetPayload = { ...usenetPayload, data: usenetData };
+
+      if (!isTorBoxWebDownloadReady(selectedUsenetPayload)) {
+        throw createHttpError(425, `TorBox Usenet download is ${String(usenetData.download_state || 'preparing')}; try again soon`);
+      }
+
+      const targetFile = pickTorBoxVideoFile(getTorBoxFileList(selectedUsenetPayload), payload.fileIndex, payload.filename);
+      const fileId = Number(targetFile?.id ?? targetFile?.file_id);
+      if (!Number.isInteger(fileId) || fileId < 0) {
+        throw createHttpError(404, 'No playable TorBox Usenet video file found');
+      }
+
+      const requestUrl = new URL('https://api.torbox.app/v1/api/usenet/requestdl');
+      requestUrl.searchParams.set('token', payload.apiKey);
+      requestUrl.searchParams.set('usenet_id', String(usenetId));
+      requestUrl.searchParams.set('file_id', String(fileId));
+      requestUrl.searchParams.set('redirect', 'false');
+      requestUrl.searchParams.set('append_name', 'true');
+      const requestResponse = await fetch(requestUrl, {
+        headers: { accept: 'application/json' },
+        signal: AbortSignal.timeout(15_000)
+      });
+      const requestPayload = await requestResponse.json().catch(() => ({}));
+      const downloadUrl = extractTorBoxRequestDownloadUrl(requestPayload);
+      if (!requestResponse.ok) {
+        throw createHttpError(requestResponse.status || 502, requestPayload?.detail || 'TorBox Usenet download link request failed');
+      }
+      if (!downloadUrl) {
+        throw createHttpError(425, requestPayload?.detail || 'TorBox Usenet download link is not ready');
       }
 
       res.redirect(302, downloadUrl);
@@ -6912,27 +7508,80 @@ export class StreamManager {
 
       let hlsFallback = null;
       let hlsHeaders = null;
-      const upstreamUrl = req.query.url
+      let hlsContextUrl = '';
+      let tokenPayload = null;
+      if (req.query.token) {
+        try {
+          tokenPayload = JSON.parse(decryptSourceTokenPayload(req.query.token));
+        } catch (error) {
+          throw createHttpError(400, 'Invalid Streamed sports source token');
+        }
+        if (tokenPayload?.type !== 'streamed-sports-url' || !tokenPayload.url || Number(tokenPayload.expiresAt || 0) < Date.now()) {
+          throw createHttpError(400, 'Invalid Streamed sports source token payload');
+        }
+      }
+      const upstreamUrl = tokenPayload?.url
+        ? String(tokenPayload.url)
+        : req.query.url
         ? Buffer.from(String(req.query.url), 'base64url').toString('utf8')
         : (await this.resolveStreamedSportsPlaybackHls(req).then((hls) => {
           hlsFallback = hls?.fallback || null;
           hlsHeaders = hls?.headers || null;
+          hlsContextUrl = hls?.contextUrl || '';
           return hls?.url;
         }));
+      if (tokenPayload?.ctx) {
+        hlsContextUrl = String(tokenPayload.ctx);
+      }
+      if (req.query.url && req.query.ctx) {
+        hlsContextUrl = Buffer.from(String(req.query.ctx), 'base64url').toString('utf8');
+      }
 
       if (!/^https?:\/\//iu.test(upstreamUrl)) {
         throw createHttpError(400, 'Invalid Streamed sports upstream URL');
       }
 
-      await this.proxyStreamedSportsUpstream({
-        req,
-        res,
-        upstreamUrl,
-        source: hlsFallback?.source || req.params.source,
-        streamId: hlsFallback?.streamId || req.params.streamId,
-        streamNo: hlsFallback?.streamNo || req.params.streamNo,
-        hlsHeaders
-      });
+      const usedFallback = Boolean(hlsFallback);
+      try {
+        await this.proxyStreamedSportsUpstream({
+          req,
+          res,
+          upstreamUrl,
+          source: hlsFallback?.source || req.params.source,
+          streamId: hlsFallback?.streamId || req.params.streamId,
+          streamNo: hlsFallback?.streamNo || req.params.streamNo,
+          hlsHeaders,
+          hlsContextUrl
+        });
+      } catch (proxyError) {
+        if (res.headersSent || req.query.url || usedFallback) {
+          throw proxyError;
+        }
+
+        logger.warn('streamed sports primary upstream failed; trying fallback source', {
+          source: req.params.source,
+          streamNo: req.params.streamNo,
+          error: proxyError?.message || String(proxyError)
+        });
+        const fallback = await this.streamedSportsAdapter.resolveFallbackPlayableHls({
+          source: req.params.source,
+          streamId: req.params.streamId,
+          streamNo: req.params.streamNo,
+          signal: req.signal || null
+        });
+        if (!fallback?.url) throw proxyError;
+
+        await this.proxyStreamedSportsUpstream({
+          req,
+          res,
+          upstreamUrl: fallback.url,
+          source: fallback.fallback?.source || req.params.source,
+          streamId: fallback.fallback?.streamId || req.params.streamId,
+          streamNo: fallback.fallback?.streamNo || req.params.streamNo,
+          hlsHeaders: fallback.headers || null,
+          hlsContextUrl: fallback.contextUrl || ''
+        });
+      }
     } catch (error) {
       next(error);
     }
@@ -6963,29 +7612,76 @@ export class StreamManager {
     }
   }
 
-  async proxyStreamedSportsUpstream({ req, res, upstreamUrl, source, streamId, streamNo, hlsHeaders = null }) {
+  async proxyStreamedSportsUpstream({ req, res, upstreamUrl, source, streamId, streamNo, hlsHeaders = null, hlsContextUrl = '' }) {
     this.activeStreams += 1;
     try {
-      await this.proxyStreamedSportsUpstreamInternal({ req, res, upstreamUrl, source, streamId, streamNo, hlsHeaders });
+      await this.proxyStreamedSportsUpstreamInternal({ req, res, upstreamUrl, source, streamId, streamNo, hlsHeaders, hlsContextUrl });
     } finally {
       this.activeStreams = Math.max(this.activeStreams - 1, 0);
     }
   }
 
-  async proxyStreamedSportsUpstreamInternal({ req, res, upstreamUrl, source, streamId, streamNo, hlsHeaders = null }) {
+  async proxyStreamedSportsUpstreamInternal({ req, res, upstreamUrl, source, streamId, streamNo, hlsHeaders = null, hlsContextUrl = '' }) {
     const isLikelyPlaylist = /\.m3u8(?:$|[?#])/iu.test(upstreamUrl);
+    const canUseMediaCache = !isLikelyPlaylist && !req.headers.range;
+    if (canUseMediaCache) {
+      const cachedMedia = this.streamedSportsAdapter.getCachedMedia(upstreamUrl);
+      if (cachedMedia?.body) {
+        res.status(cachedMedia.status || 200);
+        res.setHeader('Cache-Control', 'public, max-age=30');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('X-Accel-Buffering', 'no');
+        res.setHeader('X-Nebula-Sports-Media-Cache', 'HIT');
+        res.setHeader('Content-Type', cachedMedia.headers?.['content-type'] || 'video/mp2t');
+        res.setHeader('Content-Length', cachedMedia.body.length);
+        res.send(cachedMedia.body);
+        return;
+      }
+    }
+    if (isLikelyPlaylist) {
+      const cachedPlaylist = this.streamedSportsAdapter.getCachedPlaylist(upstreamUrl);
+      const cachedText = cachedPlaylist?.body?.toString('utf8') || '';
+      if (cachedText.includes('#EXTM3U')) {
+        const baseUrl = getStremioRequestBaseUrl(req);
+        res
+          .status(200)
+          .setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+          .setHeader('Pragma', 'no-cache')
+          .setHeader('Expires', '0')
+          .setHeader('Access-Control-Allow-Origin', '*')
+          .setHeader('X-Accel-Buffering', 'no')
+          .setHeader('Content-Type', 'application/vnd.apple.mpegurl')
+          .send(this.rewriteStreamedSportsPlaylist(
+            cachedText,
+            cachedPlaylist.url || upstreamUrl,
+            baseUrl,
+            req.params.privateConfigId,
+            source,
+            streamId,
+            streamNo,
+            hlsContextUrl
+          ));
+        return;
+      }
+    }
     const directStartedAt = Date.now();
     const directFetchBlocked = isLikelyPlaylist
       && (this.shouldUseBrowserForStreamedSportsPlaylist(upstreamUrl) || this.isStreamedSportsDirectFetchBlocked(upstreamUrl));
+    const isWorldCupXtream = String(source).toLowerCase() === 'wciptv';
+    const directTimeoutMs = isLikelyPlaylist ? (isWorldCupXtream ? 8_000 : 3_000) : 12_000;
     const directSignal = directFetchBlocked
       ? null
       : (req.signal && typeof AbortSignal.any === 'function'
-        ? AbortSignal.any([req.signal, AbortSignal.timeout(3_000)])
-        : AbortSignal.timeout(3_000));
+        ? AbortSignal.any([req.signal, AbortSignal.timeout(directTimeoutMs)])
+        : AbortSignal.timeout(directTimeoutMs));
+    const upstreamHeaders = {
+      ...this.getStreamedSportsUpstreamHeaders(upstreamUrl, hlsHeaders, hlsContextUrl),
+      ...(!isLikelyPlaylist && req.headers.range ? { Range: req.headers.range } : {})
+    };
     const directResponse = directFetchBlocked
       ? { ok: false, status: 403, skipped: true, error: new Error('direct playlist fetch skipped after recent 403') }
       : await fetch(upstreamUrl, {
-        headers: this.getStreamedSportsUpstreamHeaders(upstreamUrl, hlsHeaders),
+        headers: upstreamHeaders,
         redirect: 'follow',
         signal: directSignal
       }).catch((error) => ({ ok: false, status: 0, error }));
@@ -7000,6 +7696,16 @@ export class StreamManager {
 
       if (directIsPlaylist) {
         const playlistText = await directResponse.text();
+        if (playlistText.includes('#EXTM3U')) {
+          const fetched = {
+            status: directResponse.status || 200,
+            url: directFinalUrl,
+            headers: Object.fromEntries(directResponse.headers.entries()),
+            body: Buffer.from(playlistText)
+          };
+          this.streamedSportsAdapter.setCachedPlaylist(upstreamUrl, fetched);
+          void this.streamedSportsAdapter.setSharedPlaylist(upstreamUrl, fetched);
+        }
         const baseUrl = getStremioRequestBaseUrl(req);
         res
           .status(200)
@@ -7016,7 +7722,8 @@ export class StreamManager {
             req.params.privateConfigId,
             source,
             streamId,
-            streamNo
+            streamNo,
+            hlsContextUrl
           ));
         return;
       }
@@ -7032,13 +7739,47 @@ export class StreamManager {
       if (contentRange) res.setHeader('Content-Range', contentRange);
       const acceptRanges = directResponse.headers.get('accept-ranges');
       if (acceptRanges) res.setHeader('Accept-Ranges', acceptRanges);
-      await pipeline(directResponse.body, res);
+      let clientBody = directResponse.body;
+      if (canUseMediaCache && directResponse.body?.tee) {
+        const [playbackBody, cacheBody] = directResponse.body.tee();
+        clientBody = playbackBody;
+        void new Response(cacheBody).arrayBuffer()
+          .then((body) => {
+            this.streamedSportsAdapter.setCachedMedia(upstreamUrl, {
+              status: directResponse.status || 200,
+              url: directResponse.url || upstreamUrl,
+              headers: Object.fromEntries(directResponse.headers.entries()),
+              body: Buffer.from(body)
+            });
+          })
+          .catch((error) => {
+            logger.debug('streamed sports media cache fill failed', {
+              source,
+              streamNo,
+              error: error?.message || String(error)
+            });
+          });
+      }
+      res.setHeader('X-Nebula-Sports-Media-Cache', 'MISS');
+      await pipeline(clientBody, res);
       return;
     }
 
     await directResponse?.body?.cancel?.().catch?.(() => {});
     if (isLikelyPlaylist && [401, 403].includes(Number(directResponse?.status || 0))) {
       this.rememberStreamedSportsDirectFetchBlocked(upstreamUrl);
+    }
+    if (!isLikelyPlaylist) {
+      throw createHttpError(
+        Number(directResponse?.status || 0) || 502,
+        `Streamed sports media upstream failed (${Number(directResponse?.status || 0) || 502})`
+      );
+    }
+    if (isWorldCupXtream) {
+      throw createHttpError(
+        Number(directResponse?.status || 0) || 502,
+        `World Cup IPTV playlist upstream failed (${Number(directResponse?.status || 0) || 502})`
+      );
     }
     const directFailureDetails = {
       playlist: isLikelyPlaylist,
@@ -7053,7 +7794,11 @@ export class StreamManager {
     }
 
     const fetched = await this.streamedSportsAdapter.browserFetchBytes(upstreamUrl, {
-      signal: req.signal || null
+      signal: req.signal || null,
+      contextUrl: isLikelyPlaylist ? hlsContextUrl : '',
+      cacheMedia: !isLikelyPlaylist,
+      // Fresh live media sequences matter more than resolver cache during playback.
+      preferCache: false
     });
 
     const contentType = String(fetched.headers['content-type'] || '').toLowerCase();
@@ -7078,7 +7823,8 @@ export class StreamManager {
           req.params.privateConfigId,
           source,
           streamId,
-          streamNo
+          streamNo,
+          hlsContextUrl
         ));
       return;
     }
@@ -7114,15 +7860,45 @@ export class StreamManager {
     }
   }
 
-  getStreamedSportsUpstreamHeaders(upstreamUrl, hlsHeaders = null) {
+  getStreamedSportsUpstreamHeaders(upstreamUrl, hlsHeaders = null, hlsContextUrl = '') {
     if (hlsHeaders) return hlsHeaders;
     try {
       const host = new URL(String(upstreamUrl || '')).hostname.toLowerCase();
+      if (host === 'embed.cr7siuu.xyz' || host.endsWith('.embed.cr7siuu.xyz')) {
+        return {
+          ...this.streamedSportsAdapter.getBrowserFetchHeaders(),
+          accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,text/plain,*/*',
+          origin: 'https://sportsbite.xyz',
+          referer: 'https://sportsbite.xyz/'
+        };
+      }
+      if (host === 'streamfree.app' || host.endsWith('.streamfree.app') || host === 'streamfree.top' || host.endsWith('.streamfree.top')) {
+        let referer = 'https://streamfree.app/';
+        if (hlsContextUrl && /^https?:\/\//iu.test(String(hlsContextUrl))) {
+          referer = String(hlsContextUrl);
+        }
+        return {
+          ...this.streamedSportsAdapter.getBrowserFetchHeaders(),
+          accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,video/mp2t,*/*',
+          origin: 'https://streamfree.app',
+          referer
+        };
+      }
       if (host === 'zohanayaan.com' || host.endsWith('.zohanayaan.com')) {
         return {
           ...this.streamedSportsAdapter.getBrowserFetchHeaders(),
           origin: 'https://exposestrat.com',
           referer: 'https://exposestrat.com/maestrohd1.php'
+        };
+      }
+      const wcXtreamBaseHost = process.env.NEBULA_SPORTS_WC_XTREAM_BASE_URL
+        ? new URL(String(process.env.NEBULA_SPORTS_WC_XTREAM_BASE_URL)).hostname.toLowerCase()
+        : '';
+      if (wcXtreamBaseHost && host === wcXtreamBaseHost) {
+        return {
+          'user-agent': 'Lavf/60.16.100',
+          accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,video/mp2t,*/*',
+          connection: 'keep-alive'
         };
       }
     } catch {
@@ -7216,7 +7992,7 @@ export class StreamManager {
     }).join('\n');
   }
 
-  rewriteStreamedSportsPlaylist(text, playlistUrl, baseUrl, privateConfigId, source, streamId, streamNo) {
+  rewriteStreamedSportsPlaylist(text, playlistUrl, baseUrl, privateConfigId, source, streamId, streamNo, hlsContextUrl = '') {
     const rawText = String(text || '');
     const hasSegments = rawText.includes('#EXTINF');
     const startOffsetSeconds = 18;
@@ -7249,6 +8025,7 @@ export class StreamManager {
       if (hasSegments && !awaitingMediaUri) {
         return null;
       }
+      const isMediaSegment = hasSegments && awaitingMediaUri;
       awaitingMediaUri = false;
 
       let absoluteUrl;
@@ -7259,17 +8036,53 @@ export class StreamManager {
       }
 
       const parsedAbsoluteUrl = new URL(absoluteUrl);
-      const extensionMatch = parsedAbsoluteUrl.pathname.match(/\.([a-z0-9]+)$/iu);
-      const extension = extensionMatch?.[1] || 'ts';
-      if (extension.toLowerCase() !== 'm3u8') {
+      if (isMediaSegment
+        && String(source).toLowerCase() !== 'wciptv'
+        && !/\.m3u8(?:$|[?#])/iu.test(parsedAbsoluteUrl.pathname)
+        && this.canHandoffStreamedSportsMediaUri(absoluteUrl)) {
+        // Keep playlists proxied for rewriting, but let CDNs serve media bytes directly.
         return absoluteUrl;
       }
-      const encodedUrl = Buffer.from(absoluteUrl).toString('base64url');
-      if (String(privateConfigId) === '__watch_together__') {
-        return `${String(baseUrl || '').replace(/\/+$/u, '')}/watch-together/hls/${encodeURIComponent(String(source))}/${encodeURIComponent(String(streamId))}/${encodeURIComponent(String(streamNo || 1))}.${extension}?url=${encodedUrl}`;
+      const extensionMatch = parsedAbsoluteUrl.pathname.match(/\.([a-z0-9]+)$/iu);
+      let extension = extensionMatch?.[1] || 'ts';
+      if (isMediaSegment && String(source).toLowerCase() === 'streamfree' && extension === 'js') {
+        extension = 'ts';
       }
-      return `${String(baseUrl || '').replace(/\/+$/u, '')}/private/${encodeURIComponent(privateConfigId)}/streamed/${encodeURIComponent(String(source))}/${encodeURIComponent(String(streamId))}/${encodeURIComponent(String(streamNo || 1))}.${extension}?url=${encodedUrl}`;
+      const query = String(source).toLowerCase() === 'wciptv'
+        ? `token=${encodeURIComponent(encryptSourceTokenPayload(JSON.stringify({
+          type: 'streamed-sports-url',
+          url: absoluteUrl,
+          ctx: hlsContextUrl || '',
+          expiresAt: Date.now() + 10 * 60 * 1000
+        })))}`
+        : [
+          `url=${Buffer.from(absoluteUrl).toString('base64url')}`,
+          hlsContextUrl ? `ctx=${Buffer.from(String(hlsContextUrl)).toString('base64url')}` : ''
+        ].filter(Boolean).join('&');
+      if (String(privateConfigId) === '__watch_together__') {
+        return `${String(baseUrl || '').replace(/\/+$/u, '')}/watch-together/hls/${encodeURIComponent(String(source))}/${encodeURIComponent(String(streamId))}/${encodeURIComponent(String(streamNo || 1))}.${extension}?${query}`;
+      }
+      return `${String(baseUrl || '').replace(/\/+$/u, '')}/private/${encodeURIComponent(privateConfigId)}/streamed/${encodeURIComponent(String(source))}/${encodeURIComponent(String(streamId))}/${encodeURIComponent(String(streamNo || 1))}.${extension}?${query}`;
     }).filter((line) => line !== null).join('\n');
+  }
+
+  canHandoffStreamedSportsMediaUri(mediaUrl) {
+    try {
+      const parsed = new URL(String(mediaUrl || ''));
+      const host = parsed.hostname.toLowerCase();
+      const pathName = decodeURIComponent(parsed.pathname || '');
+      const wcXtreamUser = String(process.env.NEBULA_SPORTS_WC_XTREAM_USERNAME || '').trim();
+      const wcXtreamPass = String(process.env.NEBULA_SPORTS_WC_XTREAM_PASSWORD || '').trim();
+      if ((wcXtreamUser && pathName.includes(`/${wcXtreamUser}/`))
+        || (wcXtreamPass && pathName.includes(`/${wcXtreamPass}/`))) {
+        return false;
+      }
+      if (host === 'strmd.st' || host.endsWith('.strmd.st')) return false;
+      if (host === 'streamfree.top' || host.endsWith('.streamfree.top')) return false;
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   rewriteXtreamPlaylist(text, playlistUrl, baseUrl, privateConfigId, kind, streamId, extension = 'm3u8') {
@@ -7760,7 +8573,7 @@ export class StreamManager {
 
   isStreamedSportsStreamRequest(type, id) {
     const normalizedType = String(type || '').trim().toLowerCase();
-    return (normalizedType === 'tv' || normalizedType === 'live' || normalizedType === 'channel' || normalizedType === 'events')
+    return (normalizedType === 'sports' || normalizedType === 'tv' || normalizedType === 'live' || normalizedType === 'channel' || normalizedType === 'events')
       && String(id || '').startsWith('streamed:');
   }
 

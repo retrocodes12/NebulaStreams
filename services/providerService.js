@@ -160,6 +160,10 @@ const getProviderCacheVersion = (providerId) => {
     return '51';
   }
 
+  if (providerId === 'hdhub4u') {
+    return '27';
+  }
+
   if (providerId === 'rgshows') {
     return '24';
   }
@@ -2849,7 +2853,7 @@ export class ProviderService {
     privateProviderSettings = null
   }) {
     return JSON.stringify({
-      version: 'two-phase-v46',
+      version: 'two-phase-v48',
       providers: Array.isArray(providers) ? providers.map((providerId) => String(providerId || '').trim().toLowerCase()) : null,
       tmdbId: toOptionalInteger(tmdbId),
       imdbId: typeof imdbId === 'string' ? imdbId.trim() : null,

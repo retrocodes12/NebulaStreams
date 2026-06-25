@@ -74,6 +74,7 @@ class ReusableThreadingHTTPServer(ThreadingHTTPServer):
     allow_reuse_address = True
 
 HDHUB4U_DOMAINS = [
+    "https://new1.hdhub4u.cl",
     "https://new1.hdhub4u.limo",
     "https://new3.hdhub4u.fo",
     "https://new4.hdhub4u.fo",

@@ -242,6 +242,41 @@ export async function hubCdnExtractor(url, referer) {
   } catch (e) { return []; }
 }
 
+async function hubDriveDirectDownload(url, html, referer) {
+  try {
+    const $ = cheerio.load(html);
+    const fileId = ($("#down-id").text().trim() || url.match(/\/file\/(\d+)/)?.[1] || "").trim();
+    if (!fileId) return [];
+
+    const response = await fetch("https://hubdrive.space/ajax.php?ajax=direct-download", {
+      method: "POST",
+      headers: {
+        ...HEADERS,
+        Referer: url,
+        Origin: "https://hubdrive.space",
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "X-Requested-With": "XMLHttpRequest"
+      },
+      body: new URLSearchParams({ id: fileId }).toString()
+    });
+    const data = await response.json();
+    const directUrl = data?.data?.gd || data?.file;
+    if (!data?.code || String(data.code) !== "200" || !directUrl) return [];
+
+    return [{
+      source: "HubDrive Direct",
+      quality: 1080,
+      url: directUrl.startsWith("http") ? directUrl : new URL(directUrl, url).toString(),
+      size: Number(data.data?.s) || 0,
+      fileName: data.data?.n || $("div.card-header").text().trim() || "HubDrive file",
+      headers: { Referer: url },
+      behaviorHints: { notWebReady: false }
+    }];
+  } catch (e) {
+    return [];
+  }
+}
+
 export async function loadExtractor(url, referer = MAIN_URL) {
   try {
     const hostname = new URL(url).hostname;
@@ -269,6 +304,8 @@ export async function loadExtractor(url, referer = MAIN_URL) {
     if (hostname.includes("hubdrive")) {
         const res = await fetch(url, { headers: { ...HEADERS, Referer: referer } });
         const data = await res.text();
+        const directDownloads = await hubDriveDirectDownload(url, data, referer);
+        if (directDownloads.length > 0) return directDownloads;
         const href = cheerio.load(data)(".btn.btn-primary.btn-user.btn-success1.m-1").attr("href");
         if (href) {
           const extracted = await loadExtractor(href, url);

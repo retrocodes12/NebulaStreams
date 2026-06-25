@@ -16,6 +16,7 @@ import re
 import sys
 import urllib.error
 import urllib.request
+import urllib.parse
 from typing import Iterable
 
 
@@ -27,6 +28,9 @@ HLS_RE = re.compile(r"https?://[^\"'\s<>\\]+?\.m3u8(?:\?[^\"'\s<>\\]*)?", re.I)
 SOURCE_RE = re.compile(r"https?://embedhd\.org/source/streamed\.php\?[^\"'\s<>\\]+", re.I)
 MAESTRO_RE = re.compile(r"(?:https?:)?//exposestrat\.com/maestrohd1\.php\?[^\"'\s<>\\]+", re.I)
 FID_RE = re.compile(r"\bfid\s*=\s*[\"']([^\"']+)[\"']", re.I)
+IFRAME_SRC_RE = re.compile(r"<iframe[^>]+src=[\"']([^\"']+)[\"']", re.I)
+SCRIPT_SRC_RE = re.compile(r"<script[^>]+src=[\"']([^\"']+)[\"']", re.I)
+ADMIN_URL_RE = re.compile(r"https?://[^\"'\s<>\\]+/(?:embed/)?admin/[^\"'\s<>\\]+", re.I)
 CHAR_ARRAY_RE = re.compile(r"return\s*\(\s*\[(?P<chars>(?:\s*[\"'][^\"']*[\"']\s*,?)+)\s*\]\.join\(\s*[\"']{2}\s*\)", re.I)
 JS_STRING_RE = re.compile(r"[\"']([^\"']*)[\"']")
 BASE64ISH_RE = re.compile(r"[A-Za-z0-9+/=_-]{32,}")
@@ -51,6 +55,14 @@ def absolute_url(url: str) -> str:
     if url.startswith("http://") or url.startswith("https://"):
         return url
     return "https://" + url.lstrip("/")
+
+
+def join_url(base: str, url: str) -> str:
+    if not url:
+        return ""
+    if url.startswith("//"):
+        return "https:" + url
+    return urllib.parse.urljoin(base, url)
 
 
 def maybe_b64_decode(value: str) -> str | None:
@@ -106,11 +118,51 @@ def find_maestro_url(text: str) -> str | None:
     return None
 
 
+def find_follow_urls(text: str, base_url: str) -> list[str]:
+    html_text = html.unescape(text)
+    urls: list[str] = []
+    for regex in (ADMIN_URL_RE, IFRAME_SRC_RE, SCRIPT_SRC_RE):
+      for match in regex.finditer(html_text):
+          raw = match.group(1) if regex in (IFRAME_SRC_RE, SCRIPT_SRC_RE) else match.group(0)
+          url = join_url(base_url, html.unescape(raw))
+          if not url:
+              continue
+          lowered = url.lower()
+          if any(token in lowered for token in ("admin", "stream", "player", "embed", "source", "maestro", ".m3u8")):
+              urls.append(url)
+    deduped: list[str] = []
+    seen = set()
+    for url in urls:
+        key = url.split("#", 1)[0]
+        if key not in seen:
+            seen.add(key)
+            deduped.append(url)
+    return deduped[:8]
+
+
 def resolve_hls(url: str, timeout: float) -> str | None:
     first = fetch_text(url, timeout, "https://streamed.pk/")
     hls_url = find_hls(first) or find_char_array_hls(first)
     if hls_url:
         return hls_url
+
+    for follow_url in find_follow_urls(first, url):
+        try:
+            follow = fetch_text(follow_url, timeout, url)
+        except Exception:
+            continue
+        hls_url = find_hls(follow) or find_char_array_hls(follow)
+        if hls_url:
+            return hls_url
+        maestro_url = find_maestro_url(follow)
+        if maestro_url:
+            try:
+                maestro = fetch_text(maestro_url, timeout, follow_url)
+            except Exception:
+                continue
+            hls_url = find_hls(maestro) or find_char_array_hls(maestro)
+            if hls_url:
+                return hls_url
 
     source_url = find_source_url(first)
     if not source_url:

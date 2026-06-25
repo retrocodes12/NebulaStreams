@@ -1,5 +1,5 @@
 import { createHash, randomBytes, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import path from 'node:path';
 
@@ -42,7 +42,8 @@ const maskEmail = (email) => {
   return `${user.slice(0, 2) || '*'}***@${domain.slice(0, 1)}***`;
 };
 
-const isLifetimeTier = (tier) => ['lifetime', 'founder', 'sports-lifetime'].includes(normalizeTier(tier));
+const isLifetimeTier = (tier) => ['lifetime', 'founder', 'sports-lifetime', 'premium-future'].includes(normalizeTier(tier));
+const isFreeTier = (tier) => normalizeTier(tier) === 'free';
 
 const normalizeTrialEmail = (value) => {
   const normalized = normalizeEmail(value);
@@ -62,6 +63,7 @@ export class SportsSupporterService {
     this.secret = String(secret || 'nebula-sports');
     this.logger = logger;
     this.storePath = path.join(this.cacheDir, 'sports-supporters.json');
+    this.claimLockPath = path.join(this.cacheDir, 'sports-supporters.claim.lock');
     this.store = {
       version: STORE_VERSION,
       tokens: {},
@@ -72,39 +74,94 @@ export class SportsSupporterService {
       payments: {},
       trials: { emails: {}, ipRequests: {}, subnetRequests: {} }
     };
+    this.saveChain = Promise.resolve();
+  }
+
+  async withClaimLock(task) {
+    await mkdir(this.cacheDir, { recursive: true });
+    const startedAt = Date.now();
+    const timeoutMs = 8_000;
+    const staleMs = 15_000;
+
+    for (;;) {
+      try {
+        await mkdir(this.claimLockPath, { mode: 0o700 });
+        break;
+      } catch (error) {
+        if (error?.code !== 'EEXIST') throw error;
+        try {
+          const lockStats = await stat(this.claimLockPath);
+          if (Date.now() - lockStats.mtimeMs > staleMs) {
+            await rm(this.claimLockPath, { recursive: true, force: true });
+            continue;
+          }
+        } catch (statError) {
+          if (statError?.code !== 'ENOENT') throw statError;
+        }
+        if (Date.now() - startedAt > timeoutMs) {
+          throw new Error('Supporter claim is busy. Try again in a few seconds.');
+        }
+        await new Promise((resolve) => setTimeout(resolve, 80));
+      }
+    }
+
+    try {
+      await this.initialize();
+      return await task();
+    } finally {
+      await rm(this.claimLockPath, { recursive: true, force: true });
+    }
   }
 
   async initialize() {
     await mkdir(this.cacheDir, { recursive: true });
-    try {
-      const payload = JSON.parse(await readFile(this.storePath, 'utf8'));
-      this.store = {
-        version: STORE_VERSION,
-        tokens: payload && typeof payload.tokens === 'object' && !Array.isArray(payload.tokens) ? payload.tokens : {},
-        accounts: payload && typeof payload.accounts === 'object' && !Array.isArray(payload.accounts) ? payload.accounts : {},
-        usernames: payload && typeof payload.usernames === 'object' && !Array.isArray(payload.usernames) ? payload.usernames : {},
-        installs: payload && typeof payload.installs === 'object' && !Array.isArray(payload.installs) ? payload.installs : {},
-        sessions: payload && typeof payload.sessions === 'object' && !Array.isArray(payload.sessions) ? payload.sessions : {},
-        payments: payload && typeof payload.payments === 'object' && !Array.isArray(payload.payments) ? payload.payments : {},
-        trials: payload && typeof payload.trials === 'object' && !Array.isArray(payload.trials)
-          ? {
-            emails: payload.trials.emails && typeof payload.trials.emails === 'object' && !Array.isArray(payload.trials.emails) ? payload.trials.emails : {},
-            ipRequests: payload.trials.ipRequests && typeof payload.trials.ipRequests === 'object' && !Array.isArray(payload.trials.ipRequests) ? payload.trials.ipRequests : {},
-            subnetRequests: payload.trials.subnetRequests && typeof payload.trials.subnetRequests === 'object' && !Array.isArray(payload.trials.subnetRequests) ? payload.trials.subnetRequests : {}
-          }
-          : { emails: {}, ipRequests: {}, subnetRequests: {} }
-      };
-    } catch (error) {
-      if (error?.code !== 'ENOENT') {
-        this.logger.warn?.('sports supporter store load failed', { error: error?.message || String(error) });
+    let lastError = null;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        const payload = JSON.parse(await readFile(this.storePath, 'utf8'));
+        this.normalizeStorePayload(payload);
+        return;
+      } catch (error) {
+        if (error?.code === 'ENOENT') {
+          await this.save();
+          return;
+        }
+        lastError = error;
+        await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
       }
-      await this.save();
     }
+
+    this.logger.warn?.('sports supporter store load failed', { error: lastError?.message || String(lastError) });
   }
 
   async save() {
-    await mkdir(this.cacheDir, { recursive: true });
-    await writeFile(this.storePath, JSON.stringify(this.store, null, 2), { mode: 0o600 });
+    const runSave = async () => {
+      await mkdir(this.cacheDir, { recursive: true });
+      const tempPath = `${this.storePath}.${process.pid}.${Date.now()}.${randomBytes(4).toString('hex')}.tmp`;
+      await writeFile(tempPath, JSON.stringify(this.store, null, 2), { mode: 0o600 });
+      await rename(tempPath, this.storePath);
+    };
+    this.saveChain = this.saveChain.then(runSave, runSave);
+    return this.saveChain;
+  }
+
+  normalizeStorePayload(payload) {
+    this.store = {
+      version: STORE_VERSION,
+      tokens: payload && typeof payload.tokens === 'object' && !Array.isArray(payload.tokens) ? payload.tokens : {},
+      accounts: payload && typeof payload.accounts === 'object' && !Array.isArray(payload.accounts) ? payload.accounts : {},
+      usernames: payload && typeof payload.usernames === 'object' && !Array.isArray(payload.usernames) ? payload.usernames : {},
+      installs: payload && typeof payload.installs === 'object' && !Array.isArray(payload.installs) ? payload.installs : {},
+      sessions: payload && typeof payload.sessions === 'object' && !Array.isArray(payload.sessions) ? payload.sessions : {},
+      payments: payload && typeof payload.payments === 'object' && !Array.isArray(payload.payments) ? payload.payments : {},
+      trials: payload && typeof payload.trials === 'object' && !Array.isArray(payload.trials)
+        ? {
+          emails: payload.trials.emails && typeof payload.trials.emails === 'object' && !Array.isArray(payload.trials.emails) ? payload.trials.emails : {},
+          ipRequests: payload.trials.ipRequests && typeof payload.trials.ipRequests === 'object' && !Array.isArray(payload.trials.ipRequests) ? payload.trials.ipRequests : {},
+          subnetRequests: payload.trials.subnetRequests && typeof payload.trials.subnetRequests === 'object' && !Array.isArray(payload.trials.subnetRequests) ? payload.trials.subnetRequests : {}
+        }
+        : { emails: {}, ipRequests: {}, subnetRequests: {} }
+    };
   }
 
   hashCode(code) {
@@ -139,15 +196,16 @@ export class SportsSupporterService {
     const now = new Date();
     const normalizedTier = normalizeTier(tier);
     const lifetime = isLifetimeTier(normalizedTier);
+    const freeTier = isFreeTier(normalizedTier);
     const monthCount = Math.max(1, Math.min(Number.parseInt(months, 10) || 1, 36));
     const hash = this.hashCode(code);
     this.store.tokens[hash] = {
       label: normalizeLabel(label),
       emailMasked: maskEmail(email),
-      tier: lifetime ? 'lifetime' : 'monthly',
+      tier: lifetime || freeTier ? normalizedTier : 'monthly',
       status: 'active',
       createdAt: now.toISOString(),
-      expiresAt: lifetime ? null : addMonths(now, monthCount).toISOString(),
+      expiresAt: lifetime || freeTier ? null : addMonths(now, monthCount).toISOString(),
       lifetime,
       claimedBy: null,
       claimedAt: null,
@@ -235,14 +293,49 @@ export class SportsSupporterService {
     return { created: true, code, hash, ...this.store.tokens[hash], normalizedEmail };
   }
 
+  async revokeToken(tokenHash, { releaseTrial = false } = {}) {
+    await this.initialize();
+    const hash = String(tokenHash || '').trim().toLowerCase();
+    const token = this.store.tokens[hash];
+    if (!token || token.claimedBy) return false;
+
+    token.status = 'revoked';
+    token.revokedAt = new Date().toISOString();
+    if (releaseTrial && token.tier === 'trial') {
+      const trial = this.store.trials || { emails: {}, ipRequests: {}, subnetRequests: {} };
+      if (token.emailHash && trial.emails?.[token.emailHash]?.tokenHash === hash) {
+        delete trial.emails[token.emailHash];
+      }
+      const createdAt = Date.parse(token.createdAt || '');
+      for (const [bucketName, identityHash] of [
+        ['ipRequests', token.ipHash],
+        ['subnetRequests', token.subnetHash]
+      ]) {
+        const requests = Array.isArray(trial[bucketName]?.[identityHash])
+          ? trial[bucketName][identityHash]
+          : [];
+        const next = requests.filter((timestamp) => Number(timestamp) !== createdAt);
+        if (next.length) {
+          trial[bucketName][identityHash] = next;
+        } else if (identityHash) {
+          delete trial[bucketName][identityHash];
+        }
+      }
+      this.store.trials = trial;
+    }
+    await this.save();
+    return true;
+  }
+
   validateTokenRecord(tokenHash) {
     const token = this.store.tokens[String(tokenHash || '').trim().toLowerCase()];
     if (!token) return { valid: false, message: 'Invalid sports token' };
     if (token.status !== 'active') return { valid: false, message: 'Sports token inactive' };
     if (token.claimedBy) return { valid: false, message: 'Sports token already claimed' };
     const lifetime = Boolean(token.lifetime);
+    const freeTier = isFreeTier(token.tier);
     const expiresAt = lifetime ? Number.POSITIVE_INFINITY : Date.parse(token.expiresAt || '');
-    if (!lifetime && (!Number.isFinite(expiresAt) || expiresAt <= Date.now())) {
+    if (!lifetime && !freeTier && (!Number.isFinite(expiresAt) || expiresAt <= Date.now())) {
       return { valid: false, message: 'Sports token expired' };
     }
     return { valid: true, token };
@@ -263,14 +356,53 @@ export class SportsSupporterService {
     return accountId ? this.getAccount(accountId) : null;
   }
 
-  async claimToken({ username, password, tokenCode }) {
+  async getOrCreateFreePreviewAccount() {
     await this.initialize();
+    const existing = this.getAccountByUsername('free-preview');
+    if (existing && existing.tier === 'free' && this.isAccountActive(existing)) {
+      return existing;
+    }
+
+    const now = new Date().toISOString();
+    const accountId = randomBytes(12).toString('hex');
+    const installKey = 'free';
+    this.store.accounts[accountId] = {
+      id: accountId,
+      username: 'free-preview',
+      passwordHash: '',
+      tokenHash: 'free-preview',
+      installKey,
+      tier: 'free',
+      status: 'active',
+      createdAt: now,
+      updatedAt: now,
+      lastActiveAt: null,
+      expiresAt: null,
+      lifetime: false,
+      playbackConfigId: null,
+      stats: { installs: 0, manifests: 0, catalogs: 0, streams: 0 }
+    };
+    this.store.usernames['free-preview'] = accountId;
+    this.store.installs[installKey] = accountId;
+    await this.save();
+    return this.getAccount(accountId);
+  }
+
+  async claimToken({ username, password, tokenCode }) {
+    const tokenHash = this.hashCode(tokenCode);
+    return this.claimTokenHash({ username, password, tokenHash });
+  }
+
+  async claimTokenHash({ username, password, tokenHash }) {
+    return this.withClaimLock(() => this.claimTokenHashUnlocked({ username, password, tokenHash }));
+  }
+
+  async claimTokenHashUnlocked({ username, password, tokenHash }) {
     const normalizedUsername = normalizeUsername(username);
     if (normalizedUsername.length < 3) throw new Error('Username must be at least 3 characters');
     if (String(password || '').length < 8) throw new Error('Password must be at least 8 characters');
     if (this.store.usernames[normalizedUsername]) throw new Error('Username already taken');
 
-    const tokenHash = this.hashCode(tokenCode);
     const validation = this.validateTokenRecord(tokenHash);
     if (!validation.valid) throw new Error(validation.message);
 
@@ -280,8 +412,9 @@ export class SportsSupporterService {
     const installKey = `nsports_${randomBytes(18).toString('base64url')}`;
     const tokenTier = normalizeTier(validation.token.tier);
     const isTrial = tokenTier === 'trial';
+    const freeTier = isFreeTier(tokenTier);
     const accessHours = Math.max(1, Math.min(Number.parseInt(validation.token.accessHours, 10) || TRIAL_ACCESS_HOURS, 72));
-    const accountExpiresAt = validation.token.lifetime
+    const accountExpiresAt = validation.token.lifetime || freeTier
       ? null
       : (isTrial ? new Date(nowDate.getTime() + accessHours * 60 * 60 * 1000).toISOString() : validation.token.expiresAt);
     this.store.accounts[accountId] = {
@@ -290,7 +423,7 @@ export class SportsSupporterService {
       passwordHash: await this.hashPassword(password),
       tokenHash,
       installKey,
-      tier: validation.token.lifetime ? 'lifetime' : (isTrial ? 'trial' : 'monthly'),
+      tier: validation.token.lifetime ? tokenTier : (freeTier ? 'free' : (isTrial ? 'trial' : 'monthly')),
       status: 'active',
       createdAt: now,
       updatedAt: now,
@@ -312,9 +445,50 @@ export class SportsSupporterService {
     return this.getAccount(accountId);
   }
 
+  getPaymentEmailHash(email) {
+    const normalized = normalizeTrialEmail(email) || normalizeEmail(email);
+    return normalized ? this.hashIdentity('payment-email', normalized) : '';
+  }
+
+  findUnclaimedPayment({ email = '', transactionId = '' } = {}) {
+    const normalizedTransactionId = normalizeTransactionId(transactionId);
+    const emailHash = this.getPaymentEmailHash(email);
+    const entries = Object.entries(this.store.payments || {});
+    const matches = normalizedTransactionId
+      ? entries.filter(([id]) => id === normalizedTransactionId)
+      : entries.filter(([, payment]) => emailHash && payment?.emailHash === emailHash);
+    return matches
+      .map(([id, payment]) => ({ id, payment }))
+      .filter(({ payment }) => payment?.tokenHash && !payment?.claimedBy)
+      .find(({ payment }) => payment.emailHash ? (emailHash && payment.emailHash === emailHash) : true)
+      || null;
+  }
+
+  async claimPayment({ username, password, email = '', transactionId = '' } = {}) {
+    return this.withClaimLock(async () => {
+      const match = this.findUnclaimedPayment({ email, transactionId });
+      if (!match) {
+        throw new Error('No unclaimed Ko-fi sports payment found. Use the same email you used on Ko-fi, or paste your Ko-fi order id.');
+      }
+      const account = await this.claimTokenHashUnlocked({
+        username,
+        password,
+        tokenHash: match.payment.tokenHash
+      });
+      const payment = this.store.payments?.[match.id];
+      if (payment) {
+        payment.claimedBy = account.id;
+        payment.claimedAt = new Date().toISOString();
+        await this.save();
+      }
+      return account;
+    });
+  }
+
   isAccountActive(account) {
     if (!account || account.status !== 'active') return false;
     if (account.lifetime) return true;
+    if (isFreeTier(account.tier)) return true;
     const expiresAt = Date.parse(account.expiresAt || '');
     return Number.isFinite(expiresAt) && expiresAt > Date.now();
   }
@@ -380,6 +554,35 @@ export class SportsSupporterService {
     return account;
   }
 
+  async updateSportsConfig(accountId, sportsConfig = {}) {
+    await this.initialize();
+    const account = this.getAccount(accountId);
+    if (!account) return null;
+    account.sportsConfig = {
+      liveOnly: Boolean(sportsConfig.liveOnly),
+      sports: Array.isArray(sportsConfig.sports)
+        ? [...new Set(sportsConfig.sports.map((value) => String(value || '').trim()).filter(Boolean))].slice(0, 20)
+        : [],
+      timezone: String(sportsConfig.timezone || 'UTC').trim().slice(0, 64) || 'UTC'
+    };
+    account.updatedAt = new Date().toISOString();
+    await this.save();
+    return account;
+  }
+
+  async setSportsManifestVersion(accountId, version) {
+    await this.initialize();
+    const account = this.getAccount(accountId);
+    if (!account) return null;
+    const normalizedVersion = String(version || '').trim().slice(0, 32);
+    if (account.sportsManifestVersion === normalizedVersion) return account;
+    account.sportsManifestVersion = normalizedVersion;
+    account.sportsManifestSeenAt = new Date().toISOString();
+    account.updatedAt = account.sportsManifestSeenAt;
+    await this.save();
+    return account;
+  }
+
   async increment(accountId, key, amount = 1) {
     await this.initialize();
     const account = this.getAccount(accountId);
@@ -405,8 +608,11 @@ export class SportsSupporterService {
       currency: String(currency || '').trim().toUpperCase().slice(0, 8),
       paymentType: String(paymentType || '').slice(0, 64),
       tokenHash: String(tokenHash || '').trim().toLowerCase(),
+      emailHash: this.getPaymentEmailHash(email),
       createdAt: new Date().toISOString(),
-      emailSentAt
+      emailSentAt,
+      claimedBy: null,
+      claimedAt: null
     };
     await this.save();
     return this.store.payments[normalized];

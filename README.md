@@ -84,6 +84,7 @@ When a user enables Torbox in `/configure`:
 
 - the key is embedded in that user's private manifest/stream URLs;
 - Torbox-only mode filters to streams that can be sent through Torbox;
+- Torbox Usenet mode searches Torbox's Newznab-compatible search API and resolves NZB results through the user's Torbox Pro account, with completed account-library matches as a fallback;
 - failed Torbox availability or resolve calls are logged and the request falls back according to current stream logic;
 - Torbox credentials must not be shared publicly because the private manifest URL contains access material.
 
