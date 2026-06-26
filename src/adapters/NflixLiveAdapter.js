@@ -65,7 +65,7 @@ export class NflixLiveAdapter {
         : [];
       const channels = (Array.isArray(payload?.channels) ? payload.channels : [])
         .map((entry) => this.toChannel(entry))
-        .filter((channel) => channel.id && channel.url);
+        .filter((channel) => channel?.id && channel.url);
       const value = {
         categories: [...new Set(categories.length > 0 ? categories : channels.map((channel) => channel.category))],
         channels

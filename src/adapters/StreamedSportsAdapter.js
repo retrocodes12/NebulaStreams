@@ -36,16 +36,81 @@ const CDNLIVETV_PLAN = String(process.env.CDNLIVETV_PLAN || 'free').trim();
 const CDNLIVETV_STREAM_CACHE_MS = 60 * 1000;
 const CDNLIVETV_STREAM_STALE_MS = 5 * 60 * 1000;
 const REXDEX_SOURCE = 'rexdex';
+const REXDEX_ORIGIN = 'https://www.rexdexsports.in';
+const REXDEX_FEED_URL = `${REXDEX_ORIGIN}/feeds/posts/default?alt=json&max-results=30`;
+const REXDEX_POST_CACHE_MS = 2 * 60 * 1000;
+const REXDEX_MIN_HEIGHT = 1080;
 const REXDEX_PORTUGAL_UZBEKISTAN_STREAM_ID = 'portugal-uzbekistan-fancode-live-3';
 const REXDEX_PORTUGAL_UZBEKISTAN_HLS = 'https://rxne77juptdeyke3tytvgqwyh.medya.trt.com.tr/master.m3u8';
 const REXDEX_PORTUGAL_UZBEKISTAN_PAGE = 'https://www.rexdexsports.in/p/fancode-live-3.html?m=1';
 const REXDEX_PORTUGAL_UZBEKISTAN_UNTIL_MS = Date.parse('2026-06-24T06:00:00.000Z');
+const HELLOSPORTS_SOURCE = 'hellosports';
+const HELLOSPORTS_ORIGIN = 'https://hellosports.jkssbcares.in';
+const HELLOSPORTS_4K_PAGE = 'https://hellosports.jkssbcares.in/p/live-matches.html?m=1';
+const HELLOSPORTS_4K_CACHE_MS = 60 * 1000;
+const HELLOSPORTS_4K_MAX_CARDS = 2;
+const KNOWN_SPORTS_SOURCE = 'knownsports';
+const KNOWN_SPORTS_MAX_CARDS = 3;
+const KNOWN_SPORTS_HLS_TIMEOUT_MS = 7_000;
+const KNOWN_SPORTS_HEALTH_CACHE_MS = 90_000;
+const KNOWN_SPORTS_DOWN_CACHE_MS = 30_000;
+const KNOWN_SPORTS_CHANNELS = Object.freeze([
+  {
+    id: 'bolt-bein1',
+    channelName: 'beIN Sports 1',
+    category: 'football',
+    worldCup: true,
+    directHlsUrl: 'https://bolt.highfly.dev/cinearena/bein1/live.m3u8',
+    playbackProfile: {
+      quality: '1080p',
+      speedMbps: 10
+    }
+  },
+  {
+    id: 'bolt-bein3',
+    channelName: 'beIN Sports 3',
+    category: 'football',
+    worldCup: true,
+    directHlsUrl: 'https://bolt.highfly.dev/cinearena/bein3/live.m3u8',
+    playbackProfile: {
+      quality: '1080p',
+      speedMbps: 10
+    }
+  },
+  {
+    id: 'bolt-tnt4',
+    channelName: 'TNT Sports 4',
+    category: 'football',
+    worldCup: true,
+    directHlsUrl: 'https://bolt.highfly.dev/cinearena/tnt4/live.m3u8',
+    playbackProfile: {
+      quality: '1080p',
+      speedMbps: 10
+    }
+  }
+]);
+const STREAMZY_4K_SOURCE = 'streamzy4k';
+const STREAMZY_4K_ORIGIN = 'https://vileembeds.pages.dev';
 const WC_XTREAM_SOURCE = 'wciptv';
 const WC_XTREAM_CATEGORY_ID = String(process.env.NEBULA_SPORTS_WC_XTREAM_CATEGORY_ID || '105').trim();
 const WC_XTREAM_CACHE_MS = 60_000;
 const WC_XTREAM_VALIDATION_BUDGET_MS = 6_000;
 const WC_XTREAM_MAX_CANDIDATES = 6;
 const WC_XTREAM_MAX_CARDS = 4;
+const SPORTSRC_SOURCE = 'sportsrc';
+const SPORTSRC_API_BASE = 'https://api.sportsrc.org/v2/';
+const SPORTSRC_MATCH_CACHE_MS = 15 * 60 * 1000;
+const SPORTSRC_DETAIL_CACHE_MS = 10 * 60 * 1000;
+const SPORTSRC_VALIDATION_BUDGET_MS = 5_000;
+const SPORTSRC_MAX_CANDIDATES = 4;
+const SPORTSRC_MAX_CARDS = 2;
+const REPLAYZONE_SOURCE = 'replayzone';
+const REPLAYZONE_CATALOG_ID = 'streamed-replays';
+const REPLAYZONE_CACHE_KEY = 'replayzone';
+const REPLAYZONE_FEED_URL = 'https://replay.adityapangshe.workers.dev/replays.txt';
+const REPLAYZONE_MATCH_CACHE_MS = 10 * 60 * 1000;
+const REPLAYZONE_HLS_CACHE_MS = 15 * 60 * 1000;
+const REPLAYZONE_MAX_CARDS = 6;
 const DLHD_ORIGIN = 'https://dlhd.pk';
 const DLHD_SOURCE = 'dlhd';
 const DLHD_ORIGINS = Object.freeze([
@@ -68,6 +133,7 @@ const DLHD_CHANNEL_STALE_MS = 7 * 24 * 60 * 60 * 1000;
 const DLHD_HLS_MAX_CACHE_MS = 10 * 60 * 1000;
 const DLHD_HLS_EXPIRY_MARGIN_MS = 45_000;
 const CACHE_TTL_MS = 5 * 60 * 1000;
+const LIVE_MATCH_CACHE_TTL_MS = 30 * 1000;
 const EVENT_CATALOG_LIMIT = 50;
 const STREMIO_SPORTS_TYPE = 'sports';
 const FIFA_WC_CATALOG_ID = 'streamed-events-fifa-wc';
@@ -81,6 +147,7 @@ const MAX_MEDIA_CACHE_ENTRY_BYTES = 8 * 1024 * 1024;
 const DEFAULT_BROWSER_IDLE_MS = 60_000;
 const MIN_BROWSER_PREWARM_FREE_BYTES = 768 * 1024 * 1024;
 const MAX_BROWSER_PREWARM_IN_FLIGHT = 2;
+const BROWSER_LAUNCH_DISABLE_MS = 15 * 60 * 1000;
 const BROWSER_USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36';
 const HLS_PROBE_TIMEOUT_MS = 6_000;
 const HLS_PROBE_DISABLE_MS = 10 * 60 * 1000;
@@ -94,27 +161,51 @@ const STREAM_VALIDATION_MAX_CANDIDATES = 8;
 const STREAM_VALIDATION_MAX_PER_SOURCE = 2;
 const STREAM_BROWSER_FALLBACK_TOTAL_BUDGET_MS = 4_000;
 const STREAM_BROWSER_FALLBACK_MAX_CANDIDATES = 2;
+const LIVE_STREAM_PREWARM_LIMIT = 6;
+const LIVE_STREAM_PREWARM_TIMEOUT_MS = 22_000;
 const LICENSED_EXTERNAL_VALIDATION_BUDGET_MS = 1_500;
 const STREAM_FAST_MATCH_LOOKUP_TIMEOUT_MS = 2_500;
 const STREAM_SOURCE_LOAD_TIMEOUT_MS = 3_500;
 const STREAM_SOURCE_RANK = new Map([
+  [HELLOSPORTS_SOURCE, -3],
+  [STREAMZY_4K_SOURCE, -2],
   [CDNLIVETV_SOURCE, -1],
   ['echo', 0],
   ['golf', 1],
   ['nebulasports', 2],
   [FLIX_DLSTREAMS_SOURCE, 3],
   [REXDEX_SOURCE, 3],
+  [SPORTSRC_SOURCE, 3],
   ['admin', 4],
   ['delta', 5],
   ['sportsbite', 20],
   ['streamfree', 21],
   ['dlhd', 22],
-  ['sportzx', 23],
-  ['hellosports', 30]
+  ['sportzx', 23]
 ]);
 const STREAMED_SOURCE_DEFAULT_RANK = 5;
 const SUPPLEMENTAL_SPORTS_SOURCES_ENABLED = true;
-const SUPPLEMENTAL_SPORTS_SOURCES = new Set([SPORTSBITE_SOURCE, STREAMFREE_SOURCE, FLIX_DLSTREAMS_SOURCE, CDNLIVETV_SOURCE, 'sportzx']);
+const SUPPLEMENTAL_SPORTS_SOURCES = new Set([SPORTSBITE_SOURCE, STREAMFREE_SOURCE, FLIX_DLSTREAMS_SOURCE, CDNLIVETV_SOURCE, STREAMZY_4K_SOURCE, SPORTSRC_SOURCE, 'sportzx']);
+const STREAMZY_4K_STREAMS = Object.freeze([
+  {
+    id: 'fox-sports-1-4k',
+    label: 'FS1 4K',
+    language: 'English',
+    embedUrl: `${STREAMZY_4K_ORIGIN}/embed/fox-sports-1-4k`
+  },
+  {
+    id: 'fusballtv1uhd-de',
+    label: 'Fusball TV1 UHD',
+    language: 'German',
+    embedUrl: `${STREAMZY_4K_ORIGIN}/embed/fusballtv1uhd-de`
+  },
+  {
+    id: 'fusballtvuhd-de',
+    label: 'Fusball TV1 UHD No Commentary',
+    language: 'German',
+    embedUrl: `${STREAMZY_4K_ORIGIN}/embed/fusballtvuhd-de`
+  }
+]);
 const STREAMFREE_CHANNELS = Object.freeze([
   {
     id: 'willow',
@@ -435,6 +526,15 @@ const isPortugalUzbekistanMatch = (match = {}) => {
   return /\bportugal\b/u.test(text) && /\buzbekistan\b/u.test(text);
 };
 
+const isGermanyMatch = (match = {}) => {
+  const text = normalizeTitle([
+    match.title,
+    match.category,
+    Array.isArray(match.teams) ? match.teams.join(' ') : ''
+  ].filter(Boolean).join(' '));
+  return /\bgermany\b/u.test(text);
+};
+
 const isHttpUrl = (value) => {
   try {
     const parsed = new URL(toString(value), API_BASE);
@@ -510,6 +610,58 @@ const formatEventTime = (dateValue) => {
   return new Date(date).toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
 };
 
+const LIVE_EVENT_WINDOW_MS = 6 * 60 * 60 * 1000;
+
+const isEventLiveByTime = (dateValue, now = Date.now()) => {
+  const date = Number(dateValue || 0);
+  return Number.isFinite(date) && date > 0 && date <= now && now <= date + LIVE_EVENT_WINDOW_MS;
+};
+
+const isLiveCatalog = (catalog = {}) =>
+  toString(catalog?.id) === 'streamed-events-live' || toString(catalog?.endpoint) === '/api/matches/live';
+
+const isCurrentlyLiveMatch = (match = {}) =>
+  Boolean(match?.isLive || match?.live || match?.currentlyLive || isEventLiveByTime(match?.date));
+
+const inferLiveTvGenres = (title = '') => {
+  const normalized = normalizeTitle(title);
+  const genres = ['Live TV'];
+  const add = (genre) => {
+    if (!genres.includes(genre)) genres.push(genre);
+  };
+  if (/\b(?:fifa|world cup|wc|bein sports|fox sports|fox deportes|fs1|fs2|tsn|tudn|telemundo|universo|itv|bbc|sport tv|supersport|sbs)\b/u.test(normalized)) {
+    add('FIFA WC');
+  }
+  if (/\b(?:football|soccer|fifa|world cup|premier league|laliga|serie a|bundesliga|ligue 1|uefa|espn|bein sports|fox sports|tudn|telemundo|universo)\b/u.test(normalized)) {
+    add('Football');
+  }
+  if (/\b(?:cricket|willow|sky sports cricket|star sports|ptv sports|ten sports|sony sports|t sports|super sport cricket)\b/u.test(normalized)) {
+    add('Cricket');
+  }
+  if (/\b(?:tennis|atp|wta|eurosport|tennis channel)\b/u.test(normalized)) {
+    add('Tennis');
+  }
+  if (/\b(?:f1|formula|motogp|moto gp|nascar|racing|sky sports f1)\b/u.test(normalized)) {
+    add('Motorsport');
+  }
+  if (/\b(?:ufc|boxing|fight|wwe|combat|dazn)\b/u.test(normalized)) {
+    add('Fight');
+  }
+  if (/\b(?:nba|nfl|mlb|nhl|espn|fox sports|nbc sports|cbs sports|tnt|usa network|yes network|nesn|masn|sny|bally)\b/u.test(normalized)) {
+    add('US Sports');
+  }
+  if (/\b(?:golf|pga|sky sports golf)\b/u.test(normalized)) {
+    add('Golf');
+  }
+  if (/\b(?:rugby|premier sports|sky sports action)\b/u.test(normalized)) {
+    add('Rugby');
+  }
+  if (/\b(?:sports news|sky sports news|espnews)\b/u.test(normalized)) {
+    add('Sports News');
+  }
+  return genres;
+};
+
 export class StreamedSportsAdapter {
   constructor({
     logger = console,
@@ -542,6 +694,14 @@ export class StreamedSportsAdapter {
     this.dlhdScheduleInFlight = null;
     this.dlhdChannelsInFlight = null;
     this.worldCupXtreamStreamsCache = null;
+    this.sportSrcMatchesCache = new Map();
+    this.sportSrcDetailCache = new Map();
+    this.rexdexPostsCache = null;
+    this.helloSports4kCache = null;
+    this.knownSportsHealthCache = new Map();
+    this.knownSportsHealthInFlight = new Map();
+    this.replayZoneMatchesCache = null;
+    this.replayZoneHlsCache = new Map();
     this.dlhdHlsCache = new Map();
     this.dlhdHlsInFlight = new Map();
     this.hlsCache = new Map();
@@ -550,6 +710,7 @@ export class StreamedSportsAdapter {
     this.mediaCacheBytes = 0;
     this.browserFetchInFlight = new Map();
     this.playlistPrewarmInFlight = new Map();
+    this.liveStreamPrewarmInFlight = null;
     this.hlsResolveInFlight = new Map();
     this.browserPromise = null;
     this.browserFetchPagePromise = null;
@@ -560,6 +721,8 @@ export class StreamedSportsAdapter {
     this.browserFetchChain = Promise.resolve();
     this.browserIdleTimer = null;
     this.activeBrowserPages = 0;
+    this.browserLaunchFailures = 0;
+    this.browserDisabledUntil = 0;
     this.hlsProbeEnabled = toString(process.env.STREAMED_SPORTS_HLS_PROBE_ENABLED).toLowerCase() === 'true';
     this.hlsBrowserFallbackEnabled = toString(
       process.env.STREAMED_SPORTS_HLS_BROWSER_FALLBACK_ENABLED || (this.hlsProbeEnabled ? 'false' : 'true')
@@ -624,6 +787,45 @@ export class StreamedSportsAdapter {
     };
   }
 
+  getRexDexHeaders({ referer = `${REXDEX_ORIGIN}/`, accept = 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' } = {}) {
+    return {
+      accept,
+      origin: REXDEX_ORIGIN,
+      referer,
+      'user-agent': BROWSER_USER_AGENT
+    };
+  }
+
+  getRexDexHlsHeaders(contextUrl = `${REXDEX_ORIGIN}/`) {
+    return this.getRexDexHeaders({
+      referer: contextUrl || `${REXDEX_ORIGIN}/`,
+      accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,video/mp2t,text/plain,*/*'
+    });
+  }
+
+  getHelloSportsHeaders({ referer = `${HELLOSPORTS_ORIGIN}/`, accept = 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' } = {}) {
+    return {
+      accept,
+      origin: HELLOSPORTS_ORIGIN,
+      referer,
+      'user-agent': BROWSER_USER_AGENT
+    };
+  }
+
+  getHelloSportsHlsHeaders(contextUrl = HELLOSPORTS_4K_PAGE) {
+    return this.getHelloSportsHeaders({
+      referer: contextUrl || HELLOSPORTS_4K_PAGE,
+      accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,video/mp2t,text/plain,*/*'
+    });
+  }
+
+  getKnownSportsHlsHeaders() {
+    return {
+      accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,video/mp2t,text/plain,*/*',
+      'user-agent': BROWSER_USER_AGENT
+    };
+  }
+
   buildCdnLiveTvApiUrl(pathName, params = {}) {
     const url = new URL(pathName, CDNLIVETV_API_BASE);
     url.searchParams.set('user', CDNLIVETV_USER || 'cdnlivetv');
@@ -641,6 +843,127 @@ export class StreamedSportsAdapter {
     });
     if (!response.ok) throw new Error(`CDNLiveTV HTTP ${response.status}`);
     return response.json();
+  }
+
+  async fetchRexDexPosts(signal = null) {
+    if (this.rexdexPostsCache?.expiresAt > Date.now()) {
+      return this.rexdexPostsCache.value;
+    }
+
+    const response = await this.fetchImpl(REXDEX_FEED_URL, {
+      signal,
+      redirect: 'follow',
+      headers: this.getRexDexHeaders({
+        accept: 'application/json,text/javascript,*/*;q=0.8'
+      })
+    });
+    if (!response.ok) throw new Error(`RexDex feed HTTP ${response.status}`);
+    const payload = await response.json();
+    const posts = (Array.isArray(payload?.feed?.entry) ? payload.feed.entry : [])
+      .map((entry) => {
+        const title = toString(entry?.title?.$t);
+        const url = (Array.isArray(entry?.link) ? entry.link : [])
+          .find((link) => toString(link?.rel) === 'alternate' && isHttpUrl(link?.href))?.href;
+        if (!title || !url) return null;
+        return {
+          title,
+          url,
+          published: toString(entry?.published?.$t),
+          normalizedTitle: normalizeTitle(title),
+          teams: splitFixtureTeams(title)
+        };
+      })
+      .filter(Boolean);
+    this.rexdexPostsCache = {
+      value: posts,
+      expiresAt: Date.now() + REXDEX_POST_CACHE_MS
+    };
+    return posts;
+  }
+
+  encodeHelloSportsStreamId(stream = {}) {
+    return Buffer.from(JSON.stringify({
+      url: toString(stream?.embedUrl || stream?.url),
+      channelName: toString(stream?.channelName || stream?.language || stream?.label)
+    }), 'utf8').toString('base64url');
+  }
+
+  decodeHelloSportsStreamId(sourceId = '') {
+    try {
+      const parsed = JSON.parse(Buffer.from(toString(sourceId), 'base64url').toString('utf8'));
+      if (!parsed || typeof parsed !== 'object') return null;
+      const url = toString(parsed.url);
+      if (!isHttpUrl(url)) return null;
+      return {
+        url,
+        channelName: toString(parsed.channelName)
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  cleanHelloSportsChannelName(label = '') {
+    return toString(label)
+      .replace(/\bLink\s*\d+\s*\|?/giu, '')
+      .replace(/\bClick\s+Here\s+to\s+Watch\s+Live\b/giu, '')
+      .replace(/\b(?:hd|uhd|4k|quality|stream)\b/giu, '')
+      .replace(/\|/gu, ' ')
+      .replace(/\s+/gu, ' ')
+      .trim() || '4K Channel';
+  }
+
+  extractHelloSportsButtonUrl(value = '') {
+    const text = toString(value);
+    const match = text.match(/location\.href\s*=\s*['"]([^'"]+)['"]/iu)
+      || text.match(/window\.location(?:\.href)?\s*=\s*['"]([^'"]+)['"]/iu);
+    if (!match?.[1]) return '';
+    try {
+      return new URL(match[1], HELLOSPORTS_4K_PAGE).toString();
+    } catch {
+      return '';
+    }
+  }
+
+  async fetchHelloSports4kEntries(signal = null) {
+    if (this.helloSports4kCache?.expiresAt > Date.now()) {
+      return this.helloSports4kCache.value;
+    }
+    const response = await this.fetchImpl(HELLOSPORTS_4K_PAGE, {
+      signal,
+      redirect: 'follow',
+      headers: this.getHelloSportsHeaders()
+    });
+    if (!response.ok) throw new Error(`HelloSports HTTP ${response.status}`);
+    const html = await response.text();
+    const $ = loadHtml(html);
+    const seen = new Set();
+    const entries = [];
+    $('button, a').each((_, element) => {
+      const label = $(element).text().replace(/\s+/gu, ' ').trim();
+      const qualityText = normalizeTitle(label);
+      if (!/\b(?:4k|uhd)\b/u.test(qualityText)) return;
+      const href = toString($(element).attr('href')) || this.extractHelloSportsButtonUrl($(element).attr('onclick'));
+      if (!href) return;
+      let embedUrl = '';
+      try {
+        embedUrl = new URL(href, HELLOSPORTS_4K_PAGE).toString();
+      } catch {
+        return;
+      }
+      if (!isHttpUrl(embedUrl) || seen.has(embedUrl)) return;
+      seen.add(embedUrl);
+      entries.push({
+        embedUrl,
+        channelName: this.cleanHelloSportsChannelName(label),
+        label
+      });
+    });
+    this.helloSports4kCache = {
+      value: entries,
+      expiresAt: Date.now() + HELLOSPORTS_4K_CACHE_MS
+    };
+    return entries;
   }
 
   async fetchFlixDlstreamsJson(pathName, signal = null) {
@@ -776,6 +1099,7 @@ export class StreamedSportsAdapter {
       || normalizeIdPart(`${entry.name || entry.channel_name || entry.channelName || entry.title}-${entry.code || entry.channel_code || entry.channelCode || playerUrl}`);
     const title = cleanDlhdChannelTitle(entry.channel_name || entry.channelName || entry.name || entry.title);
     if (!channelId || !title) return null;
+    const genres = inferLiveTvGenres(title);
     return {
       id: `streamed:${encodeURIComponent(`cdnlivetv-channel-${channelId}`)}`,
       sourceId: `cdnlivetv-channel-${channelId}`,
@@ -785,6 +1109,7 @@ export class StreamedSportsAdapter {
       date: Date.now(),
       poster: null,
       popular: false,
+      genres,
       sources: [{
         source: CDNLIVETV_SOURCE,
         id: this.encodeCdnLiveTvSourceId({
@@ -797,7 +1122,7 @@ export class StreamedSportsAdapter {
         })
       }],
       teams: [],
-      normalizedTitle: normalizeTitle(`${title} live tv cdnlivetv channel`)
+      normalizedTitle: normalizeTitle(`${title} live tv cdnlivetv channel ${genres.join(' ')}`)
     };
   }
 
@@ -1276,6 +1601,60 @@ export class StreamedSportsAdapter {
     ].includes(endpoint);
   }
 
+  getCatalogSportFilter(catalog = {}) {
+    const catalogId = toString(catalog?.id);
+    const endpoint = toString(catalog?.endpoint);
+    const isInternalSourceCatalog = catalogId.endsWith('-source');
+    const coreCatalogs = new Set([
+      'streamed-events-live',
+      'streamed-events-today',
+      'streamed-events-popular',
+      CDNLIVETV_CATALOG_ID,
+      DLHD_CHANNEL_CATALOG_ID,
+      FIFA_WC_CATALOG_ID
+    ]);
+    if (!isInternalSourceCatalog && catalogId.startsWith('streamed-events-') && !coreCatalogs.has(catalogId)) {
+      return normalizeIdPart(catalogId.replace(/^streamed-events-/u, ''));
+    }
+    const endpointMatch = endpoint.match(/^\/api\/matches\/([^/]+)$/u);
+    if (endpointMatch && !['live', 'all-today', 'popular'].includes(endpointMatch[1])) {
+      return normalizeIdPart(decodeURIComponent(endpointMatch[1]));
+    }
+    return '';
+  }
+
+  matchBelongsToCatalogSport(match = {}, sport = '') {
+    const normalizedSport = normalizeIdPart(sport);
+    if (!normalizedSport) return true;
+    const category = normalizeIdPart(match?.category);
+    if (category === normalizedSport) return true;
+    const text = normalizeTitle([
+      match?.title,
+      match?.category,
+      match?.normalizedTitle,
+      ...(Array.isArray(match?.teams) ? match.teams : [])
+    ].filter(Boolean).join(' '));
+    const aliases = new Map([
+      ['football', ['football', 'soccer', 'fifa']],
+      ['cricket', ['cricket']],
+      ['tennis', ['tennis', 'atp', 'wta']],
+      ['basketball', ['basketball', 'nba']],
+      ['baseball', ['baseball', 'mlb']],
+      ['ice-hockey', ['ice hockey', 'hockey', 'nhl']],
+      ['rugby', ['rugby']],
+      ['motor-sports', ['motor sports', 'motorsport', 'formula', 'f1', 'moto gp', 'motogp', 'nascar']],
+      ['racing', ['racing', 'race', 'formula', 'f1', 'moto gp', 'motogp', 'nascar']]
+    ]);
+    const needles = aliases.get(normalizedSport) || [normalizedSport.replace(/-/gu, ' ')];
+    return needles.some((needle) => text.includes(normalizeTitle(needle)));
+  }
+
+  filterMatchesForCatalogSport(catalog = {}, matches = []) {
+    const sport = this.getCatalogSportFilter(catalog);
+    if (!sport) return matches;
+    return matches.filter((match) => this.matchBelongsToCatalogSport(match, sport));
+  }
+
   async getSports(signal = null) {
     if (this.sportsCache && this.sportsCache.expiresAt > Date.now()) {
       return this.sportsCache.value;
@@ -1317,7 +1696,8 @@ export class StreamedSportsAdapter {
       { type: STREMIO_SPORTS_TYPE, id: 'streamed-events-today', endpoint: '/api/matches/all-today', name: 'Sports Events: Today' },
       { type: STREMIO_SPORTS_TYPE, id: 'streamed-events-popular', endpoint: '/api/matches/all-today/popular', name: 'Sports Events: Popular' },
       { type: STREMIO_SPORTS_TYPE, id: CDNLIVETV_CATALOG_ID, endpoint: CDNLIVETV_CACHE_KEY, name: 'Sports Events: Live TV' },
-      { type: STREMIO_SPORTS_TYPE, id: DLHD_CHANNEL_CATALOG_ID, endpoint: DLHD_CHANNEL_CACHE_KEY, name: 'Live TV' }
+      { type: STREMIO_SPORTS_TYPE, id: DLHD_CHANNEL_CATALOG_ID, endpoint: DLHD_CHANNEL_CACHE_KEY, name: 'Live TV' },
+      { type: STREMIO_SPORTS_TYPE, id: REPLAYZONE_CATALOG_ID, endpoint: REPLAYZONE_CACHE_KEY, name: 'Sports Replays' }
     ];
 
     for (const sport of sports.slice(0, 15)) {
@@ -1338,9 +1718,10 @@ export class StreamedSportsAdapter {
       .find((definition) => definition.id === catalogId) || null;
   }
 
-  async loadMatches(catalog, signal = null) {
-    const endpoint = toString(catalog?.endpoint);
-    if (!endpoint) return [];
+	  async loadMatches(catalog, signal = null) {
+	    const endpoint = toString(catalog?.endpoint);
+	    if (!endpoint) return [];
+	    const liveEndpoint = endpoint === '/api/matches/live';
     if (catalog?.id === SPORTSBITE_CATALOG_ID || endpoint === SPORTSBITE_CACHE_KEY) {
       if (!SUPPLEMENTAL_SPORTS_SOURCES_ENABLED) return [];
       return this.loadSportsBiteMatches(catalog, signal);
@@ -1360,18 +1741,22 @@ export class StreamedSportsAdapter {
     if (catalog?.id === DLHD_CHANNEL_CATALOG_ID || endpoint === DLHD_CHANNEL_CACHE_KEY) {
       return this.loadDlhdChannels(catalog, signal);
     }
+    if (catalog?.id === REPLAYZONE_CATALOG_ID || endpoint === REPLAYZONE_CACHE_KEY) {
+      return this.loadReplayZoneMatches(catalog, signal);
+    }
     if (catalog?.fifaWorldCup || catalog?.id === FIFA_WC_CATALOG_ID || endpoint === FIFA_WC_CACHE_KEY) {
       return this.loadFifaWorldCupMatches(catalog, signal);
     }
 
     const cached = this.matchesCache.get(endpoint);
-    if (cached && cached.expiresAt > Date.now()) {
-      const matches = this.mergeMatches(cached.value);
-      this.indexMatches(catalog, matches);
-      return matches;
-    }
+	    if (cached && cached.expiresAt > Date.now()) {
+	      const matches = this.mergeMatches(cached.value);
+	      const filteredMatches = this.filterMatchesForCatalogSport(catalog, matches);
+	      this.indexMatches(catalog, filteredMatches);
+	      return filteredMatches;
+	    }
 
-    const shared = await this.readSharedCache(`matches:${endpoint}`);
+	    const shared = liveEndpoint ? null : await this.readSharedCache(`matches:${endpoint}`);
     if (Array.isArray(shared)) {
       let matches = this.filterSupplementalMatches(this.mergeMatches(shared));
       if (this.shouldMergeSportsBiteIntoCatalog(catalog)) {
@@ -1402,19 +1787,20 @@ export class StreamedSportsAdapter {
         }, signal).catch(() => []);
         matches = this.filterSupplementalMatches(this.mergeMatches([...matches, ...cdnLiveTvMatches]));
       }
-      this.matchesCache.set(endpoint, {
-        value: matches,
-        expiresAt: Date.now() + CACHE_TTL_MS
-      });
-      this.indexMatches(catalog, matches);
-      return matches;
+	      this.matchesCache.set(endpoint, {
+	        value: matches,
+	        expiresAt: Date.now() + (liveEndpoint ? LIVE_MATCH_CACHE_TTL_MS : CACHE_TTL_MS)
+	      });
+      const filteredMatches = this.filterMatchesForCatalogSport(catalog, matches);
+      this.indexMatches(catalog, filteredMatches);
+      return filteredMatches;
     }
 
     try {
-      const payload = await this.fetchJson(endpoint, signal);
-      let matches = (Array.isArray(payload) ? payload : [])
-        .map((entry) => this.toMatch(entry))
-        .filter((match) => match.id && match.title);
+	      const payload = await this.fetchJson(endpoint, signal);
+	      let matches = (Array.isArray(payload) ? payload : [])
+	        .map((entry) => this.toMatch(entry, { liveEndpoint }))
+	        .filter((match) => match.id && match.title);
       matches = this.filterSupplementalMatches(matches);
       if (this.shouldMergeSportsBiteIntoCatalog(catalog)) {
         const sportsBiteMatches = await this.loadSportsBiteMatches({
@@ -1444,13 +1830,16 @@ export class StreamedSportsAdapter {
         }, signal).catch(() => []);
         matches = this.filterSupplementalMatches(this.mergeMatches([...matches, ...cdnLiveTvMatches]));
       }
-      this.matchesCache.set(endpoint, {
-        value: matches,
-        expiresAt: Date.now() + CACHE_TTL_MS
-      });
-      this.indexMatches(catalog, matches);
-      await this.writeSharedCache(`matches:${endpoint}`, matches, CACHE_TTL_MS).catch(() => {});
-      return matches;
+	      this.matchesCache.set(endpoint, {
+	        value: matches,
+	        expiresAt: Date.now() + (liveEndpoint ? LIVE_MATCH_CACHE_TTL_MS : CACHE_TTL_MS)
+	      });
+	      const filteredMatches = this.filterMatchesForCatalogSport(catalog, matches);
+	      this.indexMatches(catalog, filteredMatches);
+	      if (!liveEndpoint) {
+	        await this.writeSharedCache(`matches:${endpoint}`, matches, CACHE_TTL_MS).catch(() => {});
+	      }
+      return filteredMatches;
     } catch (error) {
       this.logger.warn?.('streamed matches load failed', {
         catalog: catalog?.id,
@@ -1556,9 +1945,10 @@ export class StreamedSportsAdapter {
           existing.sportsBiteStreams = [...(existing.sportsBiteStreams || []), stream];
           sportsBiteKeys.add(streamKey);
         }
-      }
-      existing.popular = Boolean(existing.popular || match.popular);
-      bySourceId.set(match.sourceId, existing);
+	      }
+	      existing.popular = Boolean(existing.popular || match.popular);
+	      existing.isLive = Boolean(existing.isLive || match.isLive || isCurrentlyLiveMatch(match));
+	      bySourceId.set(match.sourceId, existing);
     }
     return ordered.map((match) => {
       let hasFlixSource = false;
@@ -1726,10 +2116,11 @@ export class StreamedSportsAdapter {
       title,
       category,
       date,
-      poster: null,
-      posterShape: 'poster',
-      popular: normalizeIdPart(entry?.status) === 'live' || Date.now() >= date,
-      sources,
+	      poster: null,
+	      posterShape: 'poster',
+	      popular: normalizeIdPart(entry?.status) === 'live' || Date.now() >= date,
+	      isLive: normalizeIdPart(entry?.status) === 'live' || isEventLiveByTime(date),
+	      sources,
       teams: [home, away].filter(Boolean),
       normalizedTitle: normalizeTitle(`${title} ${category} ${home} ${away} ${tournament} ${country} cdnlivetv`)
     };
@@ -1765,6 +2156,128 @@ export class StreamedSportsAdapter {
     this.indexMatches(catalog, matches);
     await this.writeSharedCache(`matches:${STREAMFREE_CACHE_KEY}`, matches, CACHE_TTL_MS).catch(() => {});
     return matches;
+  }
+
+  toReplayZoneMatch(entry = {}) {
+    const title = toString(entry.title);
+    if (!title || !Array.isArray(entry.embeds) || !entry.embeds.length) return null;
+    const date = Number.isFinite(Date.parse(entry.date)) ? Date.parse(entry.date) : 0;
+    const hash = createHash('sha1')
+      .update(`${title}\n${entry.category}\n${entry.sub}\n${entry.date}`)
+      .digest('hex')
+      .slice(0, 16);
+    const sourceId = `replay:${hash}`;
+    const category = toString(entry.category) || 'Sports Replays';
+    const sub = toString(entry.sub);
+    return {
+      id: `streamed:${encodeURIComponent(sourceId)}`,
+      sourceId,
+      type: STREMIO_SPORTS_TYPE,
+      title,
+      category,
+      replay: true,
+      replaySubcategory: sub,
+      date,
+      poster: isHttpUrl(entry.thumb) ? entry.thumb : null,
+      posterShape: 'landscape',
+      popular: false,
+      isLive: false,
+      sources: entry.embeds
+        .map((embed, index) => ({
+          source: REPLAYZONE_SOURCE,
+          id: `${hash}:${index + 1}`,
+          streamNo: index + 1,
+          label: toString(embed.label) || `Replay ${index + 1}`,
+          embedType: toString(embed.type),
+          embedUrl: toString(embed.url)
+        }))
+        .filter((source) => isHttpUrl(source.embedUrl)),
+      teams: splitFixtureTeams(title),
+      normalizedTitle: normalizeTitle(`${title} ${category} ${sub} replay full match`)
+    };
+  }
+
+  parseReplayZoneFeed(text = '') {
+    const entries = [];
+    let current = null;
+    for (const rawLine of toString(text).split(/\r?\n/u)) {
+      const line = rawLine.trimEnd();
+      if (line.startsWith('# ')) {
+        current = {
+          title: line.slice(2).trim(),
+          category: '',
+          sub: '',
+          thumb: '',
+          date: '',
+          embeds: []
+        };
+        entries.push(current);
+        continue;
+      }
+      if (!current) continue;
+      if (line.startsWith('~ ')) {
+        const [category, sub, thumb, date] = line.slice(2).split('\t');
+        current.category = toString(category).trim();
+        current.sub = toString(sub).trim();
+        current.thumb = toString(thumb).trim();
+        current.date = toString(date).trim();
+        continue;
+      }
+      if (line.trim()) {
+        const [label, type, url] = line.split('\t');
+        if (url) {
+          current.embeds.push({
+            label: toString(label).trim(),
+            type: toString(type).trim(),
+            url: toString(url).trim()
+          });
+        }
+      }
+    }
+    return entries;
+  }
+
+  async loadReplayZoneMatches(catalog, signal = null) {
+    if (this.replayZoneMatchesCache?.expiresAt > Date.now()) {
+      this.indexMatches(catalog, this.replayZoneMatchesCache.value);
+      return this.replayZoneMatchesCache.value;
+    }
+    const shared = await this.readSharedCache(`matches:${REPLAYZONE_CACHE_KEY}`);
+    if (Array.isArray(shared)) {
+      this.replayZoneMatchesCache = {
+        value: shared,
+        expiresAt: Date.now() + REPLAYZONE_MATCH_CACHE_MS
+      };
+      this.indexMatches(catalog, shared);
+      return shared;
+    }
+    try {
+      const response = await this.fetchImpl(REPLAYZONE_FEED_URL, {
+        signal,
+        headers: {
+          accept: 'text/plain,*/*',
+          'user-agent': BROWSER_USER_AGENT
+        }
+      });
+      if (!response.ok) throw new Error(`ReplayZone HTTP ${response.status}`);
+      const text = await response.text();
+      const matches = this.parseReplayZoneFeed(text)
+        .map((entry) => this.toReplayZoneMatch(entry))
+        .filter((match) => match?.id && match.sources?.length)
+        .sort((left, right) => Number(right.date || 0) - Number(left.date || 0));
+      this.replayZoneMatchesCache = {
+        value: matches,
+        expiresAt: Date.now() + REPLAYZONE_MATCH_CACHE_MS
+      };
+      this.indexMatches(catalog, matches);
+      await this.writeSharedCache(`matches:${REPLAYZONE_CACHE_KEY}`, matches, REPLAYZONE_MATCH_CACHE_MS).catch(() => {});
+      return matches;
+    } catch (error) {
+      this.logger.warn?.('ReplayZone matches load failed', { error: error?.message || String(error) });
+      const fallback = this.replayZoneMatchesCache?.value || [];
+      this.indexMatches(catalog, fallback);
+      return fallback;
+    }
   }
 
   async loadFifaWorldCupMatches(catalog, signal = null) {
@@ -1832,6 +2345,62 @@ export class StreamedSportsAdapter {
     }
   }
 
+  async prewarmLiveEventStreams({ baseUrl = '', privateConfigId = '', limit = LIVE_STREAM_PREWARM_LIMIT, signal = null } = {}) {
+    if (!baseUrl || !privateConfigId || this.liveStreamPrewarmInFlight) {
+      return { attempted: 0, warmed: 0, skipped: true };
+    }
+
+    const task = (async () => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(new Error('Streamed sports live prewarm timeout')), LIVE_STREAM_PREWARM_TIMEOUT_MS);
+      timeout.unref?.();
+      const prewarmSignal = signal && typeof AbortSignal.any === 'function'
+        ? AbortSignal.any([signal, controller.signal])
+        : controller.signal;
+      let attempted = 0;
+      let warmed = 0;
+      try {
+        const liveCatalog = { id: 'streamed-events-live', endpoint: '/api/matches/live' };
+        const matches = await this.loadMatches(liveCatalog, prewarmSignal);
+        const liveMatches = matches
+          .filter((match) => isCurrentlyLiveMatch(match))
+          .sort((left, right) =>
+            Number(right.popular) - Number(left.popular)
+            || Number(left.date || 0) - Number(right.date || 0)
+          )
+          .slice(0, Math.max(1, Math.min(12, Number(limit) || LIVE_STREAM_PREWARM_LIMIT)));
+
+        for (const match of liveMatches) {
+          if (prewarmSignal.aborted) break;
+          attempted += 1;
+          try {
+            const streams = await this.getEventStreams(match.id || `streamed:${encodeURIComponent(match.sourceId)}`, {
+              baseUrl,
+              privateConfigId,
+              prewarm: false,
+              includeQuotaSources: true,
+              signal: prewarmSignal
+            });
+            if (Array.isArray(streams) && streams.some((stream) => stream?.url)) warmed += 1;
+          } catch (error) {
+            this.logger.debug?.('streamed sports live stream prewarm event failed', {
+              match: match.sourceId || match.id,
+              error: error?.message || String(error)
+            });
+          }
+        }
+        return { attempted, warmed, skipped: false };
+      } finally {
+        clearTimeout(timeout);
+      }
+    })().finally(() => {
+      this.liveStreamPrewarmInFlight = null;
+    });
+
+    this.liveStreamPrewarmInFlight = task;
+    return task;
+  }
+
   toSportsBiteMatch(entry) {
     const title = toString(entry?.title) || [toString(entry?.home), toString(entry?.away)].filter(Boolean).join(' vs ');
     const kickoffSeconds = Number(entry?.kickoff?.unix || entry?.kickoff || 0);
@@ -1874,10 +2443,11 @@ export class StreamedSportsAdapter {
       type: STREMIO_SPORTS_TYPE,
       title,
       category,
-      date,
-      poster: null,
-      popular: Boolean(entry?.is_live || entry?.popular),
-      sources: [{ source: SPORTSBITE_SOURCE, id: sourceId }],
+	      date,
+	      poster: null,
+	      popular: Boolean(entry?.is_live || entry?.popular),
+	      isLive: Boolean(entry?.is_live || entry?.live || normalizeIdPart(entry?.status) === 'live' || isEventLiveByTime(date)),
+	      sources: [{ source: SPORTSBITE_SOURCE, id: sourceId }],
       sportsBiteStreams,
       teams: [home, away].filter(Boolean),
       normalizedTitle: normalizeTitle(`${title} ${category} ${home} ${away} ${toString(entry?.league)}`)
@@ -1894,10 +2464,11 @@ export class StreamedSportsAdapter {
       type: STREMIO_SPORTS_TYPE,
       title,
       category,
-      date: Date.now(),
-      poster: isHttpUrl(channel.poster) ? channel.poster : null,
-      popular: true,
-      sources: [{ source: STREAMFREE_SOURCE, id: channel.id }],
+	      date: Date.now(),
+	      poster: isHttpUrl(channel.poster) ? channel.poster : null,
+	      popular: true,
+	      isLive: true,
+	      sources: [{ source: STREAMFREE_SOURCE, id: channel.id }],
       teams: [],
       normalizedTitle: normalizeTitle(`${title} ${category} streamfree live`)
     };
@@ -1925,16 +2496,17 @@ export class StreamedSportsAdapter {
       title,
       category,
       date,
-      poster: null,
-      posterShape: 'poster',
-      popular: /sources=(?:[2-9]|\d{2,})/iu.test(toString(meta?.poster)) || /sources:\s*(?:[2-9]|\d{2,})/iu.test(description),
-      sources: [{ source: FLIX_DLSTREAMS_SOURCE, id: sourceId }],
+	      poster: null,
+	      posterShape: 'poster',
+	      popular: /sources=(?:[2-9]|\d{2,})/iu.test(toString(meta?.poster)) || /sources:\s*(?:[2-9]|\d{2,})/iu.test(description),
+	      isLive: isEventLiveByTime(date),
+	      sources: [{ source: FLIX_DLSTREAMS_SOURCE, id: sourceId }],
       teams,
       normalizedTitle: normalizeTitle(`${title} ${category} ${description} nebulasp dlstreams`)
     };
   }
 
-  toMatch(entry) {
+  toMatch(entry, { liveEndpoint = false } = {}) {
     const sourceId = toString(entry?.id);
     const title = toString(entry?.title);
     const category = normalizeIdPart(entry?.category);
@@ -1964,60 +2536,99 @@ export class StreamedSportsAdapter {
       category,
       date: Number(entry?.date || 0),
       poster: isHttpUrl(poster) ? poster : null,
-      popular: Boolean(entry?.popular),
-      sources,
+	      popular: Boolean(entry?.popular),
+	      isLive: Boolean(liveEndpoint || entry?.is_live || entry?.live || normalizeIdPart(entry?.status) === 'live' || isEventLiveByTime(Number(entry?.date || 0))),
+	      sources,
       teams: [home, away].filter(Boolean),
       normalizedTitle: normalizeTitle(`${title} ${category} ${home} ${away}`)
     };
   }
 
-  toEventMeta(match) {
-    const isWorldCupFootball = isFifaWorldCupMatch(match);
-    const isDlhdChannel = normalizeIdPart(match?.category) === 'dlhd-channels'
-      || normalizeIdPart(match?.category) === 'live-tv'
-      || normalizeIdPart(match?.sourceId).startsWith('dlhd-channel-')
-      || normalizeIdPart(match?.sourceId).startsWith('cdnlivetv-channel-');
-    const displayTitle = isDlhdChannel ? cleanDlhdChannelTitle(match.title) : match.title;
-    const displayCategory = isDlhdChannel ? 'Live TV' : match.category;
-    return {
+	  toEventMeta(match) {
+	    if (match?.replay) {
+	      const displayCategory = toString(match.category) || 'Sports Replays';
+	      const subcategory = toString(match.replaySubcategory);
+	      return {
+	        id: match.id,
+	        type: STREMIO_SPORTS_TYPE,
+	        name: match.title,
+	        poster: match.poster || undefined,
+	        logo: match.poster || undefined,
+	        posterShape: match.posterShape || 'landscape',
+	        genres: [...new Set(['Sports', 'Replays', displayCategory, subcategory].filter(Boolean))],
+	        releaseInfo: match.date ? formatEventTime(match.date) : 'Replay',
+	        runtime: 'Replay',
+	        isLive: false,
+	        description: [
+	          'Sports replay',
+	          `Category: ${displayCategory}`,
+	          subcategory ? `Competition: ${subcategory}` : '',
+	          match.date ? `Date: ${formatEventTime(match.date)}` : '',
+	          match.sources?.length ? `Parts: ${match.sources.length}` : ''
+	        ].filter(Boolean).join('\n')
+	      };
+	    }
+	    const isWorldCupFootball = isFifaWorldCupMatch(match);
+	    const isDlhdChannel = normalizeIdPart(match?.category) === 'dlhd-channels'
+	      || normalizeIdPart(match?.category) === 'live-tv'
+	      || normalizeIdPart(match?.sourceId).startsWith('dlhd-channel-')
+	      || normalizeIdPart(match?.sourceId).startsWith('cdnlivetv-channel-');
+	    const actualLive = !isDlhdChannel && isCurrentlyLiveMatch(match);
+	    const displayTitle = isDlhdChannel ? cleanDlhdChannelTitle(match.title) : match.title;
+	    const displayCategory = isDlhdChannel ? 'Live TV' : match.category;
+	    const liveTvGenres = isDlhdChannel
+	      ? (() => {
+	        const existing = Array.isArray(match?.genres) ? match.genres.map(toString).filter(Boolean) : [];
+	        const inferred = inferLiveTvGenres(displayTitle);
+	        return [...new Set([...existing, ...inferred])];
+	      })()
+	      : [];
+	    return {
       id: match.id,
       type: STREMIO_SPORTS_TYPE,
       name: displayTitle,
       poster: match.poster || undefined,
       logo: match.poster || undefined,
       posterShape: match.posterShape || (match.sources?.some((source) => normalizeIdPart(source?.source) === FLIX_DLSTREAMS_SOURCE) ? 'poster' : 'landscape'),
-      genres: [...new Set(['Sports', displayCategory].filter(Boolean))],
-      tournament: isWorldCupFootball ? 'FIFA World Cup' : undefined,
-      competition: isWorldCupFootball ? 'FIFA World Cup' : undefined,
-      releaseInfo: isDlhdChannel ? 'Live TV' : formatEventTime(match.date),
-      runtime: 'Live',
-      description: isDlhdChannel
-        ? [
-          displayTitle,
-          'Live TV channel',
-          'Streams load from Live TV channel source.'
-        ].filter(Boolean).join('\n')
-        : [
-          'Live sports event',
-          `Category: ${displayCategory}`,
-          `Time: ${formatEventTime(match.date)}`,
-          match.teams.length ? `Teams: ${match.teams.join(' vs ')}` : '',
-          match.popular ? 'Popular event' : ''
-        ].filter(Boolean).join('\n')
+		      genres: [...new Set(['Sports', displayCategory, ...liveTvGenres].filter(Boolean))],
+	      tournament: isWorldCupFootball ? 'FIFA World Cup' : undefined,
+	      competition: isWorldCupFootball ? 'FIFA World Cup' : undefined,
+	      releaseInfo: isDlhdChannel ? 'Live TV' : (actualLive ? '🔴 LIVE' : formatEventTime(match.date)),
+	      runtime: 'Live',
+	      isLive: actualLive,
+	      description: isDlhdChannel
+	        ? [
+	          displayTitle,
+	          'Live TV channel',
+	          liveTvGenres.filter((genre) => genre !== 'Live TV').length
+	            ? `Genres: ${liveTvGenres.filter((genre) => genre !== 'Live TV').join(', ')}`
+	            : '',
+	          'Streams load from Live TV channel source.'
+	        ].filter(Boolean).join('\n')
+	        : [
+	          'Live sports event',
+	          `Category: ${displayCategory}`,
+	          actualLive ? 'Status: LIVE' : '',
+	          `Time: ${formatEventTime(match.date)}`,
+	          match.teams.length ? `Teams: ${match.teams.join(' vs ')}` : '',
+	          match.popular ? 'Popular event' : ''
+	        ].filter(Boolean).join('\n')
     };
   }
 
-  async getEventCatalog({ catalog = {}, search = '', skip = 0, limit = EVENT_CATALOG_LIMIT, signal = null } = {}) {
-    const needle = normalizeTitle(search);
-    const matches = await this.loadMatches(catalog, signal);
-    const isDlhdChannelCatalog = catalog?.id === DLHD_CHANNEL_CATALOG_ID || catalog?.endpoint === DLHD_CHANNEL_CACHE_KEY;
-    const pageLimit = isDlhdChannelCatalog
-      ? Math.max(Number(limit) || 0, DLHD_CHANNEL_CATALOG_LIMIT)
-      : limit;
-    return matches
-      .filter((match) => !needle || match.normalizedTitle.includes(needle))
-      .filter((match) => !isDlhdChannelCatalog || needle || isLikelySportsDlhdChannelTitle(match.title))
-      .sort((left, right) => {
+	  async getEventCatalog({ catalog = {}, search = '', skip = 0, limit = EVENT_CATALOG_LIMIT, signal = null } = {}) {
+	    const needle = normalizeTitle(search);
+	    const matches = await this.loadMatches(catalog, signal);
+	    const isDlhdChannelCatalog = catalog?.id === DLHD_CHANNEL_CATALOG_ID || catalog?.endpoint === DLHD_CHANNEL_CACHE_KEY;
+	    const liveCatalog = isLiveCatalog(catalog);
+	    const pageLimit = isDlhdChannelCatalog
+	      ? Math.max(Number(limit) || 0, DLHD_CHANNEL_CATALOG_LIMIT)
+	      : limit;
+	    return matches
+	      .filter((match) => !needle || match.normalizedTitle.includes(needle))
+	      .filter((match) => !isDlhdChannelCatalog || needle || isLikelySportsDlhdChannelTitle(match.title))
+	      .filter((match) => !liveCatalog || isCurrentlyLiveMatch(match))
+	      .sort((left, right) => {
         if (isDlhdChannelCatalog) {
           const sportsScore = Number(isLikelySportsDlhdChannelTitle(right.title)) - Number(isLikelySportsDlhdChannelTitle(left.title));
           if (sportsScore !== 0) return sportsScore;
@@ -2042,10 +2653,10 @@ export class StreamedSportsAdapter {
         ? AbortSignal.any([signal, AbortSignal.timeout(STREAM_FAST_MATCH_LOOKUP_TIMEOUT_MS)])
         : AbortSignal.timeout(STREAM_FAST_MATCH_LOOKUP_TIMEOUT_MS);
       try {
-        const payload = await this.fetchJson(endpoint, lookupSignal);
-        const matches = (Array.isArray(payload) ? payload : [])
-          .map((entry) => this.toMatch(entry))
-          .filter((match) => match.id && match.title);
+	        const payload = await this.fetchJson(endpoint, lookupSignal);
+	        const matches = (Array.isArray(payload) ? payload : [])
+	          .map((entry) => this.toMatch(entry, { liveEndpoint: endpoint === '/api/matches/live' }))
+	          .filter((match) => match.id && match.title);
         const match = matches.find((entry) => entry.sourceId === sourceId);
         if (match) {
           this.matchesCache.set(endpoint, {
@@ -2129,8 +2740,9 @@ export class StreamedSportsAdapter {
     if (!SUPPLEMENTAL_SPORTS_SOURCES_ENABLED && isSupplementalSportsSource(source.source)) {
       return [];
     }
-    const cached = this.streamCache.get(key);
-    if (cached && cached.expiresAt > Date.now()) {
+    const skipStreamCache = normalizeIdPart(source.source) === CDNLIVETV_SOURCE;
+    const cached = skipStreamCache ? null : this.streamCache.get(key);
+    if (!skipStreamCache && cached && cached.expiresAt > Date.now()) {
       return cached.value;
     }
 
@@ -2256,58 +2868,23 @@ export class StreamedSportsAdapter {
         return streams;
       }
       if (normalizeIdPart(source.source) === CDNLIVETV_SOURCE) {
-        const sharedCacheKey = `stream:v1:${CDNLIVETV_SOURCE}:${toString(source.id)}`;
-        const sharedCached = await this.readSharedCache(sharedCacheKey);
-        if (Array.isArray(sharedCached) && sharedCached.length) {
-          this.streamCache.set(key, {
-            value: sharedCached,
-            expiresAt: Date.now() + CDNLIVETV_STREAM_CACHE_MS
-          });
-          return sharedCached;
-        }
-        const staleShared = await this.readSharedCache(sharedCacheKey, {
-          allowStale: true,
-          staleTtlMs: CDNLIVETV_STREAM_STALE_MS
-        });
-        let streams = [];
-        try {
-          const hls = await this.resolveCdnLiveTvChannel(source.id, signal);
-          const channel = this.decodeCdnLiveTvSourceId(source.id) || {};
-          streams = hls?.url ? [{
-            id: toString(source.id),
-            streamNo: 1,
-            language: toString(channel.name) || 'Live TV',
-            hd: true,
-            embedUrl: hls.contextUrl,
-            directHlsUrl: hls.url,
-            contextUrl: hls.contextUrl,
-            headers: hls.headers,
-            source: CDNLIVETV_SOURCE,
-            viewers: Number(channel.viewers || 0),
-            playbackProfile: hls.playbackProfile
-          }] : [];
-        } catch (error) {
-          if (Array.isArray(staleShared) && staleShared.length) {
-            this.logger.warn?.('CDNLiveTV stream resolve failed, using stale cache', {
-              error: error?.message || String(error)
-            });
-            this.streamCache.set(key, {
-              value: staleShared,
-              expiresAt: Date.now() + CDNLIVETV_STREAM_CACHE_MS
-            });
-            return staleShared;
-          }
-          throw error;
-        }
-        this.streamCache.set(key, {
-          value: streams,
-          expiresAt: Date.now() + CDNLIVETV_STREAM_CACHE_MS
-        });
-        if (streams.length) {
-          await this.writeSharedCache(sharedCacheKey, streams, CDNLIVETV_STREAM_CACHE_MS).catch((error) => {
-            this.logger.debug?.('CDNLiveTV stream cache write failed', { error: error?.message || String(error) });
-          });
-        }
+        const hls = await this.resolveCdnLiveTvChannel(source.id, signal);
+        const channel = this.decodeCdnLiveTvSourceId(source.id) || {};
+        const channelName = toString(channel.name) || 'Live TV';
+        const streams = hls?.url ? [{
+          id: toString(source.id),
+          streamNo: 1,
+          channelName,
+          language: '',
+          hd: true,
+          embedUrl: hls.contextUrl,
+          directHlsUrl: hls.url,
+          contextUrl: hls.contextUrl,
+          headers: hls.headers,
+          source: CDNLIVETV_SOURCE,
+          viewers: Number(channel.viewers || 0),
+          playbackProfile: hls.playbackProfile
+        }] : [];
         return streams;
       }
       if (normalizeIdPart(source.source) === SPORTSBITE_SOURCE) {
@@ -2664,6 +3241,211 @@ export class StreamedSportsAdapter {
       .map((result) => result.value);
   }
 
+  async getPlayableHelloSports4kCards(match, { baseUrl = '', privateConfigId = '', signal = null } = {}) {
+    if (!baseUrl || !privateConfigId || !isFifaWorldCupMatch(match) || !isCurrentlyLiveMatch(match)) return [];
+    const streams = await this.getHelloSports4kStreamsForMatch(match, signal).catch((error) => {
+      this.logger.debug?.('hellosports 4k stream load failed', {
+        match: match.sourceId || match.id,
+        error: error?.message || String(error)
+      });
+      return [];
+    });
+    const cards = [];
+    for (const stream of streams) {
+      if (cards.length >= HELLOSPORTS_4K_MAX_CARDS || signal?.aborted) break;
+      try {
+        const result = await this.validateStreamPlayableHls(stream, signal, {
+          allowBrowserFallback: false
+        });
+        const hls = result?.hls;
+        if (!hls?.url || !this.isHelloSports4kPlaybackProfile(hls.playbackProfile || stream.playbackProfile)) continue;
+        const privateUrl = this.getPrivateStreamUrl(stream, { baseUrl, privateConfigId });
+        if (!privateUrl) continue;
+        const playbackUrl = hls.resolveOnPlayback
+          ? privateUrl
+          : [
+            `${privateUrl}?url=${Buffer.from(hls.url).toString('base64url')}`,
+            hls.contextUrl ? `ctx=${Buffer.from(hls.contextUrl).toString('base64url')}` : ''
+          ].filter(Boolean).join('&');
+        cards.push({
+          name: 'Nebula Sports 4K',
+          title: this.buildPlaybackCardTitle(stream, hls),
+          url: playbackUrl,
+          behaviorHints: {
+            bingeGroup: `streamed-${match.normalizedTitle}`
+          }
+        });
+      } catch (error) {
+        this.logger.debug?.('hellosports 4k hls validation failed', {
+          match: match.sourceId || match.id,
+          channel: stream.channelName,
+          error: error?.message || String(error)
+        });
+      }
+    }
+    return cards;
+  }
+
+  getKnownSportsChannelsForMatch(match = {}) {
+    if (!SUPPLEMENTAL_SPORTS_SOURCES_ENABLED || !isCurrentlyLiveMatch(match)) return [];
+    const category = normalizeIdPart(match?.category);
+    return KNOWN_SPORTS_CHANNELS.filter((channel) => {
+      if (channel.worldCup && isFifaWorldCupMatch(match)) return true;
+      return channel.category && normalizeIdPart(channel.category) === category;
+    });
+  }
+
+  getKnownSportsHealthKey(channel = {}) {
+    return toString(channel.id || channel.directHlsUrl).toLowerCase();
+  }
+
+  async validateKnownSportsChannelFresh(channel, signal = null) {
+    const timeoutSignal = signal && typeof AbortSignal.any === 'function'
+      ? AbortSignal.any([signal, AbortSignal.timeout(KNOWN_SPORTS_HLS_TIMEOUT_MS)])
+      : AbortSignal.timeout(KNOWN_SPORTS_HLS_TIMEOUT_MS);
+    const response = await this.fetchImpl(channel.directHlsUrl, {
+      redirect: 'follow',
+      signal: timeoutSignal,
+      headers: this.getKnownSportsHlsHeaders()
+    });
+    if (!response.ok) throw new Error(`Known sports HLS HTTP ${response.status}`);
+    const text = await response.text();
+    if (!text.includes('#EXTM3U')) throw new Error('Known sports playlist is not playable');
+    const fetched = {
+      status: response.status,
+      url: response.url || channel.directHlsUrl,
+      headers: Object.fromEntries(response.headers.entries()),
+      body: Buffer.from(text)
+    };
+    this.setCachedPlaylist(channel.directHlsUrl, fetched);
+    await this.setSharedPlaylist(channel.directHlsUrl, fetched);
+    return this.extractHlsPlaybackProfile(text) || channel.playbackProfile || {
+      quality: 'HD',
+      speedMbps: 8
+    };
+  }
+
+  async validateKnownSportsChannel(channel, signal = null) {
+    const key = this.getKnownSportsHealthKey(channel);
+    const cached = this.knownSportsHealthCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) {
+      if (cached.ok) return cached.playbackProfile;
+      throw new Error(cached.error || 'Known sports channel unhealthy');
+    }
+    if (cached) this.knownSportsHealthCache.delete(key);
+    if (this.knownSportsHealthInFlight.has(key)) {
+      return this.knownSportsHealthInFlight.get(key);
+    }
+    const task = this.validateKnownSportsChannelFresh(channel, signal)
+      .then((playbackProfile) => {
+        this.knownSportsHealthCache.set(key, {
+          ok: true,
+          playbackProfile,
+          checkedAt: Date.now(),
+          expiresAt: Date.now() + KNOWN_SPORTS_HEALTH_CACHE_MS
+        });
+        return playbackProfile;
+      })
+      .catch((error) => {
+        if (error?.name !== 'AbortError') {
+          this.knownSportsHealthCache.set(key, {
+            ok: false,
+            error: error?.message || String(error),
+            checkedAt: Date.now(),
+            expiresAt: Date.now() + KNOWN_SPORTS_DOWN_CACHE_MS
+          });
+        }
+        throw error;
+      })
+      .finally(() => {
+        this.knownSportsHealthInFlight.delete(key);
+      });
+    this.knownSportsHealthInFlight.set(key, task);
+    return task;
+  }
+
+  async getPlayableKnownSportsCards(match, { signal = null } = {}) {
+    if (!isFifaWorldCupMatch(match) || !isCurrentlyLiveMatch(match)) return [];
+    const channels = this.getKnownSportsChannelsForMatch(match).slice(0, KNOWN_SPORTS_MAX_CARDS);
+    const settled = await Promise.allSettled(channels.map(async (channel) => {
+      try {
+        const playbackProfile = await this.validateKnownSportsChannel(channel, signal);
+        const stream = {
+          id: channel.id,
+          source: KNOWN_SPORTS_SOURCE,
+          streamNo: 1,
+          channelName: channel.channelName,
+          language: '',
+          hd: true,
+          highlightLabel: 'Fast direct stream',
+          playbackProfile
+        };
+        return {
+          name: 'Nebula Sports Fast',
+          title: this.buildPlaybackCardTitle(stream, {
+            url: channel.directHlsUrl,
+            playbackProfile
+          }),
+          url: channel.directHlsUrl,
+          behaviorHints: {
+            bingeGroup: `streamed-${match.normalizedTitle}`
+          }
+        };
+      } catch (error) {
+        this.logger.debug?.('known sports HLS validation failed', {
+          match: match.sourceId || match.id,
+          channel: channel.channelName,
+          error: error?.message || String(error)
+        });
+        return null;
+      }
+    }));
+    return settled
+      .filter((result) => result.status === 'fulfilled' && result.value?.url)
+      .map((result) => result.value);
+  }
+
+  getDiagnostics() {
+    const now = Date.now();
+    return {
+      caches: {
+        sports: Boolean(this.sportsCache?.expiresAt > now),
+        matches: this.matchesCache.size,
+        streams: this.streamCache.size,
+        hls: this.hlsCache.size,
+        playlists: this.playlistCache.size,
+        media: this.mediaCache.size,
+        catalogIndexes: this.catalogMatchIndex.size,
+        matchIndex: this.matchIndex.size,
+        knownSportsHealth: this.knownSportsHealthCache.size
+      },
+      probe: {
+        enabled: this.hlsProbeEnabled,
+        failures: this.hlsProbeFailures,
+        disabledForSeconds: Math.max(0, Math.ceil((this.hlsProbeDisabledUntil - now) / 1000))
+      },
+      browser: {
+        fallbackEnabled: this.hlsBrowserFallbackEnabled,
+        launchFailures: this.browserLaunchFailures,
+        disabledForSeconds: Math.max(0, Math.ceil((this.browserDisabledUntil - now) / 1000)),
+        activePages: this.activeBrowserPages
+      },
+      knownSports: KNOWN_SPORTS_CHANNELS.map((channel) => {
+        const cached = this.knownSportsHealthCache.get(this.getKnownSportsHealthKey(channel));
+        return {
+          id: channel.id,
+          channelName: channel.channelName,
+          ok: cached ? Boolean(cached.ok) : null,
+          checkedAt: cached?.checkedAt ? new Date(cached.checkedAt).toISOString() : null,
+          expiresInSeconds: cached?.expiresAt ? Math.max(0, Math.ceil((cached.expiresAt - now) / 1000)) : null,
+          quality: cached?.playbackProfile?.quality || channel.playbackProfile?.quality || '',
+          speedMbps: cached?.playbackProfile?.speedMbps || channel.playbackProfile?.speedMbps || 0,
+          error: cached?.error || ''
+        };
+      })
+    };
+  }
+
   getWorldCupXtreamConfig() {
     const baseUrl = toString(process.env.NEBULA_SPORTS_WC_XTREAM_BASE_URL).replace(/\/+$/u, '');
     const username = toString(process.env.NEBULA_SPORTS_WC_XTREAM_USERNAME);
@@ -2782,6 +3564,232 @@ export class StreamedSportsAdapter {
     return cards;
   }
 
+  getSportSrcApiKey() {
+    return toString(process.env.SPORTSRC_API_KEY).trim();
+  }
+
+  buildSportSrcApiUrl(type, params = {}) {
+    const url = new URL(SPORTSRC_API_BASE);
+    url.searchParams.set('type', type);
+    for (const [key, value] of Object.entries(params || {})) {
+      if (value !== undefined && value !== null && toString(value) !== '') {
+        url.searchParams.set(key, toString(value));
+      }
+    }
+    return url.toString();
+  }
+
+  getSportSrcHeaders() {
+    return {
+      accept: 'application/json,text/plain,*/*',
+      'x-api-key': this.getSportSrcApiKey(),
+      'user-agent': BROWSER_USER_AGENT
+    };
+  }
+
+  formatSportSrcDate(value) {
+    const date = new Date(value);
+    if (!Number.isFinite(date.getTime())) return '';
+    return date.toISOString().slice(0, 10);
+  }
+
+  getSportSrcLookupDates(match = {}) {
+    const dates = new Set();
+    const add = (value) => {
+      const formatted = this.formatSportSrcDate(value);
+      if (formatted) dates.add(formatted);
+    };
+    add(match.date);
+    add(match.timestamp);
+    add(Date.now());
+    return [...dates].slice(0, 2);
+  }
+
+  flattenSportSrcMatches(payload = {}) {
+    const groups = Array.isArray(payload?.data) ? payload.data : [];
+    return groups.flatMap((group) => {
+      const leagueName = toString(group?.league?.name);
+      const matches = Array.isArray(group?.matches) ? group.matches : [];
+      return matches.map((entry) => {
+        const teams = [
+          toString(entry?.teams?.home?.name),
+          toString(entry?.teams?.away?.name)
+        ].filter(Boolean);
+        return {
+          id: toString(entry?.id),
+          title: toString(entry?.title),
+          category: 'football',
+          league: leagueName,
+          teams,
+          status: toString(entry?.status),
+          timestamp: Number(entry?.timestamp || 0)
+        };
+      }).filter((entry) => entry.id && entry.title);
+    });
+  }
+
+  async fetchSportSrcMatchesForDate(date, signal = null) {
+    const apiKey = this.getSportSrcApiKey();
+    if (!apiKey || !date) return [];
+    const cacheKey = `football:${date}`;
+    const cached = this.sportSrcMatchesCache.get(cacheKey);
+    if (cached?.expiresAt > Date.now()) return cached.value;
+    const statusResults = await Promise.all(['inprogress', 'upcoming'].map(async (status) => {
+      const response = await this.fetchImpl(this.buildSportSrcApiUrl('matches', {
+        sport: 'football',
+        status,
+        date
+      }), {
+        signal,
+        headers: this.getSportSrcHeaders()
+      });
+      if (!response.ok) throw new Error(`SportSRC matches HTTP ${response.status}`);
+      return this.flattenSportSrcMatches(await response.json());
+    }));
+    const matches = [...new Map(statusResults.flat().map((match) => [match.id, match])).values()];
+    this.sportSrcMatchesCache.set(cacheKey, {
+      value: matches,
+      expiresAt: Date.now() + SPORTSRC_MATCH_CACHE_MS
+    });
+    return matches;
+  }
+
+  getSportSrcMatchScore(match = {}, candidate = {}) {
+    const matchKey = getMatchEventKey(match);
+    const candidateKey = getMatchEventKey(candidate);
+    if (matchKey && candidateKey && matchKey === candidateKey) return 100;
+    const matchTeams = (Array.isArray(match.teams) && match.teams.length >= 2 ? match.teams : splitFixtureTeams(match.title))
+      .map(normalizeTeamName)
+      .filter(Boolean);
+    const candidateTeams = (Array.isArray(candidate.teams) && candidate.teams.length >= 2 ? candidate.teams : splitFixtureTeams(candidate.title))
+      .map(normalizeTeamName)
+      .filter(Boolean);
+    const teamHits = matchTeams.filter((team) => candidateTeams.includes(team)).length;
+    if (teamHits >= 2) return 90;
+    const matchTitle = normalizeTitle(match.title);
+    const candidateTitle = normalizeTitle(candidate.title);
+    if (matchTitle && candidateTitle && (matchTitle.includes(candidateTitle) || candidateTitle.includes(matchTitle))) return 70;
+    return teamHits * 30;
+  }
+
+  async findSportSrcMatch(match = {}, signal = null) {
+    if (!this.getSportSrcApiKey() || !isFifaWorldCupMatch(match)) return null;
+    const candidates = [];
+    for (const date of this.getSportSrcLookupDates(match)) {
+      const dayMatches = await this.fetchSportSrcMatchesForDate(date, signal).catch((error) => {
+        this.logger.debug?.('sportsrc matches load failed', {
+          date,
+          error: error?.message || String(error)
+        });
+        return [];
+      });
+      candidates.push(...dayMatches);
+    }
+    return candidates
+      .map((candidate) => ({
+        candidate,
+        score: this.getSportSrcMatchScore(match, candidate)
+      }))
+      .filter((entry) => entry.score >= 60)
+      .sort((left, right) => right.score - left.score)[0]?.candidate || null;
+  }
+
+  async fetchSportSrcDetail(matchId, signal = null) {
+    const apiKey = this.getSportSrcApiKey();
+    if (!apiKey || !matchId) return null;
+    const cached = this.sportSrcDetailCache.get(matchId);
+    if (cached?.expiresAt > Date.now()) return cached.value;
+    const response = await this.fetchImpl(this.buildSportSrcApiUrl('detail', { id: matchId }), {
+      signal,
+      headers: this.getSportSrcHeaders()
+    });
+    if (!response.ok) throw new Error(`SportSRC detail HTTP ${response.status}`);
+    const payload = await response.json();
+    const detail = payload?.data || payload;
+    this.sportSrcDetailCache.set(matchId, {
+      value: detail,
+      expiresAt: Date.now() + SPORTSRC_DETAIL_CACHE_MS
+    });
+    return detail;
+  }
+
+  getSportSrcStreams(detail = {}) {
+    const detailMatchId = normalizeIdPart(detail?.match_info?.id || detail?.id || 'match');
+    return (Array.isArray(detail?.sources) ? detail.sources : [])
+      .map((stream, index) => ({
+        id: `${detailMatchId}:${toString(stream?.id || `stream-${index + 1}`)}`,
+        source: SPORTSRC_SOURCE,
+        streamNo: Number(stream?.streamNo || index + 1),
+        language: toString(stream?.language),
+        hd: Boolean(stream?.hd),
+        embedUrl: toString(stream?.embedUrl),
+        contextUrl: toString(stream?.embedUrl),
+        viewers: 0
+      }))
+      .filter((stream) => stream.id && isHttpUrl(stream.embedUrl));
+  }
+
+  async getPlayableSportSrcCards(match, { baseUrl = '', privateConfigId = '', signal = null } = {}) {
+    if (!baseUrl || !privateConfigId || !isFifaWorldCupMatch(match) || !this.getSportSrcApiKey()) return [];
+    const sportSrcMatch = await this.findSportSrcMatch(match, signal);
+    if (!sportSrcMatch?.id) return [];
+    const detail = await this.fetchSportSrcDetail(sportSrcMatch.id, signal).catch((error) => {
+      this.logger.debug?.('sportsrc detail load failed', {
+        match: sportSrcMatch.id,
+        error: error?.message || String(error)
+      });
+      return null;
+    });
+    const candidates = this.getSportSrcStreams(detail).slice(0, SPORTSRC_MAX_CANDIDATES);
+    const cards = [];
+    const deadlineAt = Date.now() + SPORTSRC_VALIDATION_BUDGET_MS;
+    for (const stream of candidates) {
+      if (cards.length >= SPORTSRC_MAX_CARDS || Date.now() >= deadlineAt || signal?.aborted) break;
+      try {
+        const remainingMs = Math.max(750, deadlineAt - Date.now());
+        const validationSignal = signal && typeof AbortSignal.any === 'function'
+          ? AbortSignal.any([signal, AbortSignal.timeout(remainingMs)])
+          : AbortSignal.timeout(remainingMs);
+        const probed = await this.resolvePlayableHlsWithProbe(stream.embedUrl, validationSignal);
+        if (!probed?.url) continue;
+        const headers = this.getPlaybackHeadersForSource(SPORTSRC_SOURCE, stream.embedUrl);
+        const playbackProfile = this.requiresBrowserHlsContext(probed.url)
+          ? this.inferStreamPlaybackProfile(stream)
+          : await this.validateDirectHlsUrl(probed.url, validationSignal, headers);
+        const hls = {
+          url: probed.url,
+          contextUrl: stream.embedUrl,
+          headers,
+          playbackProfile,
+          resolveOnPlayback: this.requiresBrowserHlsContext(probed.url)
+        };
+        const cacheKey = `${SPORTSRC_SOURCE}:${stream.id}:${stream.streamNo || 1}`;
+        this.setCachedHls(cacheKey, hls);
+        await this.setSharedHls(cacheKey, hls);
+        const privateUrl = this.getPrivateStreamUrl(stream, { baseUrl, privateConfigId });
+        if (!privateUrl) continue;
+        cards.push({
+          name: `NebulaStreams ${this.formatStreamSourceLabel(SPORTSRC_SOURCE)}`,
+          title: this.buildPlaybackCardTitle(stream, hls),
+          url: [
+            `${privateUrl}?url=${Buffer.from(hls.url).toString('base64url')}`,
+            hls.contextUrl ? `ctx=${Buffer.from(hls.contextUrl).toString('base64url')}` : ''
+          ].filter(Boolean).join('&'),
+          behaviorHints: {
+            bingeGroup: `streamed-${match.normalizedTitle}`
+          }
+        });
+      } catch (error) {
+        this.logger.debug?.('sportsrc hls validation failed', {
+          match: sportSrcMatch.id,
+          stream: stream.id,
+          error: error?.message || String(error)
+        });
+      }
+    }
+    return cards;
+  }
+
   getLicensedExternalEmbedSource(id) {
     return LICENSED_EXTERNAL_EMBED_STREAM_BY_ID.get(normalizeIdPart(id)) || null;
   }
@@ -2820,6 +3828,13 @@ export class StreamedSportsAdapter {
     return 'HD';
   }
 
+  isRexDexHighQualityPlaybackProfile(profile = null) {
+    const quality = normalizeTitle(profile?.quality || '');
+    const heightMatch = quality.match(/\b(\d{3,4})p?\b/u);
+    const height = heightMatch ? Number.parseInt(heightMatch[1], 10) : 0;
+    return quality.includes('4k') || quality.includes('uhd') || height >= REXDEX_MIN_HEIGHT;
+  }
+
   estimateNetworkSpeedMbps(bandwidth = 0, height = 0) {
     const measuredMbps = Math.ceil((Number(bandwidth || 0) * 1.6) / 1_000_000);
     if (measuredMbps > 0) return Math.max(3, measuredMbps);
@@ -2847,6 +3862,7 @@ export class StreamedSportsAdapter {
   formatStreamSourceLabel(source = '') {
     const normalized = normalizeIdPart(source);
     const labels = new Map([
+      [STREAMZY_4K_SOURCE, 'Streamzy 4K'],
       [STREAMFREE_SOURCE, 'StreamFree'],
       [SPORTSBITE_SOURCE, 'SportsBite'],
       [DLHD_SOURCE, 'Live TV'],
@@ -2854,8 +3870,11 @@ export class StreamedSportsAdapter {
       [CDNLIVETV_SOURCE, 'Live TV'],
       [REXDEX_SOURCE, 'RexDex'],
       [WC_XTREAM_SOURCE, 'World Cup IPTV'],
+      [SPORTSRC_SOURCE, 'SportSRC'],
+      [REPLAYZONE_SOURCE, 'ReplayZone'],
       ['nebulasports', 'Nebula Sports'],
-      ['hellosports', 'Hello Sports'],
+      [HELLOSPORTS_SOURCE, 'Hello Sports'],
+      [KNOWN_SPORTS_SOURCE, 'Known Sports'],
       ['sportzx', 'SportzX'],
       ['admin', 'Admin'],
       ['delta', 'Delta'],
@@ -2885,8 +3904,11 @@ export class StreamedSportsAdapter {
       CDNLIVETV_SOURCE,
       REXDEX_SOURCE,
       WC_XTREAM_SOURCE,
+      SPORTSRC_SOURCE,
+      REPLAYZONE_SOURCE,
       'nebulasports',
-      'hellosports',
+      HELLOSPORTS_SOURCE,
+      KNOWN_SPORTS_SOURCE,
       'sportzx'
     ]);
     if (knownSourceLabels.has(normalizedLanguage)) return '';
@@ -2897,7 +3919,14 @@ export class StreamedSportsAdapter {
     const profile = hls?.playbackProfile || this.getCachedHlsPlaybackProfile(hls?.url) || this.inferStreamPlaybackProfile(stream);
     const sourceLabel = this.formatStreamSourceLabel(stream?.source);
     const languageLabel = this.getStreamLanguageLabel(stream, sourceLabel);
+    const sourceKey = normalizeIdPart(stream?.source);
+    const channelName = [CDNLIVETV_SOURCE, HELLOSPORTS_SOURCE, KNOWN_SPORTS_SOURCE].includes(sourceKey)
+      ? toString(stream?.channelName)
+      : '';
+    const highlightLabel = toString(stream?.highlightLabel);
     return [
+      highlightLabel,
+      channelName ? `Channel: ${channelName}` : '',
       `Recommended speed: ${profile.speedMbps || 5} Mbps+`,
       languageLabel ? `Language: ${languageLabel}` : ''
     ].filter(Boolean).join('\n');
@@ -2921,7 +3950,9 @@ export class StreamedSportsAdapter {
     const match = await this.findMatch(id, signal);
     if (!match) return { match: null, streams: [] };
 
-    const dlhdSources = await this.getDlhdSourcesForMatch(match, signal).catch((error) => {
+    const hasCdnLiveTvSource = Array.isArray(match.sources)
+      && match.sources.some((source) => normalizeIdPart(source?.source) === CDNLIVETV_SOURCE);
+    const dlhdSources = hasCdnLiveTvSource ? [] : await this.getDlhdSourcesForMatch(match, signal).catch((error) => {
       this.logger.debug?.('dlhd event match failed', {
         match: match.sourceId || match.id,
         error: error?.message || String(error)
@@ -2939,6 +3970,7 @@ export class StreamedSportsAdapter {
         streamId: stream.streamId || stream.id,
         streamNo: Number(stream.streamNo || 1),
         language: stream.language,
+        channelName: stream.channelName,
         hd: Boolean(stream.hd),
         viewers: Number(stream.viewers || 0),
         embedUrl: stream.embedUrl || this.getEmbedUrl({
@@ -2962,29 +3994,329 @@ export class StreamedSportsAdapter {
   }
 
   getTemporaryEventDirectStreams(match = {}) {
-    if (Date.now() >= REXDEX_PORTUGAL_UZBEKISTAN_UNTIL_MS) return [];
-    if (!isPortugalUzbekistanMatch(match)) return [];
+    const streams = [];
+    if (Date.now() < REXDEX_PORTUGAL_UZBEKISTAN_UNTIL_MS && isPortugalUzbekistanMatch(match)) {
+      streams.push({
+        id: REXDEX_PORTUGAL_UZBEKISTAN_STREAM_ID,
+        streamNo: 1,
+        language: 'English',
+        hd: true,
+        embedUrl: REXDEX_PORTUGAL_UZBEKISTAN_PAGE,
+        contextUrl: REXDEX_PORTUGAL_UZBEKISTAN_PAGE,
+        directHlsUrl: REXDEX_PORTUGAL_UZBEKISTAN_HLS,
+        headers: {
+          ...this.getBrowserFetchHeaders(),
+          accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,text/plain,*/*',
+          origin: 'https://www.rexdexsports.in',
+          referer: REXDEX_PORTUGAL_UZBEKISTAN_PAGE
+        },
+        source: REXDEX_SOURCE,
+        viewers: 0,
+        playbackProfile: {
+          quality: 'HD',
+          speedMbps: 8
+        }
+      });
+    }
+    return streams;
+  }
+
+  encodeRexDexStreamId(url = '') {
+    return Buffer.from(toString(url), 'utf8').toString('base64url');
+  }
+
+  decodeRexDexStreamId(sourceId = '') {
+    try {
+      const url = Buffer.from(toString(sourceId), 'base64url').toString('utf8');
+      if (!url.startsWith(`${REXDEX_ORIGIN}/`) && url !== REXDEX_ORIGIN) return '';
+      return url;
+    } catch {
+      return '';
+    }
+  }
+
+  scoreRexDexPostForMatch(post = {}, match = {}) {
+    const matchKey = getMatchEventKey(match);
+    const postKey = getMatchEventKey({ title: post.title, teams: post.teams });
+    if (matchKey && postKey && matchKey === postKey) return 100;
+
+    const matchTeams = Array.isArray(match.teams) && match.teams.length >= 2
+      ? match.teams.map(normalizeTeamName)
+      : splitFixtureTeams(match.title);
+    const postTeams = Array.isArray(post.teams) ? post.teams.map(normalizeTeamName) : [];
+    if (matchTeams.length >= 2 && postTeams.length >= 2) {
+      const matchedTeams = matchTeams.filter((team) => postTeams.includes(team)).length;
+      if (matchedTeams >= 2) return 90;
+      if (matchedTeams === 1) return 35;
+    }
+
+    const matchWords = new Set(normalizeTitle(match.title).split(/\s+/u).filter((word) => word.length > 2));
+    const postWords = new Set(normalizeTitle(post.title).split(/\s+/u).filter((word) => word.length > 2));
+    const hits = [...matchWords].filter((word) => postWords.has(word)).length;
+    return hits >= 2 ? hits * 10 : 0;
+  }
+
+  async findRexDexPostForMatch(match = {}, signal = null) {
+    if (!SUPPLEMENTAL_SPORTS_SOURCES_ENABLED || !match?.title) return null;
+    const posts = await this.fetchRexDexPosts(signal);
+    const candidates = posts
+      .map((post) => ({
+        post,
+        score: this.scoreRexDexPostForMatch(post, match)
+      }))
+      .filter((entry) => entry.score >= 40)
+      .sort((left, right) => right.score - left.score);
+    return candidates[0]?.post || null;
+  }
+
+  async getRexDexStreamsForMatch(match = {}, signal = null) {
+    if (!SUPPLEMENTAL_SPORTS_SOURCES_ENABLED || !isCurrentlyLiveMatch(match)) return [];
+    const post = await this.findRexDexPostForMatch(match, signal);
+    if (!post?.url) return [];
     return [{
-      id: REXDEX_PORTUGAL_UZBEKISTAN_STREAM_ID,
+      id: this.encodeRexDexStreamId(post.url),
       streamNo: 1,
-      language: 'English',
+      language: 'RexDex',
       hd: true,
-      embedUrl: REXDEX_PORTUGAL_UZBEKISTAN_PAGE,
-      contextUrl: REXDEX_PORTUGAL_UZBEKISTAN_PAGE,
-      directHlsUrl: REXDEX_PORTUGAL_UZBEKISTAN_HLS,
-      headers: {
-        ...this.getBrowserFetchHeaders(),
-        accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,text/plain,*/*',
-        origin: 'https://www.rexdexsports.in',
-        referer: REXDEX_PORTUGAL_UZBEKISTAN_PAGE
-      },
+      embedUrl: post.url,
+      contextUrl: post.url,
       source: REXDEX_SOURCE,
       viewers: 0,
+      rexdexMinHeight: REXDEX_MIN_HEIGHT,
       playbackProfile: {
-        quality: 'HD',
-        speedMbps: 8
+        quality: '1080p+',
+        speedMbps: 10
       }
     }];
+  }
+
+  getStreamzy4kStreamById(id = '') {
+    const normalizedId = normalizeIdPart(id);
+    return STREAMZY_4K_STREAMS.find((stream) => stream.id === normalizedId) || null;
+  }
+
+  async getHelloSports4kStreamsForMatch(match = {}, signal = null) {
+    if (!SUPPLEMENTAL_SPORTS_SOURCES_ENABLED || !isFifaWorldCupMatch(match) || !isCurrentlyLiveMatch(match)) return [];
+    const entries = await this.fetchHelloSports4kEntries(signal);
+    return entries.map((entry, index) => {
+      const stream = {
+        embedUrl: entry.embedUrl,
+        channelName: entry.channelName
+      };
+      return {
+        id: this.encodeHelloSportsStreamId(stream),
+        streamNo: index + 1,
+        language: '',
+        channelName: entry.channelName,
+        hd: true,
+        embedUrl: entry.embedUrl,
+        contextUrl: HELLOSPORTS_4K_PAGE,
+        source: HELLOSPORTS_SOURCE,
+        viewers: 0,
+        highlightLabel: '4K Stream',
+        playbackProfile: {
+          quality: '4K',
+          speedMbps: 25
+        }
+      };
+    });
+  }
+
+  isHelloSports4kPlaybackProfile(profile = null) {
+    const quality = normalizeTitle(profile?.quality || '');
+    const heightMatch = quality.match(/\b(\d{3,4})p?\b/u);
+    const height = heightMatch ? Number.parseInt(heightMatch[1], 10) : 0;
+    return quality.includes('4k') || quality.includes('uhd') || height >= 1080;
+  }
+
+  getStreamzy4kStreamsForMatch(match = {}) {
+    if (!SUPPLEMENTAL_SPORTS_SOURCES_ENABLED || !isFifaWorldCupMatch(match) || !isCurrentlyLiveMatch(match)) return [];
+    return STREAMZY_4K_STREAMS.map((stream, index) => ({
+      id: stream.id,
+      streamNo: 1,
+      language: stream.language,
+      hd: true,
+      embedUrl: stream.embedUrl,
+      contextUrl: stream.embedUrl,
+      source: STREAMZY_4K_SOURCE,
+      viewers: 0,
+      playbackProfile: {
+        quality: index === 0 ? '4K' : 'UHD',
+        speedMbps: 25
+      }
+    }));
+  }
+
+  getReplayZoneCachedHls(embedUrl = '') {
+    const cached = this.replayZoneHlsCache.get(embedUrl);
+    if (cached?.expiresAt > Date.now()) return cached.value;
+    if (cached) this.replayZoneHlsCache.delete(embedUrl);
+    return null;
+  }
+
+  setReplayZoneCachedHls(embedUrl = '', value = null) {
+    if (!embedUrl || !value?.url) return;
+    this.replayZoneHlsCache.set(embedUrl, {
+      value,
+      expiresAt: Date.now() + REPLAYZONE_HLS_CACHE_MS
+    });
+  }
+
+  extractDailymotionVideoId(embedUrl = '') {
+    try {
+      const parsed = new URL(toString(embedUrl));
+      const queryId = parsed.searchParams.get('video');
+      if (queryId) return queryId;
+      const match = parsed.pathname.match(/\/(?:video|embed\/video)\/([^/?#_]+)/iu);
+      return match?.[1] || '';
+    } catch {
+      return '';
+    }
+  }
+
+  async resolveDailymotionReplayHls(embedUrl = '', signal = null) {
+    const videoId = this.extractDailymotionVideoId(embedUrl);
+    if (!videoId) return null;
+    const response = await this.fetchImpl(`https://www.dailymotion.com/player/metadata/video/${encodeURIComponent(videoId)}`, {
+      signal,
+      headers: {
+        accept: 'application/json,text/plain,*/*',
+        referer: 'https://www.dailymotion.com/',
+        'user-agent': BROWSER_USER_AGENT
+      }
+    });
+    if (!response.ok) throw new Error(`Dailymotion replay HTTP ${response.status}`);
+    const payload = await response.json();
+    const candidates = [
+      ...(Array.isArray(payload?.qualities?.auto) ? payload.qualities.auto : []),
+      ...Object.values(payload?.qualities || {}).flatMap((items) => Array.isArray(items) ? items : [])
+    ];
+    const hls = candidates.find((item) =>
+      isHttpUrl(item?.url) && /(?:mpegurl|m3u8)/iu.test(`${item?.type || ''} ${item?.url || ''}`)
+    );
+    return hls?.url ? { url: hls.url, contextUrl: embedUrl } : null;
+  }
+
+  extractOkReplayHlsFromHtml(html = '') {
+    try {
+      const $ = loadHtml(html);
+      const dataOptions = $('[data-module="OKVideo"]').attr('data-options');
+      if (dataOptions) {
+        const options = JSON.parse(dataOptions);
+        const metadata = JSON.parse(toString(options?.flashvars?.metadata || '{}'));
+        if (metadata?.hlsManifestUrl && isHttpUrl(metadata.hlsManifestUrl)) {
+          return metadata.hlsManifestUrl;
+        }
+      }
+    } catch {
+      // Fallback regex handles escaped inline metadata.
+    }
+    const match = toString(html).match(/\\?"hlsManifestUrl\\?"\s*:\s*\\?"([^"\\]+(?:\\.[^"\\]*)*)\\?"/iu);
+    if (!match?.[1]) return null;
+    const decoded = match[1]
+      .replace(/\\u0026/giu, '&')
+      .replace(/\\\//gu, '/')
+      .replace(/\\"/gu, '"');
+    return isHttpUrl(decoded) ? decoded : null;
+  }
+
+  async resolveOkReplayHls(embedUrl = '', signal = null) {
+    const response = await this.fetchImpl(embedUrl, {
+      signal,
+      headers: {
+        ...this.getBrowserFetchHeaders(),
+        accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        origin: 'https://ok.ru',
+        referer: 'https://ok.ru/'
+      }
+    });
+    if (!response.ok) throw new Error(`OK replay HTTP ${response.status}`);
+    const html = await response.text();
+    const url = this.extractOkReplayHlsFromHtml(html);
+    return url ? { url, contextUrl: embedUrl } : null;
+  }
+
+  getReplayEmbedHost(embedUrl = '') {
+    try {
+      return new URL(toString(embedUrl)).hostname.toLowerCase();
+    } catch {
+      return '';
+    }
+  }
+
+  async resolveReplayZoneEmbedHls(embed = {}, signal = null) {
+    const embedUrl = toString(embed.embedUrl);
+    if (!isHttpUrl(embedUrl)) return null;
+    const cached = this.getReplayZoneCachedHls(embedUrl);
+    if (cached?.url) return cached;
+    const shared = await this.readSharedCache(`replay-hls:${embedUrl}`);
+    if (shared?.url) {
+      this.setReplayZoneCachedHls(embedUrl, shared);
+      return shared;
+    }
+    const host = this.getReplayEmbedHost(embedUrl);
+    let hls = null;
+    if (host === 'ok.ru' || host.endsWith('.ok.ru')) {
+      hls = await this.resolveOkReplayHls(embedUrl, signal);
+    } else if (host === 'geo.dailymotion.com' || host.endsWith('.dailymotion.com')) {
+      hls = await this.resolveDailymotionReplayHls(embedUrl, signal);
+    }
+    if (!hls?.url) return null;
+    const headers = this.getPlaybackHeadersForSource(REPLAYZONE_SOURCE, embedUrl);
+    const playbackProfile = await this.validateDirectHlsUrl(hls.url, signal, headers);
+    const value = {
+      url: hls.url,
+      contextUrl: hls.contextUrl || embedUrl,
+      headers,
+      playbackProfile,
+      resolveOnPlayback: this.requiresBrowserHlsContext(hls.url)
+    };
+    this.setReplayZoneCachedHls(embedUrl, value);
+    await this.writeSharedCache(`replay-hls:${embedUrl}`, value, REPLAYZONE_HLS_CACHE_MS).catch(() => {});
+    return value;
+  }
+
+  async getReplayZoneStreams(match, { baseUrl = '', privateConfigId = '', signal = null } = {}) {
+    if (!baseUrl || !privateConfigId || !match?.replay) return [];
+    const cards = [];
+    for (const source of (Array.isArray(match.sources) ? match.sources : [])) {
+      if (cards.length >= REPLAYZONE_MAX_CARDS || signal?.aborted) break;
+      try {
+        const hls = await this.resolveReplayZoneEmbedHls(source, signal);
+        if (!hls?.url) continue;
+        const streamCard = {
+          id: source.id,
+          source: REPLAYZONE_SOURCE,
+          streamNo: source.streamNo || 1,
+          language: '',
+          hd: true,
+          playbackProfile: hls.playbackProfile
+        };
+        const privateUrl = this.getPrivateStreamUrl(streamCard, { baseUrl, privateConfigId });
+        if (!privateUrl) continue;
+        cards.push({
+          name: 'Nebula Sports Replay',
+          title: [
+            toString(source.label) || 'Replay',
+            this.buildPlaybackCardTitle(streamCard, hls)
+          ].filter(Boolean).join('\n'),
+          url: [
+            `${privateUrl}?url=${Buffer.from(hls.url).toString('base64url')}`,
+            hls.contextUrl ? `ctx=${Buffer.from(hls.contextUrl).toString('base64url')}` : ''
+          ].filter(Boolean).join('&'),
+          behaviorHints: {
+            bingeGroup: `replay-${match.sourceId || match.normalizedTitle}`
+          }
+        });
+      } catch (error) {
+        this.logger.debug?.('ReplayZone HLS resolve failed', {
+          replay: match.sourceId || match.title,
+          source: source.embedUrl,
+          error: error?.message || String(error)
+        });
+      }
+    }
+    return cards;
   }
 
   async getEventStreams(id, options = null) {
@@ -2994,10 +4326,20 @@ export class StreamedSportsAdapter {
     const baseUrl = options?.baseUrl || '';
     const privateConfigId = options?.privateConfigId || '';
     const prewarm = options?.prewarm !== false;
+    const includeQuotaSources = options?.includeQuotaSources === true;
     const match = await this.findMatch(id, signal);
     if (!match) return [];
+    if (match.replay) {
+      return this.getReplayZoneStreams(match, {
+        baseUrl,
+        privateConfigId,
+        signal
+      });
+    }
 
-    const dlhdSources = await this.getDlhdSourcesForMatch(match, signal).catch((error) => {
+    const hasCdnLiveTvSource = Array.isArray(match.sources)
+      && match.sources.some((source) => normalizeIdPart(source?.source) === CDNLIVETV_SOURCE);
+    const dlhdSources = hasCdnLiveTvSource ? [] : await this.getDlhdSourcesForMatch(match, signal).catch((error) => {
       this.logger.debug?.('dlhd event match failed', {
         match: match.sourceId || match.id,
         error: error?.message || String(error)
@@ -3005,9 +4347,45 @@ export class StreamedSportsAdapter {
       return [];
     });
     const eventSources = [...this.filterSupplementalSources(match.sources), ...dlhdSources];
-    const collectedStreams = await this.collectEventSourceStreams(eventSources, signal);
+    const deferredCdnStreams = eventSources
+      .filter((source) => normalizeIdPart(source?.source) === CDNLIVETV_SOURCE)
+      .map((source) => {
+        const channel = this.decodeCdnLiveTvSourceId(source.id) || {};
+        const channelName = toString(channel.name) || 'Live TV';
+        return {
+          id: toString(source.id),
+          streamNo: 1,
+          channelName,
+          language: '',
+          hd: true,
+          embedUrl: toString(channel.url),
+          contextUrl: toString(channel.url),
+          source: CDNLIVETV_SOURCE,
+          viewers: Number(channel.viewers || 0),
+          playbackProfile: {
+            quality: 'HD',
+            speedMbps: 8
+          },
+          resolveOnPlaybackOnly: true
+        };
+      })
+      .filter((stream) => stream.id);
+    const collectedStreams = await this.collectEventSourceStreams(
+      eventSources.filter((source) => normalizeIdPart(source?.source) !== CDNLIVETV_SOURCE),
+      signal
+    );
+    const rexdexStreams = await this.getRexDexStreamsForMatch(match, signal).catch((error) => {
+      this.logger.debug?.('rexdex event match failed', {
+        match: match.sourceId || match.id,
+        error: error?.message || String(error)
+      });
+      return [];
+    });
     const rankedStreams = [
+      ...this.getStreamzy4kStreamsForMatch(match),
       ...this.getTemporaryEventDirectStreams(match),
+      ...deferredCdnStreams,
+      ...rexdexStreams,
       ...collectedStreams
     ].sort(compareStreamsBySourceRank);
     const streams = rankedStreams.slice(0, 12);
@@ -3016,10 +4394,20 @@ export class StreamedSportsAdapter {
     const externalCardsPromise = SUPPLEMENTAL_SPORTS_SOURCES_ENABLED && isFifaWorldCupMatch(match)
       ? Promise.all([
         this.getPlayableLicensedExternalCards(match, { baseUrl, signal }),
+        includeQuotaSources
+          ? this.getPlayableKnownSportsCards(match, { signal })
+          : Promise.resolve([]),
+        includeQuotaSources
+          ? this.getPlayableHelloSports4kCards(match, { baseUrl, privateConfigId, signal })
+          : Promise.resolve([]),
+        includeQuotaSources
+          ? this.getPlayableSportSrcCards(match, { baseUrl, privateConfigId, signal })
+          : Promise.resolve([]),
       ]).then((groups) => groups.flat())
       : Promise.resolve([]);
     if (baseUrl && privateConfigId) {
       const playableKeys = new Set();
+      const playbackOnlyResults = this.getPlaybackOnlyHlsResults(rankedStreams, playableKeys);
       const directHlsResults = this.getTrustedDirectHlsResults(rankedStreams, playableKeys);
       const validationStreams = (this.hlsProbeEnabled || this.hlsBrowserFallbackEnabled)
         ? this.getStreamValidationCandidates(rankedStreams.filter((stream) => {
@@ -3029,7 +4417,7 @@ export class StreamedSportsAdapter {
         }))
         : [];
       const needsStreamedProbeBudget = validationStreams.some((stream) =>
-        ['admin', 'delta', 'echo', 'golf', 'nebulasports'].includes(normalizeIdPart(stream?.source))
+        ['admin', 'delta', 'echo', 'golf', 'nebulasports', STREAMZY_4K_SOURCE, REXDEX_SOURCE, HELLOSPORTS_SOURCE].includes(normalizeIdPart(stream?.source))
       );
       const validationBudgetMs = directHlsResults.length && !needsStreamedProbeBudget
         ? STREAM_DIRECT_HLS_FAST_VALIDATION_MS
@@ -3043,7 +4431,7 @@ export class StreamedSportsAdapter {
         const streamNo = result.stream?.streamNo || 1;
         playableKeys.add(`${normalizeIdPart(result.stream?.source)}:${toString(result.stream?.id)}:${toString(streamNo)}`);
       }
-      displayStreams = [...directHlsResults, ...playableResults]
+      displayStreams = [...playbackOnlyResults, ...directHlsResults, ...playableResults]
         .map((result) => {
           const { stream, hls } = result;
           playableHlsByKey.set(`${stream.source}:${stream.id}:${stream.streamNo || 1}`, hls);
@@ -3075,17 +4463,33 @@ export class StreamedSportsAdapter {
         };
       }).filter(Boolean);
     const externalCards = await externalCardsPromise;
+    const helloSports4kCards = externalCards.filter((card) => card?.name === 'Nebula Sports 4K');
+    const knownSportsCards = externalCards.filter((card) => card?.name === 'Nebula Sports Fast');
+    const otherExternalCards = externalCards.filter((card) =>
+      card?.name !== 'Nebula Sports 4K' && card?.name !== 'Nebula Sports Fast'
+    );
     if (prewarm && baseUrl && privateConfigId && this.hlsCacheMs > 0) {
       this.prewarmStreams(this.getStreamValidationCandidates(rankedStreams).slice(0, 2));
     }
     return [
+      ...helloSports4kCards,
+      ...knownSportsCards,
       ...cards.slice(0, 2),
-      ...externalCards,
+      ...otherExternalCards,
       ...cards.slice(2)
     ];
   }
 
   getEmbedUrl({ source, streamId, streamNo }) {
+    if (normalizeIdPart(source) === STREAMZY_4K_SOURCE) {
+      return this.getStreamzy4kStreamById(streamId)?.embedUrl || `${STREAMZY_4K_ORIGIN}/embed/${encodeURIComponent(toString(streamId))}`;
+    }
+    if (normalizeIdPart(source) === REXDEX_SOURCE) {
+      return this.decodeRexDexStreamId(streamId) || `${REXDEX_ORIGIN}/`;
+    }
+    if (normalizeIdPart(source) === HELLOSPORTS_SOURCE) {
+      return this.decodeHelloSportsStreamId(streamId)?.url || HELLOSPORTS_4K_PAGE;
+    }
     return `${EMBED_BASE}/embed/${encodeURIComponent(source)}/${encodeURIComponent(streamId)}/${encodeURIComponent(String(streamNo || 1))}`;
   }
 
@@ -3154,6 +4558,32 @@ export class StreamedSportsAdapter {
           contextUrl: stream.contextUrl || stream.embedUrl,
           headers: stream.headers || this.getBrowserFetchHeaders(),
           resolveOnPlayback: this.shouldResolveDirectHlsOnPlayback(stream.source),
+          playbackProfile: stream.playbackProfile || this.inferStreamPlaybackProfile(stream)
+        }
+      });
+    }
+    return results;
+  }
+
+  getPlaybackOnlyHlsResults(streams = [], existingKeys = new Set()) {
+    const results = [];
+    for (const stream of streams) {
+      const sourceKey = normalizeIdPart(stream?.source);
+      if (sourceKey !== CDNLIVETV_SOURCE || !stream?.resolveOnPlaybackOnly) continue;
+      const streamNo = stream.streamNo || 1;
+      const cacheKey = `${sourceKey}:${toString(stream.id)}:${toString(streamNo)}`;
+      if (existingKeys.has(cacheKey)) continue;
+      existingKeys.add(cacheKey);
+      results.push({
+        stream,
+        hls: {
+          url: 'resolve-on-playback',
+          contextUrl: stream.contextUrl || stream.embedUrl || '',
+          headers: this.getCdnLiveTvHeaders({
+            accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,text/plain,*/*',
+            referer: stream.contextUrl || stream.embedUrl || `${CDNLIVETV_ORIGIN}/`
+          }),
+          resolveOnPlayback: true,
           playbackProfile: stream.playbackProfile || this.inferStreamPlaybackProfile(stream)
         }
       });
@@ -3282,24 +4712,19 @@ export class StreamedSportsAdapter {
         hls = {
           url: stream.directHlsUrl,
           contextUrl: stream.contextUrl || embedUrl,
-          headers: stream.headers || this.getSportsBiteHeaders({
-            accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,text/plain,*/*'
-          }),
+          headers: stream.headers || this.getPlaybackHeadersForSource(sourceKey, stream.contextUrl || embedUrl),
           resolveOnPlayback: this.shouldResolveDirectHlsOnPlayback(stream.source)
         };
       }
       if (!hls) {
         const probed = await this.resolvePlayableHlsWithProbe(embedUrl, validationSignal);
         if (probed?.url) {
+          const probedHlsUrl = extractDirectHlsUrl(probed.url) || probed.url;
           hls = {
-            url: probed.url,
+            url: probedHlsUrl,
             contextUrl: embedUrl,
-            headers: {
-              ...this.getBrowserFetchHeaders(),
-              origin: 'https://exposestrat.com',
-              referer: 'https://exposestrat.com/maestrohd1.php'
-            },
-            resolveOnPlayback: this.requiresBrowserHlsContext(probed.url)
+            headers: this.getProbedHlsHeadersForSource(sourceKey, embedUrl),
+            resolveOnPlayback: this.requiresBrowserHlsContext(probedHlsUrl)
           };
         } else if (allowBrowserFallback && this.hlsBrowserFallbackEnabled) {
           const hlsUrl = await this.resolvePlayableHlsInBrowser(embedUrl, {
@@ -3310,7 +4735,7 @@ export class StreamedSportsAdapter {
           hls = {
             url: hlsUrl,
             contextUrl: embedUrl,
-            headers: this.getBrowserFetchHeaders(),
+            headers: this.getPlaybackHeadersForSource(sourceKey, embedUrl),
             resolveOnPlayback: this.requiresBrowserHlsContext(hlsUrl)
           };
         } else {
@@ -3334,6 +4759,10 @@ export class StreamedSportsAdapter {
         : await this.validateDirectHlsUrl(hls.url, validationSignal, hls.headers);
       if (playbackProfile && typeof playbackProfile === 'object') {
         hls.playbackProfile = playbackProfile;
+      }
+      hls.playbackProfile = hls.playbackProfile || stream.playbackProfile || this.inferStreamPlaybackProfile(stream);
+      if (sourceKey === REXDEX_SOURCE && !this.isRexDexHighQualityPlaybackProfile(hls.playbackProfile)) {
+        throw new Error('RexDex HLS below 1080p');
       }
       this.setCachedHls(cacheKey, hls);
       await this.setSharedHls(cacheKey, hls);
@@ -3365,13 +4794,17 @@ export class StreamedSportsAdapter {
     const hls = {
       url: hlsUrl,
       contextUrl: embedUrl,
-      headers: this.getBrowserFetchHeaders(),
+      headers: this.getPlaybackHeadersForSource(sourceKey, embedUrl),
       resolveOnPlayback: this.requiresBrowserHlsContext(hlsUrl)
     };
 
     const cachedPlaylist = this.getCachedPlaylist(hlsUrl);
     if (cachedPlaylist?.body?.toString('utf8').includes('#EXTM3U')) {
       hls.playbackProfile = this.extractHlsPlaybackProfile(cachedPlaylist.body.toString('utf8')) || undefined;
+      hls.playbackProfile = hls.playbackProfile || stream.playbackProfile || this.inferStreamPlaybackProfile(stream);
+      if (sourceKey === REXDEX_SOURCE && !this.isRexDexHighQualityPlaybackProfile(hls.playbackProfile)) {
+        throw new Error('RexDex HLS below 1080p');
+      }
       this.setCachedHls(cacheKey, hls);
       await this.setSharedHls(cacheKey, hls);
       return { stream, hls };
@@ -3386,6 +4819,10 @@ export class StreamedSportsAdapter {
       throw new Error('Streamed HLS playlist is not playable');
     }
     hls.playbackProfile = this.extractHlsPlaybackProfile(playlistText) || undefined;
+    hls.playbackProfile = hls.playbackProfile || stream.playbackProfile || this.inferStreamPlaybackProfile(stream);
+    if (sourceKey === REXDEX_SOURCE && !this.isRexDexHighQualityPlaybackProfile(hls.playbackProfile)) {
+      throw new Error('RexDex HLS below 1080p');
+    }
     this.setCachedHls(cacheKey, hls);
     await this.setSharedHls(cacheKey, hls);
     return { stream, hls };
@@ -3551,6 +4988,7 @@ export class StreamedSportsAdapter {
     this.browserFetchInFlight.clear();
     this.hlsResolveInFlight.clear();
     this.playlistPrewarmInFlight.clear();
+    this.liveStreamPrewarmInFlight = null;
     if (!critical) {
       await Promise.allSettled([
         this.closeBrowserFetchPage('memory pressure'),
@@ -3639,7 +5077,9 @@ export class StreamedSportsAdapter {
       })
         .then(() => this.resolvePlayableHls({ source, streamId, streamNo, signal: controller.signal }))
         .then((hls) => {
-          if (hls?.url) this.prewarmPlaylist(hls.url, { delayMs: 250 });
+          if (hls?.url && this.requiresBrowserHlsContext(hls.url)) {
+            this.prewarmPlaylist(hls.url, { delayMs: 250 });
+          }
         })
         .catch((error) => {
           this.logger.debug?.('streamed sports hls prewarm failed', {
@@ -3753,7 +5193,8 @@ export class StreamedSportsAdapter {
   }
 
   canPrewarmBrowser() {
-    return freemem() >= MIN_BROWSER_PREWARM_FREE_BYTES
+    return Date.now() >= this.browserDisabledUntil
+      && freemem() >= MIN_BROWSER_PREWARM_FREE_BYTES
       && this.playlistPrewarmInFlight.size < MAX_BROWSER_PREWARM_IN_FLIGHT;
   }
 
@@ -3784,16 +5225,19 @@ export class StreamedSportsAdapter {
     }
 
     const cacheKey = `${normalizedSource}:${normalizedStreamId}:${normalizedStreamNo}`;
-    const cached = this.getCachedHls(cacheKey);
-    if (cached) {
-      await this.setSharedHls(cacheKey, cached);
-      return cached;
-    }
-    if (this.hlsCacheMs > 0) {
-      const sharedCached = await this.getSharedHls(cacheKey);
-      if (sharedCached) {
-        this.setCachedHls(cacheKey, sharedCached);
-        return sharedCached;
+    const skipHlsCache = normalizedSource === CDNLIVETV_SOURCE;
+    if (!skipHlsCache) {
+      const cached = this.getCachedHls(cacheKey);
+      if (cached) {
+        await this.setSharedHls(cacheKey, cached);
+        return cached;
+      }
+      if (this.hlsCacheMs > 0) {
+        const sharedCached = await this.getSharedHls(cacheKey);
+        if (sharedCached) {
+          this.setCachedHls(cacheKey, sharedCached);
+          return sharedCached;
+        }
       }
     }
 
@@ -3810,26 +5254,20 @@ export class StreamedSportsAdapter {
     }
 
     if (normalizedSource === REXDEX_SOURCE) {
-      if (Date.now() >= REXDEX_PORTUGAL_UZBEKISTAN_UNTIL_MS || normalizedStreamId !== REXDEX_PORTUGAL_UZBEKISTAN_STREAM_ID) {
-        throw new Error('RexDex temporary stream expired');
+      if (Date.now() < REXDEX_PORTUGAL_UZBEKISTAN_UNTIL_MS && normalizedStreamId === REXDEX_PORTUGAL_UZBEKISTAN_STREAM_ID) {
+        const value = {
+          url: REXDEX_PORTUGAL_UZBEKISTAN_HLS,
+          contextUrl: REXDEX_PORTUGAL_UZBEKISTAN_PAGE,
+          headers: this.getRexDexHlsHeaders(REXDEX_PORTUGAL_UZBEKISTAN_PAGE),
+          playbackProfile: {
+            quality: 'HD',
+            speedMbps: 8
+          }
+        };
+        this.setCachedHls(cacheKey, value);
+        await this.setSharedHls(cacheKey, value);
+        return value;
       }
-      const value = {
-        url: REXDEX_PORTUGAL_UZBEKISTAN_HLS,
-        contextUrl: REXDEX_PORTUGAL_UZBEKISTAN_PAGE,
-        headers: {
-          ...this.getBrowserFetchHeaders(),
-          accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,text/plain,*/*',
-          origin: 'https://www.rexdexsports.in',
-          referer: REXDEX_PORTUGAL_UZBEKISTAN_PAGE
-        },
-        playbackProfile: {
-          quality: 'HD',
-          speedMbps: 8
-        }
-      };
-      this.setCachedHls(cacheKey, value);
-      await this.setSharedHls(cacheKey, value);
-      return value;
     }
 
     if (normalizedSource === WC_XTREAM_SOURCE) {
@@ -3861,8 +5299,6 @@ export class StreamedSportsAdapter {
     if (normalizedSource === CDNLIVETV_SOURCE) {
       const value = await this.resolveCdnLiveTvChannel(normalizedStreamId, signal);
       if (value?.url) {
-        this.setCachedHls(cacheKey, value);
-        await this.setSharedHls(cacheKey, value);
         return value;
       }
     }
@@ -3941,16 +5377,20 @@ export class StreamedSportsAdapter {
   async resolvePlayableHlsFresh({ cacheKey, embedUrl, normalizedSource, normalizedStreamNo, signal = null }) {
     const probed = await this.resolvePlayableHlsWithProbe(embedUrl, signal);
     if (probed?.url) {
+      const probedHlsUrl = extractDirectHlsUrl(probed.url) || probed.url;
       const value = {
-        url: probed.url,
+        url: probedHlsUrl,
         contextUrl: embedUrl,
-        headers: {
-          ...this.getBrowserFetchHeaders(),
-          origin: 'https://exposestrat.com',
-          referer: 'https://exposestrat.com/maestrohd1.php'
-        },
-        resolveOnPlayback: this.requiresBrowserHlsContext(probed.url)
+        headers: this.getProbedHlsHeadersForSource(normalizedSource, embedUrl),
+        resolveOnPlayback: this.requiresBrowserHlsContext(probedHlsUrl)
       };
+      if (normalizedSource === REXDEX_SOURCE && !value.resolveOnPlayback) {
+        const playbackProfile = await this.validateDirectHlsUrl(value.url, signal, value.headers);
+        if (!this.isRexDexHighQualityPlaybackProfile(playbackProfile)) {
+          throw new Error('RexDex HLS below 1080p');
+        }
+        value.playbackProfile = playbackProfile;
+      }
       this.setCachedHls(cacheKey, value);
       await this.setSharedHls(cacheKey, value);
       return value;
@@ -3967,9 +5407,16 @@ export class StreamedSportsAdapter {
     const value = {
       url: hlsUrl,
       contextUrl: embedUrl,
-      headers: this.getBrowserFetchHeaders(),
+      headers: this.getPlaybackHeadersForSource(normalizedSource, embedUrl),
       resolveOnPlayback: this.requiresBrowserHlsContext(hlsUrl)
     };
+    if (normalizedSource === REXDEX_SOURCE && !value.resolveOnPlayback) {
+      const playbackProfile = await this.validateDirectHlsUrl(value.url, signal, value.headers);
+      if (!this.isRexDexHighQualityPlaybackProfile(playbackProfile)) {
+        throw new Error('RexDex HLS below 1080p');
+      }
+      value.playbackProfile = playbackProfile;
+    }
     this.setCachedHls(cacheKey, value);
     await this.setSharedHls(cacheKey, value);
     return value;
@@ -4155,6 +5602,68 @@ export class StreamedSportsAdapter {
       origin: EMBED_BASE,
       referer: `${EMBED_BASE}/`,
       'user-agent': BROWSER_USER_AGENT
+    };
+  }
+
+  getStreamzy4kHeaders(contextUrl = '') {
+    return {
+      accept: '*/*',
+      origin: STREAMZY_4K_ORIGIN,
+      referer: contextUrl || `${STREAMZY_4K_ORIGIN}/`,
+      'user-agent': BROWSER_USER_AGENT
+    };
+  }
+
+  getPlaybackHeadersForSource(source = '', contextUrl = '') {
+    if (normalizeIdPart(source) === STREAMZY_4K_SOURCE) {
+      return this.getStreamzy4kHeaders(contextUrl);
+    }
+    if (normalizeIdPart(source) === REXDEX_SOURCE) {
+      return this.getRexDexHlsHeaders(contextUrl);
+    }
+    if (normalizeIdPart(source) === HELLOSPORTS_SOURCE) {
+      return this.getHelloSportsHlsHeaders(contextUrl);
+    }
+    if (normalizeIdPart(source) === SPORTSRC_SOURCE && contextUrl) {
+      let origin = SPORTSRC_API_BASE;
+      try {
+        origin = new URL(contextUrl).origin;
+      } catch {
+        origin = SPORTSRC_API_BASE;
+      }
+      return {
+        ...this.getBrowserFetchHeaders(),
+        accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,video/mp2t,*/*',
+        origin,
+        referer: contextUrl
+      };
+    }
+    if (normalizeIdPart(source) === REPLAYZONE_SOURCE && contextUrl) {
+      let origin = 'https://replay-exc.pages.dev';
+      try {
+        origin = new URL(contextUrl).origin;
+      } catch {
+        origin = 'https://replay-exc.pages.dev';
+      }
+      return {
+        ...this.getBrowserFetchHeaders(),
+        accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,video/mp2t,*/*',
+        origin,
+        referer: contextUrl
+      };
+    }
+    return this.getBrowserFetchHeaders();
+  }
+
+  getProbedHlsHeadersForSource(source = '', contextUrl = '') {
+    const normalized = normalizeIdPart(source);
+    if (normalized === STREAMZY_4K_SOURCE || normalized === REXDEX_SOURCE || normalized === HELLOSPORTS_SOURCE) {
+      return this.getPlaybackHeadersForSource(normalized, contextUrl);
+    }
+    return {
+      ...this.getBrowserFetchHeaders(),
+      origin: 'https://exposestrat.com',
+      referer: 'https://exposestrat.com/maestrohd1.php'
     };
   }
 
@@ -4509,6 +6018,10 @@ export class StreamedSportsAdapter {
     if (!this.chromePath) {
       throw new Error('STREAMED_SPORTS_CHROME_PATH is not configured');
     }
+    if (Date.now() < this.browserDisabledUntil) {
+      const seconds = Math.ceil((this.browserDisabledUntil - Date.now()) / 1000);
+      throw new Error(`Streamed sports browser temporarily disabled for ${seconds}s after launch failure`);
+    }
     if (this.browserIdleTimer) {
       clearTimeout(this.browserIdleTimer);
       this.browserIdleTimer = null;
@@ -4544,10 +6057,25 @@ export class StreamedSportsAdapter {
         }))
         .catch((error) => {
           this.browserPromise = null;
+          this.recordBrowserLaunchFailure(error);
           throw error;
         });
     }
     return this.browserPromise;
+  }
+
+  recordBrowserLaunchFailure(error) {
+    const message = error?.message || String(error);
+    const hardFailure = /Failed to launch the browser process|SIGILL|ILL_ILLOPN|Code:\s*null|control flow integrity/iu.test(message);
+    if (!hardFailure) return;
+    this.browserLaunchFailures += 1;
+    this.browserDisabledUntil = Date.now() + BROWSER_LAUNCH_DISABLE_MS;
+    this.closeBrowser('browser launch failure').catch(() => {});
+    this.logger.warn?.('streamed sports browser disabled after launch failure', {
+      failures: this.browserLaunchFailures,
+      disabledMs: BROWSER_LAUNCH_DISABLE_MS,
+      error: message.split('\n').slice(0, 3).join('\n')
+    });
   }
 
   scheduleBrowserIdleClose() {

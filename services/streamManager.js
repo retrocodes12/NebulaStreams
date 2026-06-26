@@ -7623,7 +7623,9 @@ export class StreamManager {
 
   async proxyStreamedSportsUpstreamInternal({ req, res, upstreamUrl, source, streamId, streamNo, hlsHeaders = null, hlsContextUrl = '' }) {
     const isLikelyPlaylist = /\.m3u8(?:$|[?#])/iu.test(upstreamUrl);
-    const canUseMediaCache = !isLikelyPlaylist && !req.headers.range;
+    const sourceKey = String(source || '').trim().toLowerCase();
+    const isCdnLiveTv = sourceKey === 'cdnlivetv';
+    const canUseMediaCache = false;
     if (canUseMediaCache) {
       const cachedMedia = this.streamedSportsAdapter.getCachedMedia(upstreamUrl);
       if (cachedMedia?.body) {
@@ -7638,7 +7640,7 @@ export class StreamManager {
         return;
       }
     }
-    if (isLikelyPlaylist) {
+    if (isLikelyPlaylist && !isCdnLiveTv) {
       const cachedPlaylist = this.streamedSportsAdapter.getCachedPlaylist(upstreamUrl);
       const cachedText = cachedPlaylist?.body?.toString('utf8') || '';
       if (cachedText.includes('#EXTM3U')) {
@@ -7668,7 +7670,7 @@ export class StreamManager {
     const directFetchBlocked = isLikelyPlaylist
       && (this.shouldUseBrowserForStreamedSportsPlaylist(upstreamUrl) || this.isStreamedSportsDirectFetchBlocked(upstreamUrl));
     const isWorldCupXtream = String(source).toLowerCase() === 'wciptv';
-    const directTimeoutMs = isLikelyPlaylist ? (isWorldCupXtream ? 8_000 : 3_000) : 12_000;
+    const directTimeoutMs = isLikelyPlaylist ? (isWorldCupXtream ? 8_000 : 6_000) : 12_000;
     const directSignal = directFetchBlocked
       ? null
       : (req.signal && typeof AbortSignal.any === 'function'
@@ -7696,7 +7698,7 @@ export class StreamManager {
 
       if (directIsPlaylist) {
         const playlistText = await directResponse.text();
-        if (playlistText.includes('#EXTM3U')) {
+        if (playlistText.includes('#EXTM3U') && !isCdnLiveTv) {
           const fetched = {
             status: directResponse.status || 200,
             url: directFinalUrl,
@@ -7729,7 +7731,7 @@ export class StreamManager {
       }
 
       res.status(directResponse.status || 200);
-      res.setHeader('Cache-Control', 'public, max-age=30');
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('X-Accel-Buffering', 'no');
       res.setHeader('Content-Type', directResponse.headers.get('content-type') || 'video/mp2t');
@@ -7753,7 +7755,7 @@ export class StreamManager {
             });
           })
           .catch((error) => {
-            logger.debug('streamed sports media cache fill failed', {
+            logger.info('streamed sports media cache fill failed', {
               source,
               streamNo,
               error: error?.message || String(error)
@@ -7796,7 +7798,7 @@ export class StreamManager {
     const fetched = await this.streamedSportsAdapter.browserFetchBytes(upstreamUrl, {
       signal: req.signal || null,
       contextUrl: isLikelyPlaylist ? hlsContextUrl : '',
-      cacheMedia: !isLikelyPlaylist,
+      cacheMedia: false,
       // Fresh live media sequences matter more than resolver cache during playback.
       preferCache: false
     });
@@ -7830,7 +7832,7 @@ export class StreamManager {
     }
 
     res.status(fetched.status || 200);
-    res.setHeader('Cache-Control', 'public, max-age=30');
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('X-Accel-Buffering', 'no');
     res.setHeader('Content-Type', fetched.headers['content-type'] || 'video/mp2t');
@@ -7883,6 +7885,39 @@ export class StreamManager {
           origin: 'https://streamfree.app',
           referer
         };
+      }
+      if (hlsContextUrl && /^https?:\/\//iu.test(String(hlsContextUrl))) {
+        const context = new URL(String(hlsContextUrl));
+        const contextHost = context.hostname.toLowerCase();
+        if (
+          contextHost === 'embed.streamapi.cc'
+          || contextHost.endsWith('.embed.streamapi.cc')
+          || contextHost === 'football77.org'
+          || contextHost.endsWith('.football77.org')
+        ) {
+          return {
+            ...this.streamedSportsAdapter.getBrowserFetchHeaders(),
+            accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,video/mp2t,*/*',
+            origin: context.origin,
+            referer: String(hlsContextUrl)
+          };
+        }
+        if (contextHost === 'ok.ru' || contextHost.endsWith('.ok.ru')) {
+          return {
+            ...this.streamedSportsAdapter.getBrowserFetchHeaders(),
+            accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,video/mp2t,*/*',
+            origin: 'https://ok.ru',
+            referer: String(hlsContextUrl)
+          };
+        }
+        if (contextHost === 'geo.dailymotion.com' || contextHost.endsWith('.dailymotion.com')) {
+          return {
+            ...this.streamedSportsAdapter.getBrowserFetchHeaders(),
+            accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,video/mp2t,*/*',
+            origin: context.origin,
+            referer: String(hlsContextUrl)
+          };
+        }
       }
       if (host === 'zohanayaan.com' || host.endsWith('.zohanayaan.com')) {
         return {
@@ -8359,7 +8394,7 @@ export class StreamManager {
         return;
       }
 
-      if (catalogId.startsWith('streamed-events-')) {
+      if (catalogId.startsWith('streamed-events-') || catalogId === 'streamed-replays') {
         const streamedSportsEnabled = Boolean(this.getRequestedPrivateProviderSettings(req).streamedSportsEnabled);
         if (!streamedSportsEnabled || !isLiveStremioType(type)) {
           res.json({ metas: [] });

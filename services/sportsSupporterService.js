@@ -15,6 +15,8 @@ const normalizeTransactionId = (value) => String(value || '').trim().slice(0, 12
 const DAY_MS = 24 * 60 * 60 * 1000;
 const TRIAL_CLAIM_TTL_MS = 30 * 60 * 1000;
 const TRIAL_ACCESS_HOURS = 24;
+const STORE_REFRESH_MS = 30_000;
+const STATS_SAVE_DELAY_MS = 5_000;
 const DISPOSABLE_EMAIL_DOMAINS = new Set([
   '10minutemail.com',
   '10minutemail.net',
@@ -75,6 +77,10 @@ export class SportsSupporterService {
       trials: { emails: {}, ipRequests: {}, subnetRequests: {} }
     };
     this.saveChain = Promise.resolve();
+    this.initialized = false;
+    this.storeLoadedAt = 0;
+    this.storeMtimeMs = 0;
+    this.statsSaveTimer = null;
   }
 
   async withClaimLock(task) {
@@ -113,13 +119,31 @@ export class SportsSupporterService {
     }
   }
 
-  async initialize() {
+  async initialize({ force = false } = {}) {
     await mkdir(this.cacheDir, { recursive: true });
+    if (this.initialized && !force && Date.now() - this.storeLoadedAt < STORE_REFRESH_MS) {
+      return;
+    }
     let lastError = null;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
-        const payload = JSON.parse(await readFile(this.storePath, 'utf8'));
+        const stats = await stat(this.storePath).catch((error) => {
+          if (error?.code === 'ENOENT') return null;
+          throw error;
+        });
+        if (this.initialized && stats && stats.mtimeMs <= this.storeMtimeMs && !force) {
+          this.storeLoadedAt = Date.now();
+          return;
+        }
+        const payload = stats ? JSON.parse(await readFile(this.storePath, 'utf8')) : null;
+        if (!payload) {
+          await this.save();
+          return;
+        }
         this.normalizeStorePayload(payload);
+        this.initialized = true;
+        this.storeLoadedAt = Date.now();
+        this.storeMtimeMs = stats?.mtimeMs || Date.now();
         return;
       } catch (error) {
         if (error?.code === 'ENOENT') {
@@ -140,9 +164,23 @@ export class SportsSupporterService {
       const tempPath = `${this.storePath}.${process.pid}.${Date.now()}.${randomBytes(4).toString('hex')}.tmp`;
       await writeFile(tempPath, JSON.stringify(this.store, null, 2), { mode: 0o600 });
       await rename(tempPath, this.storePath);
+      this.initialized = true;
+      this.storeLoadedAt = Date.now();
+      this.storeMtimeMs = Date.now();
     };
     this.saveChain = this.saveChain.then(runSave, runSave);
     return this.saveChain;
+  }
+
+  scheduleStatsSave() {
+    if (this.statsSaveTimer) return;
+    this.statsSaveTimer = setTimeout(() => {
+      this.statsSaveTimer = null;
+      this.save().catch((error) => {
+        this.logger.warn?.('sports supporter stats save failed', { error: error?.message || String(error) });
+      });
+    }, STATS_SAVE_DELAY_MS);
+    this.statsSaveTimer.unref?.();
   }
 
   normalizeStorePayload(payload) {
@@ -590,7 +628,7 @@ export class SportsSupporterService {
     account.stats = account.stats || {};
     account.stats[key] = Number(account.stats[key] || 0) + amount;
     account.lastActiveAt = new Date().toISOString();
-    await this.save();
+    this.scheduleStatsSave();
   }
 
   hasPayment(transactionId) {

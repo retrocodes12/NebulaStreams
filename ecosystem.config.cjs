@@ -47,6 +47,7 @@ module.exports = {
         NEBULA_SPORTS_WC_XTREAM_USERNAME: process.env.NEBULA_SPORTS_WC_XTREAM_USERNAME || '',
         NEBULA_SPORTS_WC_XTREAM_PASSWORD: process.env.NEBULA_SPORTS_WC_XTREAM_PASSWORD || '',
         NEBULA_SPORTS_WC_XTREAM_CATEGORY_ID: process.env.NEBULA_SPORTS_WC_XTREAM_CATEGORY_ID || '105',
+        SPORTSRC_API_KEY: process.env.SPORTSRC_API_KEY || '',
         WATCH_TOGETHER_CBOX_URL: 'https://www5.cbox.ws/box/?boxid=963947&boxtag=kceLWF',
         API_FOOTBALL_KEY: process.env.API_FOOTBALL_KEY || '',
         SCRAPLING_SERVICE_AUTOSTART: 'false',

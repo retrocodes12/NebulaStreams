@@ -5,7 +5,6 @@ import https from 'node:https';
 import os from 'node:os';
 import path from 'node:path';
 import v8 from 'node:v8';
-import zlib from 'node:zlib';
 import express from 'express';
 
 import { config } from './config.js';
@@ -61,116 +60,9 @@ const clampPosterText = (value, max = 72) => {
   return text.length > max ? `${text.slice(0, max - 1).trim()}…` : text;
 };
 
-const getPosterInitials = (value) => {
-  const words = String(value || '')
-    .replace(/&/gu, ' and ')
-    .split(/[^a-z0-9]+/iu)
-    .filter((word) => word && !/^(?:the|and|tv|usa|uk|hd|channel)$/iu.test(word));
-  const initials = words.slice(0, 3).map((word) => word[0]).join('').toUpperCase();
-  return initials || 'NS';
-};
-
-const SPORTS_ADDON_VERSION = '1.0.7';
-const SPORTS_POSTER_VERSION = 'v5';
+const SPORTS_ADDON_VERSION = '1.0.9';
+const SPORTS_POSTER_VERSION = 'v7';
 const SPORTS_FLIX_POSTER_BASE_URL = 'https://free.flixnest.app/api/essential-live-events/poster.jpg';
-
-const PNG_CRC_TABLE = (() => {
-  const table = new Uint32Array(256);
-  for (let n = 0; n < 256; n += 1) {
-    let c = n;
-    for (let k = 0; k < 8; k += 1) {
-      c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
-    }
-    table[n] = c >>> 0;
-  }
-  return table;
-})();
-
-const crc32 = (buffer) => {
-  let crc = 0xffffffff;
-  for (const byte of buffer) {
-    crc = PNG_CRC_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8);
-  }
-  return (crc ^ 0xffffffff) >>> 0;
-};
-
-const pngChunk = (type, data = Buffer.alloc(0)) => {
-  const typeBuffer = Buffer.from(type, 'ascii');
-  const length = Buffer.alloc(4);
-  length.writeUInt32BE(data.length, 0);
-  const crc = Buffer.alloc(4);
-  crc.writeUInt32BE(crc32(Buffer.concat([typeBuffer, data])), 0);
-  return Buffer.concat([length, typeBuffer, data, crc]);
-};
-
-const encodeRgbaPng = (width, height, rgba) => {
-  const scanlineLength = width * 4 + 1;
-  const raw = Buffer.alloc(scanlineLength * height);
-  for (let y = 0; y < height; y += 1) {
-    raw[y * scanlineLength] = 0;
-    rgba.copy(raw, y * scanlineLength + 1, y * width * 4, (y + 1) * width * 4);
-  }
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(width, 0);
-  ihdr.writeUInt32BE(height, 4);
-  ihdr[8] = 8;
-  ihdr[9] = 6;
-  return Buffer.concat([
-    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    pngChunk('IHDR', ihdr),
-    pngChunk('IDAT', zlib.deflateSync(raw, { level: 6 })),
-    pngChunk('IEND')
-  ]);
-};
-
-const POSTER_FONT = Object.freeze({
-  A: ['01110', '10001', '10001', '11111', '10001', '10001', '10001'],
-  B: ['11110', '10001', '10001', '11110', '10001', '10001', '11110'],
-  C: ['01111', '10000', '10000', '10000', '10000', '10000', '01111'],
-  D: ['11110', '10001', '10001', '10001', '10001', '10001', '11110'],
-  E: ['11111', '10000', '10000', '11110', '10000', '10000', '11111'],
-  F: ['11111', '10000', '10000', '11110', '10000', '10000', '10000'],
-  G: ['01111', '10000', '10000', '10111', '10001', '10001', '01110'],
-  H: ['10001', '10001', '10001', '11111', '10001', '10001', '10001'],
-  I: ['11111', '00100', '00100', '00100', '00100', '00100', '11111'],
-  J: ['00111', '00010', '00010', '00010', '10010', '10010', '01100'],
-  K: ['10001', '10010', '10100', '11000', '10100', '10010', '10001'],
-  L: ['10000', '10000', '10000', '10000', '10000', '10000', '11111'],
-  M: ['10001', '11011', '10101', '10101', '10001', '10001', '10001'],
-  N: ['10001', '11001', '10101', '10011', '10001', '10001', '10001'],
-  O: ['01110', '10001', '10001', '10001', '10001', '10001', '01110'],
-  P: ['11110', '10001', '10001', '11110', '10000', '10000', '10000'],
-  Q: ['01110', '10001', '10001', '10001', '10101', '10010', '01101'],
-  R: ['11110', '10001', '10001', '11110', '10100', '10010', '10001'],
-  S: ['01111', '10000', '10000', '01110', '00001', '00001', '11110'],
-  T: ['11111', '00100', '00100', '00100', '00100', '00100', '00100'],
-  U: ['10001', '10001', '10001', '10001', '10001', '10001', '01110'],
-  V: ['10001', '10001', '10001', '10001', '10001', '01010', '00100'],
-  W: ['10001', '10001', '10001', '10101', '10101', '10101', '01010'],
-  X: ['10001', '10001', '01010', '00100', '01010', '10001', '10001'],
-  Y: ['10001', '10001', '01010', '00100', '00100', '00100', '00100'],
-  Z: ['11111', '00001', '00010', '00100', '01000', '10000', '11111'],
-  0: ['01110', '10001', '10011', '10101', '11001', '10001', '01110'],
-  1: ['00100', '01100', '00100', '00100', '00100', '00100', '01110'],
-  2: ['01110', '10001', '00001', '00010', '00100', '01000', '11111'],
-  3: ['11110', '00001', '00001', '01110', '00001', '00001', '11110'],
-  4: ['00010', '00110', '01010', '10010', '11111', '00010', '00010'],
-  5: ['11111', '10000', '10000', '11110', '00001', '00001', '11110'],
-  6: ['01110', '10000', '10000', '11110', '10001', '10001', '01110'],
-  7: ['11111', '00001', '00010', '00100', '01000', '01000', '01000'],
-  8: ['01110', '10001', '10001', '01110', '10001', '10001', '01110'],
-  9: ['01110', '10001', '10001', '01111', '00001', '00001', '01110'],
-  ':': ['00000', '00100', '00100', '00000', '00100', '00100', '00000'],
-  '-': ['00000', '00000', '00000', '11111', '00000', '00000', '00000'],
-  '.': ['00000', '00000', '00000', '00000', '00000', '01100', '01100'],
-  '/': ['00001', '00010', '00010', '00100', '01000', '01000', '10000'],
-  '&': ['01100', '10010', '10100', '01000', '10101', '10010', '01101'],
-  '+': ['00000', '00100', '00100', '11111', '00100', '00100', '00000'],
-  ' ': ['00000', '00000', '00000', '00000', '00000', '00000', '00000']
-});
-
-const posterPngCache = new Map();
-const POSTER_PNG_CACHE_MAX = 320;
 const posterJpgCache = new Map();
 const POSTER_JPG_CACHE_MAX = 320;
 
@@ -185,167 +77,7 @@ const compareVersionParts = (left, right) => {
   return 0;
 };
 
-const parseRgb = (hex) => [
-  Number.parseInt(hex.slice(1, 3), 16),
-  Number.parseInt(hex.slice(3, 5), 16),
-  Number.parseInt(hex.slice(5, 7), 16)
-];
-
-const blendColor = (a, b, t) => a.map((value, index) => Math.round(value + (b[index] - value) * t));
-
-const drawRect = (rgba, width, height, x, y, w, h, color, alpha = 255) => {
-  const [r, g, b] = color;
-  const x0 = Math.max(0, Math.floor(x));
-  const y0 = Math.max(0, Math.floor(y));
-  const x1 = Math.min(width, Math.ceil(x + w));
-  const y1 = Math.min(height, Math.ceil(y + h));
-  for (let py = y0; py < y1; py += 1) {
-    for (let px = x0; px < x1; px += 1) {
-      const offset = (py * width + px) * 4;
-      const inv = 255 - alpha;
-      rgba[offset] = Math.round((r * alpha + rgba[offset] * inv) / 255);
-      rgba[offset + 1] = Math.round((g * alpha + rgba[offset + 1] * inv) / 255);
-      rgba[offset + 2] = Math.round((b * alpha + rgba[offset + 2] * inv) / 255);
-      rgba[offset + 3] = 255;
-    }
-  }
-};
-
-const drawCircle = (rgba, width, height, cx, cy, radius, color, alpha = 255) => {
-  const r2 = radius * radius;
-  for (let y = Math.max(0, Math.floor(cy - radius)); y < Math.min(height, Math.ceil(cy + radius)); y += 1) {
-    for (let x = Math.max(0, Math.floor(cx - radius)); x < Math.min(width, Math.ceil(cx + radius)); x += 1) {
-      const dx = x - cx;
-      const dy = y - cy;
-      if (dx * dx + dy * dy <= r2) drawRect(rgba, width, height, x, y, 1, 1, color, alpha);
-    }
-  }
-};
-
-const normalizePosterLine = (value) => String(value || '')
-  .toUpperCase()
-  .replace(/[^A-Z0-9 :./&+-]+/gu, ' ')
-  .replace(/\s+/gu, ' ')
-  .trim();
-
-const wrapPosterText = (value, maxChars, maxLines) => {
-  const words = normalizePosterLine(value).split(/\s+/u).filter(Boolean);
-  const lines = [];
-  let current = '';
-  for (const word of words) {
-    const next = current ? `${current} ${word}` : word;
-    if (next.length > maxChars && current) {
-      lines.push(current);
-      current = word;
-    } else {
-      current = next;
-    }
-    if (lines.length >= maxLines) break;
-  }
-  if (current && lines.length < maxLines) lines.push(current);
-  return lines.length ? lines : ['LIVE SPORTS'];
-};
-
-const drawBitmapText = (rgba, width, height, text, x, y, scale, color, alpha = 255, align = 'left') => {
-  const normalized = normalizePosterLine(text);
-  const charWidth = 6 * scale;
-  const textWidth = Math.max(0, normalized.length * charWidth - scale);
-  const startX = align === 'center' ? x - textWidth / 2 : (align === 'right' ? x - textWidth : x);
-  [...normalized].forEach((char, charIndex) => {
-    const glyph = POSTER_FONT[char] || POSTER_FONT[' '];
-    glyph.forEach((row, rowIndex) => {
-      [...row].forEach((bit, colIndex) => {
-        if (bit === '1') {
-          drawRect(
-            rgba,
-            width,
-            height,
-            startX + charIndex * charWidth + colIndex * scale,
-            y + rowIndex * scale,
-            scale,
-            scale,
-            color,
-            alpha
-          );
-        }
-      });
-    });
-  });
-};
-
-const buildSportsPosterPng = ({ title, genre, timeLabel, infoLabel, kind, seed }) => {
-  const width = 600;
-  const height = 900;
-  const key = `${SPORTS_POSTER_VERSION}:${title}:${genre}:${timeLabel}:${infoLabel}:${kind}:${seed}`;
-  const cached = posterPngCache.get(key);
-  if (cached) return cached;
-
-  const rgba = Buffer.alloc(width * height * 4);
-  const top = parseRgb('#210044');
-  const mid = parseRgb('#08324d');
-  const bottom = parseRgb('#052516');
-  const accent = [58 + (seed[0] % 120), 110 + (seed[1] % 110), 190 + (seed[2] % 60)];
-  const accent2 = [190 + (seed[3] % 50), 65 + (seed[4] % 120), 220 + (seed[5] % 30)];
-  const accent3 = [55 + (seed[6] % 90), 210 + (seed[7] % 35), 150 + (seed[8] % 80)];
-
-  for (let y = 0; y < height; y += 1) {
-    const vertical = y / (height - 1);
-    const base = vertical < 0.52
-      ? blendColor(top, mid, vertical / 0.52)
-      : blendColor(mid, bottom, (vertical - 0.52) / 0.48);
-    for (let x = 0; x < width; x += 1) {
-      const dx1 = (x - 120) / 460;
-      const dy1 = (y - 120) / 520;
-      const glow1 = Math.max(0, 1 - Math.sqrt(dx1 * dx1 + dy1 * dy1));
-      const dx2 = (x - 520) / 380;
-      const dy2 = (y - 260) / 430;
-      const glow2 = Math.max(0, 1 - Math.sqrt(dx2 * dx2 + dy2 * dy2));
-      const offset = (y * width + x) * 4;
-      rgba[offset] = Math.min(255, Math.round(base[0] + accent[0] * glow1 * 0.42 + accent2[0] * glow2 * 0.32));
-      rgba[offset + 1] = Math.min(255, Math.round(base[1] + accent[1] * glow1 * 0.38 + accent2[1] * glow2 * 0.28));
-      rgba[offset + 2] = Math.min(255, Math.round(base[2] + accent[2] * glow1 * 0.34 + accent2[2] * glow2 * 0.32));
-      rgba[offset + 3] = 255;
-    }
-  }
-
-  drawCircle(rgba, width, height, 300, 170, 96, accent2, 150);
-  drawCircle(rgba, width, height, 300, 170, 72, [8, 16, 30], 230);
-  drawCircle(rgba, width, height, 300, 170, 54, accent, 235);
-  drawRect(rgba, width, height, 40, 40, 520, 820, [255, 255, 255], 18);
-  drawRect(rgba, width, height, 60, 250, 480, 62, [5, 12, 24], 180);
-  drawRect(rgba, width, height, 74, 510, 452, 116, [5, 12, 24], 175);
-  drawRect(rgba, width, height, 0, 680, 600, 220, accent2, 58);
-  drawRect(rgba, width, height, 0, 750, 600, 150, accent3, 52);
-  drawCircle(rgba, width, height, 82, 92, 5, [255, 255, 255], 170);
-  drawCircle(rgba, width, height, 512, 126, 4, [255, 255, 255], 145);
-  drawCircle(rgba, width, height, 460, 744, 4, [255, 255, 255], 130);
-
-  drawBitmapText(rgba, width, height, 'NEBULA SPORTS', 300, 76, 5, [245, 250, 255], 230, 'center');
-  drawBitmapText(rgba, width, height, getPosterInitials(title), 300, 148, 9, [255, 255, 255], 245, 'center');
-  drawBitmapText(rgba, width, height, kind === 'channel' ? 'LIVE TV' : genre, 300, 270, 4, [212, 255, 239], 245, 'center');
-
-  const titleLines = wrapPosterText(title, 15, 3);
-  titleLines.forEach((line, index) => {
-    drawBitmapText(rgba, width, height, line, 300, 350 + index * 58, 7, [248, 251, 255], 245, 'center');
-  });
-  drawBitmapText(rgba, width, height, 'START TIME', 300, 536, 4, [190, 205, 220], 230, 'center');
-  wrapPosterText(timeLabel, 20, 1).forEach((line) => {
-    drawBitmapText(rgba, width, height, line, 300, 574, 5, [255, 255, 255], 245, 'center');
-  });
-  wrapPosterText(infoLabel, 22, 2).forEach((line, index) => {
-    drawBitmapText(rgba, width, height, line, 300, 650 + index * 36, 4, [215, 255, 239], 235, 'center');
-  });
-  drawBitmapText(rgba, width, height, 'PLAYABLE IN STREMIO', 300, 812, 4, [238, 246, 240], 220, 'center');
-
-  const png = encodeRgbaPng(width, height, rgba);
-  posterPngCache.set(key, png);
-  while (posterPngCache.size > POSTER_PNG_CACHE_MAX) {
-    posterPngCache.delete(posterPngCache.keys().next().value);
-  }
-  return png;
-};
-
-const buildSportsPosterUrl = (baseUrl, { id = '', name = '', genre = '', kind = 'event', time = '', info = '' } = {}) => {
+const buildSportsPosterUrl = (baseUrl, { id = '', name = '', genre = '', kind = 'event', time = '', info = '', badge = '' } = {}) => {
   const normalizedBase = String(baseUrl || '').replace(/\/+$/u, '');
   const sig = crypto.createHash('sha1').update(`${SPORTS_POSTER_VERSION}:${id}:${name}:${genre}:${kind}:${time}:${info}`).digest('hex').slice(0, 10);
   const params = new URLSearchParams({
@@ -354,7 +86,7 @@ const buildSportsPosterUrl = (baseUrl, { id = '', name = '', genre = '', kind = 
     meta: clampPosterText(genre || (kind === 'channel' ? 'Live TV' : 'Sports'), 44),
     time: clampPosterText(time || (kind === 'channel' ? 'Live now' : 'Starting soon'), 44),
     info: clampPosterText(info || (kind === 'channel' ? '24/7 sports channel' : 'Live event stream'), 70),
-    badge: kind === 'channel' ? 'LIVE TV' : 'EVENT',
+    badge: clampPosterText(badge || (kind === 'channel' ? 'LIVE TV' : 'EVENT'), 18),
     sources: 'Nebula Sports',
     kind: String(kind || 'event').slice(0, 24),
     sig
@@ -2704,6 +2436,45 @@ const renderSportsConfigurePage = ({ baseUrl, account, catalogs = [], errorMessa
 </body></html>`;
 };
 
+const renderSportsAdminStatusPage = ({ account, metrics = {}, diagnostics = {}, generatedAt = new Date().toISOString() }) => {
+  const routeRows = ['catalog', 'stream'].map((name) => {
+    const item = metrics.routes?.[name] || {};
+    return '<tr><td>' + escapeHtml(name) + '</td><td>' + escapeHtml(String(item.count || 0)) + '</td><td>' + escapeHtml(String(item.errors || 0)) + '</td><td>' + escapeHtml(String(item.avgMs || 0)) + '</td><td>' + escapeHtml(String(item.p95Ms || 0)) + '</td><td>' + escapeHtml(String(item.maxMs || 0)) + '</td><td>' + escapeHtml(String(item.lastStatus || '')) + '</td></tr>';
+  }).join('');
+  const cache = diagnostics.caches || {};
+  const probe = diagnostics.probe || {};
+  const browser = diagnostics.browser || {};
+  const alertRows = (metrics.alerts || [])
+    .map((item) => '<li><span class="pill down">' + escapeHtml(item.level || 'warn') + '</span> ' + escapeHtml(item.message || '') + '</li>')
+    .join('');
+  const workerRows = (metrics.workers || [])
+    .map((item) => '<tr><td>' + escapeHtml(String(item.pid || '')) + '</td><td>' + escapeHtml(String(item.uptimeSeconds || 0)) + '</td><td>' + escapeHtml(item.updatedAt || '') + '</td></tr>')
+    .join('');
+  const cacheRows = Object.entries({
+    catalogResponse: metrics.caches?.catalogEntries || 0,
+    streamResponse: metrics.caches?.streamEntries || 0,
+    adapterMatches: cache.matches || 0,
+    adapterHls: cache.hls || 0,
+    adapterPlaylists: cache.playlists || 0,
+    matchIndex: cache.matchIndex || 0
+  }).map(([key, value]) => '<tr><td>' + escapeHtml(key) + '</td><td>' + escapeHtml(String(value)) + '</td></tr>').join('');
+  const cacheHitRows = Object.entries(metrics.cacheStats || {})
+    .map(([key, value]) => '<tr><td>' + escapeHtml(key) + '</td><td>' + escapeHtml(String(value.hits || 0)) + '</td><td>' + escapeHtml(String(value.misses || 0)) + '</td></tr>')
+    .join('');
+  const recentErrors = (metrics.recentErrors || [])
+    .map((item) => '<li><code>' + escapeHtml(item.time || '') + '</code> ' + escapeHtml(item.kind || '') + ' ' + escapeHtml(item.error || '') + '</li>')
+    .join('');
+  return '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Nebula Sports Status</title><style>body{margin:0;background:#0e1116;color:#e7ebf0;font:14px/1.5 Inter,system-ui,sans-serif}main{max-width:1180px;margin:0 auto;padding:28px 18px 64px}h1{font-size:28px;margin:0 0 6px}h2{font-size:17px;margin:28px 0 12px}.muted{color:#aeb7c2}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.card{border:1px solid #232a33;background:#161b22;border-radius:12px;padding:16px}.num{font-size:28px;font-weight:750}table{width:100%;border-collapse:collapse;background:#161b22;border:1px solid #232a33;border-radius:12px;overflow:hidden}th,td{text-align:left;border-bottom:1px solid #232a33;padding:10px 12px;vertical-align:top}th{color:#aeb7c2;font-size:12px;text-transform:uppercase;letter-spacing:.06em}.pill{display:inline-flex;border-radius:999px;padding:2px 9px;font-weight:700;font-size:12px;background:#303846;color:#cbd5e1}.pill.ok{background:rgba(31,170,110,.18);color:#86efac}.pill.down{background:rgba(244,63,94,.18);color:#fecdd3}code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#cbd5e1}ul{margin:0;padding-left:18px}@media(max-width:800px){.grid{grid-template-columns:1fr}table{font-size:12px}}</style></head><body><main>' +
+    '<h1>Nebula Sports Status</h1><p class="muted">Admin only · signed in as ' + escapeHtml(account?.username || 'admin') + ' · generated ' + escapeHtml(generatedAt) + '</p>' +
+    (alertRows ? '<h2>Alerts</h2><div class="card"><ul>' + alertRows + '</ul></div>' : '<h2>Alerts</h2><div class="card muted">No active sports route alerts</div>') +
+    '<div class="grid"><div class="card"><div class="muted">Catalog requests</div><div class="num">' + escapeHtml(String(metrics.routes?.catalog?.count || 0)) + '</div></div><div class="card"><div class="muted">Stream requests</div><div class="num">' + escapeHtml(String(metrics.routes?.stream?.count || 0)) + '</div></div><div class="card"><div class="muted">Probe disabled</div><div class="num">' + escapeHtml(String(probe.disabledForSeconds || 0)) + 's</div></div></div>' +
+    '<h2>Route Latency</h2><table><thead><tr><th>Route</th><th>Count</th><th>Errors</th><th>Avg ms</th><th>P95 ms</th><th>Max ms</th><th>Last</th></tr></thead><tbody>' + routeRows + '</tbody></table>' +
+    '<h2>Cache</h2><div class="grid"><div class="card"><table><tbody>' + cacheRows + '</tbody></table></div><div class="card"><table><thead><tr><th>Cache</th><th>Hit</th><th>Miss</th></tr></thead><tbody>' + cacheHitRows + '</tbody></table></div><div class="card"><p>Browser fallback: <strong>' + escapeHtml(String(browser.fallbackEnabled)) + '</strong></p><p>Browser disabled: <strong>' + escapeHtml(String(browser.disabledForSeconds || 0)) + 's</strong></p><p>Probe enabled: <strong>' + escapeHtml(String(probe.enabled)) + '</strong></p><p>Probe failures: <strong>' + escapeHtml(String(probe.failures || 0)) + '</strong></p></div></div>' +
+    '<h2>Workers</h2><table><thead><tr><th>PID</th><th>Uptime</th><th>Updated</th></tr></thead><tbody>' + workerRows + '</tbody></table>' +
+    '<h2>Recent Errors</h2><div class="card"><ul>' + (recentErrors || '<li class="muted">No recent sports route errors</li>') + '</ul></div>' +
+    '</main></body></html>';
+};
+
 const WATCH_TOGETHER_NOTICE = Object.freeze({
   icon: '&#9888;',
   textBeforeLink: 'Stream issues? Use VPN or switch ',
@@ -4466,7 +4237,7 @@ const bootstrap = async () => {
     maxAge: '7d',
     immutable: true
   }));
-  app.get('/sports/poster/:version/:sig.jpg', async (req, res) => {
+  app.get(['/sports/poster.jpg', '/sports/poster.png', '/sports/poster/:version/:sig.jpg', '/sports/poster/:version/:sig.png'], async (req, res) => {
     const title = clampPosterText(req.query?.title || 'Sports Event', 80);
     const meta = clampPosterText(req.query?.meta || req.query?.genre || 'Sports', 44);
     const timeLabel = clampPosterText(req.query?.time || 'Starting soon', 44);
@@ -4501,126 +4272,11 @@ const bootstrap = async () => {
       }
       res.type('image/jpeg').setHeader('Cache-Control', 'public, max-age=300').send(buffer);
     } catch (error) {
-      const genre = clampPosterText(req.query?.genre || meta || 'Sports', 32);
-      const infoLabel = clampPosterText(req.query?.info || `${meta} event`, 70);
-      const kind = String(req.query?.kind || 'event').toLowerCase() === 'channel' ? 'channel' : 'event';
-      const seed = crypto.createHash('sha1').update(`${title}:${genre}:${kind}:${req.query?.sig || ''}`).digest();
-      const png = buildSportsPosterPng({ title, genre, timeLabel, infoLabel, kind, seed });
-      logger.warn('nebula sports flix-style poster fallback used', {
+      logger.warn('nebula sports flix-style poster unavailable', {
         error: error?.message || String(error)
       });
-      res.type('image/png').setHeader('Cache-Control', 'public, max-age=300').send(png);
+      res.status(502).json({ error: 'Poster unavailable' });
     }
-  });
-  app.get(['/sports/poster.png', '/sports/poster/:version/:sig.png'], (req, res) => {
-    const title = clampPosterText(req.query?.title || 'Sports Event', 80);
-    const genre = clampPosterText(req.query?.genre || 'Sports', 32);
-    const timeLabel = clampPosterText(req.query?.time || 'Starting soon', 44);
-    const infoLabel = clampPosterText(req.query?.info || 'Live event stream', 70);
-    const kind = String(req.query?.kind || 'event').toLowerCase() === 'channel' ? 'channel' : 'event';
-    const seed = crypto.createHash('sha1').update(`${title}:${genre}:${kind}:${req.query?.sig || ''}`).digest();
-    const png = buildSportsPosterPng({ title, genre, timeLabel, infoLabel, kind, seed });
-    res
-      .type('image/png')
-      .setHeader('Cache-Control', 'public, max-age=300')
-      .send(png);
-  });
-  app.get(['/sports/poster.svg', '/sports/poster/:version/:sig.svg'], (req, res) => {
-    const title = clampPosterText(req.query?.title || 'Sports Event', 80);
-    const genre = clampPosterText(req.query?.genre || 'Sports', 32);
-    const timeLabel = clampPosterText(req.query?.time || 'Starting soon', 44);
-    const infoLabel = clampPosterText(req.query?.info || 'Live event stream', 70);
-    const kind = String(req.query?.kind || 'event').toLowerCase() === 'channel' ? 'channel' : 'event';
-    const initials = getPosterInitials(title);
-    const seed = crypto.createHash('sha1').update(`${title}:${genre}:${kind}:${req.query?.sig || ''}`).digest();
-    const hue = seed[0] % 360;
-    const hue2 = (hue + 38 + (seed[1] % 74)) % 360;
-    const hue3 = (hue + 158 + (seed[2] % 46)) % 360;
-    const accent = `hsl(${hue} 86% 58%)`;
-    const accent2 = `hsl(${hue2} 84% 54%)`;
-    const accent3 = `hsl(${hue3} 88% 60%)`;
-    const label = kind === 'channel' ? 'LIVE TV' : 'LIVE SPORTS';
-    const safeTitle = escapeHtml(title);
-    const safeGenre = escapeHtml(genre.toUpperCase());
-    const safeTime = escapeHtml(timeLabel);
-    const safeInfo = escapeHtml(infoLabel);
-    const safeInitials = escapeHtml(initials);
-    const titleLines = (() => {
-      const lines = [];
-      let current = '';
-      for (const word of title.split(/\s+/u).filter(Boolean)) {
-        const next = current ? `${current} ${word}` : word;
-        if (next.length > 22 && current) {
-          lines.push(current);
-          current = word;
-        } else {
-          current = next;
-        }
-        if (lines.length >= 2) break;
-      }
-      if (current && lines.length < 3) lines.push(current);
-      return lines.length ? lines : [title];
-    })();
-    const titleSvg = titleLines.slice(0, 3).map((line, index) =>
-      `<text x="300" y="${348 + (index * 48)}" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="${index === 0 ? 38 : 33}" font-weight="850" fill="#f7fafc">${escapeHtml(clampPosterText(line, 28))}</text>`
-    ).join('\n  ');
-    const channelLogoBody = `
-  <text x="300" y="324" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="50" font-weight="850" fill="#f7fafc">${safeTitle}</text>
-  <text x="300" y="384" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="22" font-weight="750" fill="#ffffff" fill-opacity="0.8">${label}</text>
-  <text x="300" y="432" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="18" font-weight="700" fill="#d9fff1" fill-opacity="0.86">${safeInfo}</text>`;
-    const eventPosterBody = `
-  <circle cx="300" cy="162" r="82" fill="#07111f" stroke="url(#ring)" stroke-width="10"/>
-  <circle cx="300" cy="162" r="54" fill="${accent}" opacity="0.95"/>
-  <text x="300" y="184" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="54" font-weight="900" fill="#fff">${safeInitials}</text>
-  <rect x="106" y="258" width="388" height="38" rx="19" fill="#07111f" fill-opacity="0.74" stroke="#ffffff" stroke-opacity="0.12"/>
-  <text x="300" y="282" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="17" font-weight="850" fill="#d9fff1" letter-spacing="2">${safeGenre}</text>
-  ${titleSvg}
-  <rect x="88" y="520" width="424" height="92" rx="22" fill="#07111f" fill-opacity="0.68" stroke="#ffffff" stroke-opacity="0.14"/>
-  <text x="300" y="552" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="14" font-weight="850" fill="#ffffff" fill-opacity="0.7" letter-spacing="2">START TIME</text>
-  <text x="300" y="584" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="24" font-weight="850" fill="#f7fafc">${safeTime}</text>
-  <text x="300" y="642" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="18" font-weight="750" fill="#d9fff1" fill-opacity="0.9">${safeInfo}</text>`;
-    const svg = `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="600" height="900" viewBox="0 0 600 900" role="img" aria-label="${safeTitle}">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#12051f"/>
-      <stop offset="0.42" stop-color="#071d2b"/>
-      <stop offset="1" stop-color="#04110b"/>
-    </linearGradient>
-    <radialGradient id="glow" cx="24%" cy="18%" r="70%">
-      <stop offset="0" stop-color="${accent}" stop-opacity="0.72"/>
-      <stop offset="0.52" stop-color="${accent2}" stop-opacity="0.26"/>
-      <stop offset="1" stop-color="#050608" stop-opacity="0"/>
-    </radialGradient>
-    <radialGradient id="glow2" cx="82%" cy="24%" r="64%">
-      <stop offset="0" stop-color="${accent3}" stop-opacity="0.58"/>
-      <stop offset="0.46" stop-color="${accent2}" stop-opacity="0.2"/>
-      <stop offset="1" stop-color="#050608" stop-opacity="0"/>
-    </radialGradient>
-    <linearGradient id="ring" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="${accent}"/>
-      <stop offset="0.52" stop-color="${accent2}"/>
-      <stop offset="1" stop-color="${accent3}"/>
-    </linearGradient>
-  </defs>
-  <rect width="600" height="900" fill="url(#bg)"/>
-  <rect width="600" height="900" fill="url(#glow)"/>
-  <rect width="600" height="900" fill="url(#glow2)"/>
-  <circle cx="82" cy="92" r="4" fill="#fff" opacity="0.74"/><circle cx="510" cy="146" r="3" fill="#fff" opacity="0.6"/><circle cx="444" cy="746" r="4" fill="#fff" opacity="0.5"/><circle cx="130" cy="705" r="3" fill="#fff" opacity="0.55"/>
-  <path d="M-40 682 C92 602 202 760 350 675 C462 610 518 644 640 568 L640 900 L-40 900 Z" fill="${accent2}" opacity="0.33"/>
-  <path d="M-20 752 C112 680 220 798 348 732 C466 671 520 690 624 640 L624 900 L-20 900 Z" fill="${accent3}" opacity="0.22"/>
-  <rect x="34" y="34" width="532" height="832" rx="34" fill="#ffffff" opacity="0.055" stroke="#ffffff" stroke-opacity="0.22" stroke-width="2"/>
-  <text x="300" y="82" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="16" font-weight="900" fill="#ffffff" fill-opacity="0.82" letter-spacing="4">NEBULA SPORTS</text>
-  ${kind === 'channel' ? channelLogoBody : eventPosterBody}
-  <rect x="142" y="704" width="316" height="46" rx="23" fill="#07111f" fill-opacity="0.72" stroke="#ffffff" stroke-opacity="0.14"/>
-  <circle cx="178" cy="727" r="7" fill="#45d483"/>
-  <text x="200" y="734" font-family="Inter,Arial,sans-serif" font-size="16" font-weight="850" fill="#edf7f1">${label}</text>
-  <text x="300" y="812" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="18" font-weight="800" fill="#ffffff" fill-opacity="0.78">Direct playable streams in Stremio</text>
-</svg>`;
-    res
-      .type('image/svg+xml')
-      .setHeader('Cache-Control', 'public, max-age=300')
-      .send(svg);
   });
   app.get('/webos/repo.json', (_req, res) => {
     res
@@ -5182,6 +4838,48 @@ const bootstrap = async () => {
   const SPORTS_MAIN_CATALOG_ID = 'all';
   const SPORTS_LEGACY_CATALOG_ID = 'nebula-sports-events';
   const SPORTS_STREMIO_TYPE = 'sports';
+  const LIVE_TV_GENRE_OPTIONS = Object.freeze([
+    'FIFA WC',
+    'Football',
+    'Cricket',
+    'Tennis',
+    'Motorsport',
+    'Fight',
+    'US Sports',
+    'Golf',
+    'Rugby',
+    'Sports News'
+  ]);
+
+  const normalizeSportsCatalogText = (value) => String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gu, ' ')
+    .replace(/\s+/gu, ' ')
+    .trim();
+
+  const sportsGenreNeedles = (genre) => {
+    const normalized = normalizeSportsCatalogText(genre);
+    const aliases = {
+      football: ['football', 'soccer', 'fifa'],
+      soccer: ['football', 'soccer', 'fifa'],
+      cricket: ['cricket'],
+      tennis: ['tennis', 'atp', 'wta'],
+      basketball: ['basketball', 'nba'],
+      baseball: ['baseball', 'mlb'],
+      'ice hockey': ['ice hockey', 'hockey', 'nhl'],
+      hockey: ['ice hockey', 'hockey', 'nhl'],
+	      rugby: ['rugby'],
+	      'motor sports': ['motor sports', 'motorsport', 'formula', 'f1', 'moto gp', 'motogp', 'nascar'],
+	      motorsport: ['motor sports', 'motorsport', 'formula', 'f1', 'moto gp', 'motogp', 'nascar'],
+	      racing: ['racing', 'race', 'formula', 'f1', 'moto gp', 'motogp', 'nascar'],
+	      fight: ['fight', 'ufc', 'boxing', 'wwe', 'combat', 'dazn'],
+	      'us sports': ['us sports', 'nba', 'nfl', 'mlb', 'nhl', 'espn', 'fox sports', 'nbc sports', 'cbs sports'],
+	      golf: ['golf', 'pga'],
+	      'sports news': ['sports news', 'espnews'],
+	      'fifa wc': ['fifa', 'world cup', 'wc']
+	    };
+    return aliases[normalized] || (normalized ? [normalized] : []);
+  };
 
   const getCatalogGenreValue = (req) => {
     const extra = String(req.params.extra || '');
@@ -5204,7 +4902,7 @@ const bootstrap = async () => {
 
   const isSportsTvClient = (req) => {
     const userAgent = String(req.headers['user-agent'] || '').toLowerCase();
-    return /webos|smarttv|tizen|netcast|lge|stremio tv|stremio-shell/u.test(userAgent);
+    return /androidtv|android tv|aft|bravia|chromecast|fire tv|google tv|hisense|lge|netcast|shield|smarttv|stremio tv|stremio-shell|tizen|tv\b|webos/u.test(userAgent);
   };
 
   const SPORTS_TV_META_CACHE_TTL_MS = 10 * 60 * 1000;
@@ -5261,16 +4959,18 @@ const bootstrap = async () => {
 
   const decorateSportsMeta = (meta, reqOrBaseUrl, account = null) => {
     const baseUrl = typeof reqOrBaseUrl === 'string' ? reqOrBaseUrl : getPublicBaseUrl(reqOrBaseUrl);
+    const tvClient = typeof reqOrBaseUrl !== 'string' && isSportsTvClient(reqOrBaseUrl);
     const genres = Array.isArray(meta?.genres) && meta.genres.length ? meta.genres : ['Sports'];
     const primaryGenre = genres.find((genre) => genre && genre !== 'Sports') || genres[0] || 'Sports';
     const metaName = String(meta?.name || 'Live Sports Event').trim();
     const isLiveTv = primaryGenre.toLowerCase() === 'live tv'
       || String(meta?.id || '').includes('dlhd-channel')
       || genres.some((genre) => String(genre || '').toLowerCase() === 'live tv');
-    const configuredTimezone = getSportsConfig(account).timezone;
-    let displayTime = meta?.releaseInfo || null;
-    const utcMatch = String(displayTime || '').match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})\s+UTC$/u);
-    if (utcMatch && configuredTimezone !== 'UTC') {
+	    const configuredTimezone = getSportsConfig(account).timezone;
+	    let displayTime = meta?.releaseInfo || null;
+	    const actualLive = Boolean(meta?.isLive || /^🔴?\s*LIVE$/iu.test(String(displayTime || '').replace(/^🔴/u, '').trim()));
+	    const utcMatch = String(displayTime || '').match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})\s+UTC$/u);
+	    if (!actualLive && utcMatch && configuredTimezone !== 'UTC') {
       try {
         displayTime = new Intl.DateTimeFormat('en', {
           timeZone: configuredTimezone,
@@ -5286,13 +4986,14 @@ const bootstrap = async () => {
     const generatedPoster = buildSportsPosterUrl(baseUrl, {
       id: meta?.id || metaName,
       name: metaName,
-      genre: primaryGenre,
-      kind: isLiveTv ? 'channel' : 'event',
-      time: displayTime || (isLiveTv ? 'Live now' : 'Starting soon'),
-      info: isLiveTv
-        ? `${primaryGenre} channel`
-        : `${primaryGenre} event${displayTime ? ` · ${displayTime}` : ''}`
-    });
+	      genre: primaryGenre,
+	      kind: isLiveTv ? 'channel' : 'event',
+	      time: actualLive ? 'Live now' : (displayTime || (isLiveTv ? 'Live now' : 'Starting soon')),
+	      info: isLiveTv
+	        ? `${primaryGenre} channel`
+	        : `${primaryGenre} event${displayTime && !actualLive ? ` · ${displayTime}` : ''}`,
+	      badge: actualLive ? 'LIVE' : ''
+	    });
     const poster = generatedPoster;
     return {
       ...meta,
@@ -5307,8 +5008,9 @@ const bootstrap = async () => {
       posterShape: 'poster',
       country: 'Sports',
       countryCode: 'sports',
-      releaseInfo: displayTime,
-      time: displayTime,
+	      releaseInfo: actualLive ? '🔴 LIVE' : displayTime,
+	      time: actualLive ? '🔴 LIVE' : displayTime,
+	      isLive: actualLive,
       streams: []
     };
   };
@@ -5332,7 +5034,7 @@ const bootstrap = async () => {
     }));
     const failures = results.filter((result) => result.status === 'rejected').length;
     if (failures) {
-      logger.debug('nebula sports tv meta prewarm partial failure', {
+      logger.info('nebula sports tv meta prewarm partial failure', {
         failures,
         total: results.length
       });
@@ -5343,6 +5045,7 @@ const bootstrap = async () => {
     try {
       const account = await getSportsAccountFromInstall(req, res);
       if (!account) return;
+      touchSportsLivePrewarm(account, req);
       const baseUrl = getPublicBaseUrl(req);
       const tvClient = isSportsTvClient(req);
       const catalogDefinitions = filterSportsCatalogsForAccount(
@@ -5358,31 +5061,64 @@ const bootstrap = async () => {
           || selectedSports.has(catalog.id))
         .map((catalog) => String(catalog.name || '').replace(/^Sports Events:\s*/u, '').trim())
         .filter(Boolean);
-      const catalogs = [{
-        type: SPORTS_STREMIO_TYPE,
-        id: SPORTS_MAIN_CATALOG_ID,
-        name: 'Nebula Sports',
-        extra: [
-          { name: 'genre', options: genreOptions, isRequired: false }
-        ]
-      }];
-      const liveTvCatalog = catalogDefinitions.find((catalog) => catalog.id === DLHD_CHANNEL_CATALOG_ID);
-      if (liveTvCatalog && hasDlhdChannelAccess(account)) {
-        catalogs.push({
+      const tvCoreCatalogIds = new Set([
+        'streamed-events-live',
+        'streamed-events-today',
+        'streamed-events-popular',
+        'streamed-events-fifa-wc',
+        'streamed-events-cdnlivetv',
+        'streamed-replays',
+        DLHD_CHANNEL_CATALOG_ID
+      ]);
+      const catalogs = tvClient
+        ? catalogDefinitions
+          .filter((catalog) => !sportsConfig.liveOnly
+            || catalog.id === 'streamed-events-live'
+            || catalog.id === 'streamed-events-cdnlivetv'
+            || catalog.id === DLHD_CHANNEL_CATALOG_ID)
+          .filter((catalog) => selectedSports.size === 0 || tvCoreCatalogIds.has(catalog.id) || selectedSports.has(catalog.id))
+          .filter((catalog) => selectedSports.size > 0 || tvCoreCatalogIds.has(catalog.id))
+          .slice(0, 10)
+	          .map((catalog) => ({
+	            type: SPORTS_STREMIO_TYPE,
+	            id: catalog.id,
+	            name: catalog.id === DLHD_CHANNEL_CATALOG_ID
+	              ? 'Nebula Sports: Live TV'
+	              : `Nebula Sports: ${String(catalog.name || '').replace(/^Sports Events:\s*/u, '').trim() || 'Events'}`,
+	            ...(catalog.id === DLHD_CHANNEL_CATALOG_ID
+	              ? { extra: [{ name: 'genre', options: LIVE_TV_GENRE_OPTIONS, isRequired: false }] }
+	              : {})
+	          }))
+        : [{
           type: SPORTS_STREMIO_TYPE,
-          id: DLHD_CHANNEL_CATALOG_ID,
-          name: 'Nebula Sports: Live TV'
-        });
-      }
+          id: SPORTS_MAIN_CATALOG_ID,
+          name: 'Nebula Sports',
+          extra: [
+            { name: 'genre', options: genreOptions, isRequired: false }
+          ]
+        }];
+      const liveTvCatalog = catalogDefinitions.find((catalog) => catalog.id === DLHD_CHANNEL_CATALOG_ID);
+      if (!tvClient && liveTvCatalog && hasDlhdChannelAccess(account)) {
+	        catalogs.push({
+	          type: SPORTS_STREMIO_TYPE,
+	          id: DLHD_CHANNEL_CATALOG_ID,
+	          name: 'Nebula Sports: Live TV',
+	          extra: [
+	            { name: 'genre', options: LIVE_TV_GENRE_OPTIONS, isRequired: false }
+	          ]
+	        });
+	      }
       if (!isFreeSportsTier(account)) {
         streamManager.streamedSportsAdapter.prewarmCatalogs(catalogDefinitions);
         void prewarmSportsTvMetaCache(account, catalogDefinitions, req).catch((error) => {
-          logger.debug('nebula sports tv meta prewarm failed', {
+          logger.info('nebula sports tv meta prewarm failed', {
             error: error?.message || String(error)
           });
         });
       }
-      await sportsSupporterService.increment(account.id, 'manifests', 1);
+      void sportsSupporterService.increment(account.id, 'manifests', 1).catch((error) => {
+        logger.debug?.('sports manifest stat increment failed', { error: error?.message || String(error) });
+      });
       await sportsSupporterService.setSportsManifestVersion(account.id, SPORTS_ADDON_VERSION);
       res
         .setHeader('Cache-Control', 'private, max-age=120')
@@ -5407,20 +5143,36 @@ const bootstrap = async () => {
   };
 
   const sendSportsCatalog = async (req, res, next) => {
+    const startedAt = Date.now();
     try {
       const account = await getSportsAccountFromInstall(req, res);
       if (!account) return;
+      touchSportsLivePrewarm(account, req);
       const type = String(req.params.type || '').trim().toLowerCase();
       if (type !== SPORTS_STREMIO_TYPE && type !== 'tv' && type !== 'events' && type !== 'channel' && type !== 'live') {
         res.json({ metas: [] });
         return;
       }
       const tvClient = isSportsTvClient(req);
+      const sportsConfig = getSportsConfig(account);
+      const catalogCacheKey = getSportsCatalogResponseCacheKey(req, account, sportsConfig, tvClient);
+      const cachedCatalogResponse = sportsCatalogResponseCache.get(catalogCacheKey);
+      const cacheControl = tvClient ? 'no-store, no-cache, must-revalidate, max-age=0' : 'private, max-age=30';
+      if (cachedCatalogResponse?.expiresAt > Date.now()) {
+        sportsRouteMetrics.cacheStats.catalog.hits += 1;
+        void sportsSupporterService.increment(account.id, 'catalogs', 1).catch((error) => {
+          logger.debug?.('sports catalog stat increment failed', { error: error?.message || String(error) });
+        });
+        recordSportsRouteMetric('catalog', startedAt, { ok: true, status: 200, cacheHit: true });
+        sendSportsJsonPayload(res, cacheControl, cachedCatalogResponse.payload);
+        return;
+      }
+      if (cachedCatalogResponse) sportsCatalogResponseCache.delete(catalogCacheKey);
+      sportsRouteMetrics.cacheStats.catalog.misses += 1;
       const catalogs = filterSportsCatalogsForAccount(
         await getSportsCatalogDefinitions({ timeoutMs: tvClient ? 1_500 : 6_000 }),
         account
       );
-      const sportsConfig = getSportsConfig(account);
       const selectedCatalogs = catalogs.filter((entry) => sportsConfig.sports.includes(entry.id));
       const selectedSportNames = selectedCatalogs
         .map((entry) => String(entry.name || '').replace(/^Sports Events:\s*/u, '').trim().toLowerCase())
@@ -5431,6 +5183,7 @@ const bootstrap = async () => {
         return;
       }
       const requestedGenre = getCatalogGenreValue(req);
+      const requestedGenreNeedle = normalizeSportsCatalogText(requestedGenre);
       const useUnifiedCatalog = requestedCatalogId === SPORTS_MAIN_CATALOG_ID || requestedCatalogId === SPORTS_LEGACY_CATALOG_ID;
       const catalog = sportsConfig.liveOnly
         ? catalogs.find((entry) => entry.id === 'streamed-events-live')
@@ -5461,11 +5214,33 @@ const bootstrap = async () => {
           error: error?.message || String(error)
         });
       }
-      await sportsSupporterService.increment(account.id, 'catalogs', 1);
-      const decoratedMetas = metas
-        .map((meta) => decorateSportsMeta(meta, req, account))
-        .filter((meta) => {
-          if (catalog.id === DLHD_CHANNEL_CATALOG_ID) return true;
+      void sportsSupporterService.increment(account.id, 'catalogs', 1).catch((error) => {
+        logger.debug?.('sports catalog stat increment failed', { error: error?.message || String(error) });
+      });
+	      const decoratedMetas = metas
+	        .map((meta) => decorateSportsMeta(meta, req, account))
+	        .filter((meta) => {
+	          if (catalog.id === DLHD_CHANNEL_CATALOG_ID) {
+	            if (!requestedGenreNeedle) return true;
+	            const text = normalizeSportsCatalogText([
+	              meta.genre,
+	              ...(meta.genres || []),
+	              meta.name,
+	              meta.description
+	            ].join(' '));
+	            return sportsGenreNeedles(requestedGenreNeedle).some((needle) => text.includes(needle));
+	          }
+	          if (useUnifiedCatalog && requestedGenreNeedle) {
+            const text = normalizeSportsCatalogText([
+              meta.genre,
+              ...(meta.genres || []),
+              meta.name,
+              meta.description,
+              meta.tournament,
+              meta.competition
+            ].join(' '));
+            return sportsGenreNeedles(requestedGenreNeedle).some((needle) => text.includes(needle));
+          }
           if (!selectedSportNames.length) return true;
           const text = [meta.genre, ...(meta.genres || []), meta.name, meta.description]
             .join(' ')
@@ -5475,8 +5250,20 @@ const bootstrap = async () => {
       if (tvClient) {
         cacheSportsTvMetas(account, decoratedMetas);
       }
-      res.setHeader('Cache-Control', 'private, max-age=30').json({ metas: decoratedMetas });
+      const payload = JSON.stringify({ metas: decoratedMetas });
+      sportsCatalogResponseCache.set(catalogCacheKey, {
+        payload,
+        expiresAt: Date.now() + SPORTS_CATALOG_RESPONSE_TTL_MS
+      });
+      pruneSportsCatalogResponseCache();
+      recordSportsRouteMetric('catalog', startedAt, { ok: true, status: 200, cacheHit: false });
+      sendSportsJsonPayload(res, cacheControl, payload);
     } catch (error) {
+      recordSportsRouteMetric('catalog', startedAt, {
+        ok: false,
+        status: error?.statusCode || 500,
+        error: error?.message || String(error)
+      });
       next(error);
     }
   };
@@ -5488,7 +5275,7 @@ const bootstrap = async () => {
       const tvClient = isSportsTvClient(req);
       const cachedMeta = tvClient ? getCachedSportsTvMeta(account, req.params.id) : null;
       if (cachedMeta) {
-        res.setHeader('Cache-Control', 'private, max-age=30').json({ meta: cachedMeta });
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0').json({ meta: cachedMeta });
         return;
       }
       let meta = null;
@@ -5504,7 +5291,7 @@ const bootstrap = async () => {
       if (tvClient) {
         cacheSportsTvMetas(account, [decoratedMeta]);
       }
-      res.setHeader('Cache-Control', 'private, max-age=30').json({ meta: decoratedMeta });
+      res.setHeader('Cache-Control', tvClient ? 'no-store, no-cache, must-revalidate, max-age=0' : 'private, max-age=30').json({ meta: decoratedMeta });
     } catch (error) {
       next(error);
     }
@@ -5594,8 +5381,232 @@ const bootstrap = async () => {
   const SPORTS_STREAM_RESPONSE_TTL_MS = 15_000;
   const SPORTS_STREAM_RESPONSE_PAID_TTL_MS = 60_000;
   const SPORTS_STREAM_EMPTY_TTL_MS = 4_000;
+  const SPORTS_CATALOG_RESPONSE_CACHE_MAX = 300;
+  const SPORTS_CATALOG_RESPONSE_TTL_MS = 20_000;
+  const SPORTS_ROUTE_METRIC_MAX = 500;
+  const SPORTS_ROUTE_ERROR_MAX = 25;
+  const SPORTS_LIVE_PREWARM_INTERVAL_MS = 25_000;
+  const SPORTS_LIVE_PREWARM_IDLE_STOP_MS = 10 * 60 * 1000;
+  const sportsCatalogResponseCache = new Map();
   const sportsStreamResponseCache = new Map();
   const sportsStreamResponseInFlight = new Map();
+  const sportsRouteMetrics = {
+    catalog: [],
+    stream: [],
+    recentErrors: [],
+    cacheStats: {
+      catalog: { hits: 0, misses: 0 },
+      stream: { hits: 0, misses: 0 }
+    }
+  };
+  let sportsAdminMetricsWriteTimer = null;
+  const sportsLivePrewarmState = {
+    timer: null,
+    running: false,
+    lastSeenAt: 0,
+    accountId: '',
+    baseUrl: ''
+  };
+
+  const pruneSportsCatalogResponseCache = () => {
+    const now = Date.now();
+    for (const [key, entry] of sportsCatalogResponseCache) {
+      if (entry.expiresAt <= now) sportsCatalogResponseCache.delete(key);
+    }
+    while (sportsCatalogResponseCache.size > SPORTS_CATALOG_RESPONSE_CACHE_MAX) {
+      sportsCatalogResponseCache.delete(sportsCatalogResponseCache.keys().next().value);
+    }
+  };
+
+  const getSportsCatalogResponseCacheKey = (req, account, sportsConfig, tvClient) => [
+    account?.id || account?.installKey || 'anon',
+    tvClient ? 'tv' : 'client',
+    String(req.params.type || ''),
+    String(req.params.id || ''),
+    String(req.params.extra || ''),
+    String(req.params.search || ''),
+    String(req.params.skip || ''),
+    String(req.query?.genre || ''),
+    sportsConfig?.liveOnly ? 'live' : 'all',
+    Array.isArray(sportsConfig?.sports) ? sportsConfig.sports.join(',') : ''
+  ].join('|');
+
+  const sendSportsJsonPayload = (res, cacheControl, payload) => {
+    res
+      .status(200)
+      .setHeader('Cache-Control', cacheControl)
+      .type('application/json')
+      .send(payload);
+  };
+
+  const recordSportsRouteMetric = (kind, startedAt, { ok = true, status = 200, cacheHit = false, error = '' } = {}) => {
+    const bucket = sportsRouteMetrics[kind];
+    if (!bucket) return;
+    bucket.push({
+      ms: Math.max(0, Date.now() - Number(startedAt || Date.now())),
+      ok,
+      status,
+      cacheHit,
+      at: Date.now()
+    });
+    while (bucket.length > SPORTS_ROUTE_METRIC_MAX) bucket.shift();
+    if (!ok || error) {
+      sportsRouteMetrics.recentErrors.unshift({
+        time: new Date().toISOString(),
+        kind,
+        status,
+        error: String(error || `HTTP ${status}`).slice(0, 180)
+      });
+      sportsRouteMetrics.recentErrors = sportsRouteMetrics.recentErrors.slice(0, SPORTS_ROUTE_ERROR_MAX);
+    }
+    scheduleSportsAdminWorkerSnapshotWrite();
+  };
+
+  const summarizeSportsRouteMetrics = (items = []) => {
+    const values = items.map((item) => Number(item.ms || 0)).filter(Number.isFinite).sort((a, b) => a - b);
+    const pct = (value) => values.length ? values[Math.min(values.length - 1, Math.floor((value / 100) * values.length))] : 0;
+    const errors = items.filter((item) => !item.ok || Number(item.status || 0) >= 400).length;
+    return {
+      count: items.length,
+      errors,
+      avgMs: values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length) : 0,
+      p50Ms: Math.round(pct(50)),
+      p95Ms: Math.round(pct(95)),
+      p99Ms: Math.round(pct(99)),
+      maxMs: Math.round(values.at(-1) || 0),
+      lastStatus: items.at(-1)?.status || ''
+    };
+  };
+
+  const getSportsAdminMetricFilePath = (pid = process.pid) =>
+    path.join(config.CACHE_DIR, `sports-admin-metrics-${pid}.json`);
+
+  const buildSportsAdminWorkerSnapshot = () => ({
+    worker: {
+      pid: process.pid,
+      uptimeSeconds: Math.round(process.uptime()),
+      updatedAt: new Date().toISOString()
+    },
+    routesRaw: {
+      catalog: sportsRouteMetrics.catalog.slice(),
+      stream: sportsRouteMetrics.stream.slice()
+    },
+    cacheStats: JSON.parse(JSON.stringify(sportsRouteMetrics.cacheStats)),
+    caches: {
+      catalogEntries: sportsCatalogResponseCache.size,
+      streamEntries: sportsStreamResponseCache.size,
+      streamInFlight: sportsStreamResponseInFlight.size
+    },
+    recentErrors: sportsRouteMetrics.recentErrors.slice()
+  });
+
+  const writeSportsAdminWorkerSnapshot = async () => {
+    await fsPromises.mkdir(config.CACHE_DIR, { recursive: true });
+    await fsPromises.writeFile(
+      getSportsAdminMetricFilePath(),
+      JSON.stringify(buildSportsAdminWorkerSnapshot()),
+      { mode: 0o600 }
+    );
+  };
+
+  const scheduleSportsAdminWorkerSnapshotWrite = () => {
+    if (sportsAdminMetricsWriteTimer) return;
+    sportsAdminMetricsWriteTimer = setTimeout(() => {
+      sportsAdminMetricsWriteTimer = null;
+      writeSportsAdminWorkerSnapshot().catch(() => {});
+    }, 2_000);
+    sportsAdminMetricsWriteTimer.unref?.();
+  };
+
+  const readSportsAdminWorkerSnapshots = async () => {
+    await writeSportsAdminWorkerSnapshot().catch(() => {});
+    const names = await fsPromises.readdir(config.CACHE_DIR).catch(() => []);
+    const now = Date.now();
+    const snapshots = [];
+    for (const name of names) {
+      if (!/^sports-admin-metrics-\d+\.json$/u.test(name)) continue;
+      try {
+        const filePath = path.join(config.CACHE_DIR, name);
+        const payload = JSON.parse(await fsPromises.readFile(filePath, 'utf8'));
+        const updatedAt = Date.parse(payload?.worker?.updatedAt || '');
+        if (!Number.isFinite(updatedAt) || now - updatedAt > 2 * 60 * 1000) {
+          await fsPromises.rm(filePath, { force: true }).catch(() => {});
+          continue;
+        }
+        snapshots.push(payload);
+      } catch {
+        // ignore broken metric files
+      }
+    }
+    return snapshots;
+  };
+
+  const mergeCacheStats = (snapshots = []) => {
+    const result = { catalog: { hits: 0, misses: 0 }, stream: { hits: 0, misses: 0 } };
+    for (const snapshot of snapshots) {
+      for (const key of ['catalog', 'stream']) {
+        result[key].hits += Number(snapshot?.cacheStats?.[key]?.hits || 0);
+        result[key].misses += Number(snapshot?.cacheStats?.[key]?.misses || 0);
+      }
+    }
+    return result;
+  };
+
+  const buildSportsAdminAlerts = (metrics = {}, diagnostics = {}) => {
+    const alerts = [];
+    for (const routeName of ['catalog', 'stream']) {
+      const route = metrics.routes?.[routeName] || {};
+      const count = Number(route.count || 0);
+      const errorRate = count ? (Number(route.errors || 0) / count) * 100 : 0;
+      if (count >= 20 && Number(route.p95Ms || 0) > 10_000) {
+        alerts.push({ level: 'warn', message: `${routeName} p95 high: ${route.p95Ms}ms` });
+      }
+      if (count >= 20 && errorRate > 2) {
+        alerts.push({ level: 'warn', message: `${routeName} error rate high: ${errorRate.toFixed(1)}%` });
+      }
+    }
+    if (Number(diagnostics?.probe?.disabledForSeconds || 0) > 0) {
+      alerts.push({ level: 'warn', message: `HLS probe disabled for ${diagnostics.probe.disabledForSeconds}s` });
+    }
+    if (Number(diagnostics?.browser?.disabledForSeconds || 0) > 0) {
+      alerts.push({ level: 'warn', message: `Browser fallback disabled for ${diagnostics.browser.disabledForSeconds}s` });
+    }
+    return alerts;
+  };
+
+  const getSportsAdminMetrics = async () => {
+    const snapshots = await readSportsAdminWorkerSnapshots();
+    const catalogRoutes = snapshots.flatMap((snapshot) => Array.isArray(snapshot?.routesRaw?.catalog) ? snapshot.routesRaw.catalog : []);
+    const streamRoutes = snapshots.flatMap((snapshot) => Array.isArray(snapshot?.routesRaw?.stream) ? snapshot.routesRaw.stream : []);
+    const metrics = {
+      workers: snapshots.map((snapshot) => snapshot.worker).filter(Boolean),
+      routes: {
+        catalog: summarizeSportsRouteMetrics(catalogRoutes),
+        stream: summarizeSportsRouteMetrics(streamRoutes)
+      },
+      cacheStats: mergeCacheStats(snapshots),
+      caches: {
+        catalogEntries: snapshots.reduce((sum, snapshot) => sum + Number(snapshot?.caches?.catalogEntries || 0), 0),
+        streamEntries: snapshots.reduce((sum, snapshot) => sum + Number(snapshot?.caches?.streamEntries || 0), 0),
+        streamInFlight: snapshots.reduce((sum, snapshot) => sum + Number(snapshot?.caches?.streamInFlight || 0), 0)
+      },
+      recentErrors: snapshots
+        .flatMap((snapshot) => Array.isArray(snapshot?.recentErrors) ? snapshot.recentErrors : [])
+        .sort((left, right) => Date.parse(right.time || '') - Date.parse(left.time || ''))
+        .slice(0, SPORTS_ROUTE_ERROR_MAX)
+    };
+    return metrics;
+  };
+
+  const isCdnLiveTvSportsEventId = (eventId = '') => {
+    const raw = String(eventId || '').toLowerCase();
+    if (raw.includes('cdnlivetv')) return true;
+    try {
+      return decodeURIComponent(raw).toLowerCase().includes('cdnlivetv');
+    } catch {
+      return false;
+    }
+  };
 
   const pruneSportsStreamResponseCache = () => {
     const now = Date.now();
@@ -5607,10 +5618,19 @@ const bootstrap = async () => {
     }
   };
 
-  const resolveSportsEventStreams = async ({ eventId, baseUrl, playbackConfigId, prewarm = true, cacheTtlMs = SPORTS_STREAM_RESPONSE_TTL_MS }) => {
+  const resolveSportsEventStreams = async ({ eventId, baseUrl, playbackConfigId, prewarm = true, cacheTtlMs = SPORTS_STREAM_RESPONSE_TTL_MS, includeQuotaSources = false }) => {
     const cacheKey = `${playbackConfigId}:${eventId}`;
-    const cached = sportsStreamResponseCache.get(cacheKey);
-    if (cached?.expiresAt > Date.now()) return cached.streams;
+    const useCache = Number(cacheTtlMs) > 0;
+    if (useCache) {
+      const cached = sportsStreamResponseCache.get(cacheKey);
+      if (cached?.expiresAt > Date.now()) {
+        sportsRouteMetrics.cacheStats.stream.hits += 1;
+        return cached.streams;
+      }
+      sportsRouteMetrics.cacheStats.stream.misses += 1;
+    } else {
+      sportsRouteMetrics.cacheStats.stream.misses += 1;
+    }
     if (sportsStreamResponseInFlight.has(cacheKey)) return sportsStreamResponseInFlight.get(cacheKey);
 
     const task = (async () => {
@@ -5630,15 +5650,18 @@ const bootstrap = async () => {
             baseUrl,
             privateConfigId: playbackConfigId,
             prewarm,
+            includeQuotaSources,
             signal: deadlineController.signal
           }),
           deadline
         ]);
-        sportsStreamResponseCache.set(cacheKey, {
-          streams,
-          expiresAt: Date.now() + (streams.length ? cacheTtlMs : SPORTS_STREAM_EMPTY_TTL_MS)
-        });
-        pruneSportsStreamResponseCache();
+        if (useCache) {
+          sportsStreamResponseCache.set(cacheKey, {
+            streams,
+            expiresAt: Date.now() + (streams.length ? cacheTtlMs : SPORTS_STREAM_EMPTY_TTL_MS)
+          });
+          pruneSportsStreamResponseCache();
+        }
         return streams;
       } finally {
         if (deadlineTimer) clearTimeout(deadlineTimer);
@@ -5650,12 +5673,66 @@ const bootstrap = async () => {
     return task;
   };
 
+  const runSportsLivePrewarm = async () => {
+    if (sportsLivePrewarmState.running) return;
+    if (!sportsLivePrewarmState.accountId || !sportsLivePrewarmState.baseUrl) return;
+    if (Date.now() - sportsLivePrewarmState.lastSeenAt > SPORTS_LIVE_PREWARM_IDLE_STOP_MS) {
+      if (sportsLivePrewarmState.timer) {
+        clearInterval(sportsLivePrewarmState.timer);
+        sportsLivePrewarmState.timer = null;
+      }
+      sportsLivePrewarmState.accountId = '';
+      sportsLivePrewarmState.baseUrl = '';
+      return;
+    }
+
+    const account = sportsSupporterService.getAccount(sportsLivePrewarmState.accountId);
+    if (!sportsSupporterService.isAccountActive(account) || isFreeSportsTier(account)) return;
+
+    sportsLivePrewarmState.running = true;
+    try {
+      const playbackConfigId = await ensureSportsPlaybackConfigId(account);
+      const result = await streamManager.streamedSportsAdapter.prewarmLiveEventStreams({
+        baseUrl: sportsLivePrewarmState.baseUrl,
+        privateConfigId: playbackConfigId,
+        limit: 6,
+        signal: AbortSignal.timeout(24_000)
+      });
+      if (result && !result.skipped) {
+        logger.info('nebula sports live stream prewarm complete', result);
+      }
+    } catch (error) {
+      logger.info('nebula sports live stream prewarm failed', {
+        error: error?.message || String(error)
+      });
+    } finally {
+      sportsLivePrewarmState.running = false;
+    }
+  };
+
+  const touchSportsLivePrewarm = (account, req) => {
+    if (!sportsSupporterService.isAccountActive(account) || isFreeSportsTier(account)) return;
+    sportsLivePrewarmState.accountId = account.id;
+    sportsLivePrewarmState.baseUrl = getPublicBaseUrl(req);
+    sportsLivePrewarmState.lastSeenAt = Date.now();
+    if (!sportsLivePrewarmState.timer) {
+      sportsLivePrewarmState.timer = setInterval(() => {
+        void runSportsLivePrewarm();
+      }, SPORTS_LIVE_PREWARM_INTERVAL_MS);
+      sportsLivePrewarmState.timer.unref?.();
+    }
+    void runSportsLivePrewarm();
+  };
+
   const sendSportsStreams = async (req, res, next) => {
+    const startedAt = Date.now();
     try {
       const account = await getSportsAccountFromInstall(req, res);
       if (!account) return;
+      touchSportsLivePrewarm(account, req);
       const freeTier = isFreeSportsTier(account);
       const playbackConfigId = await ensureSportsPlaybackConfigId(account);
+      const cdnLiveTvEvent = isCdnLiveTvSportsEventId(req.params.id);
       let streams = [];
       try {
         streams = await resolveSportsEventStreams({
@@ -5663,7 +5740,8 @@ const bootstrap = async () => {
           baseUrl: getPublicBaseUrl(req),
           playbackConfigId,
           prewarm: !freeTier,
-          cacheTtlMs: freeTier ? SPORTS_STREAM_RESPONSE_TTL_MS : SPORTS_STREAM_RESPONSE_PAID_TTL_MS
+          includeQuotaSources: !freeTier,
+          cacheTtlMs: cdnLiveTvEvent ? 0 : (freeTier ? SPORTS_STREAM_RESPONSE_TTL_MS : SPORTS_STREAM_RESPONSE_PAID_TTL_MS)
         });
       } catch (error) {
         logger.warn('nebula sports stream resolution deadline reached', {
@@ -5683,9 +5761,17 @@ const bootstrap = async () => {
         ...(freeTier && streams.length ? [buildSportsFreeUpgradeStreamCard(req)] : []),
         ...(updateCard ? [updateCard] : [])
       ];
-      await sportsSupporterService.increment(account.id, 'streams', 1);
+      void sportsSupporterService.increment(account.id, 'streams', 1).catch((error) => {
+        logger.debug?.('sports stream stat increment failed', { error: error?.message || String(error) });
+      });
+      recordSportsRouteMetric('stream', startedAt, { ok: true, status: 200 });
       res.setHeader('Cache-Control', 'no-store').json({ streams: responseStreams });
     } catch (error) {
+      recordSportsRouteMetric('stream', startedAt, {
+        ok: false,
+        status: error?.statusCode || 500,
+        error: error?.message || String(error)
+      });
       next(error);
     }
   };
@@ -5741,6 +5827,28 @@ const bootstrap = async () => {
         catalogs,
         errorMessage: typeof req.query.error === 'string' ? req.query.error : '',
         successMessage: typeof req.query.success === 'string' ? req.query.success : ''
+      }));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/sports/admin/status', requireAdminAuth, async (req, res, next) => {
+    try {
+      const generatedAt = new Date().toISOString();
+      const metrics = await getSportsAdminMetrics();
+      const diagnostics = { ...(streamManager.streamedSportsAdapter.getDiagnostics?.() || {}) };
+      delete diagnostics.knownSports;
+      metrics.alerts = buildSportsAdminAlerts(metrics, diagnostics);
+      if (String(req.query.format || '').toLowerCase() === 'json' || req.accepts(['html', 'json']) === 'json') {
+        res.status(200).json({ generatedAt, metrics, diagnostics });
+        return;
+      }
+      res.status(200).type('html').send(renderSportsAdminStatusPage({
+        account: { username: config.ADMIN_USERNAME },
+        metrics,
+        diagnostics,
+        generatedAt
       }));
     } catch (error) {
       next(error);
