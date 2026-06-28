@@ -112,7 +112,7 @@ export class SportsSupporterService {
     }
 
     try {
-      await this.initialize();
+      await this.initialize({ force: true });
       return await task();
     } finally {
       await rm(this.claimLockPath, { recursive: true, force: true });
@@ -161,8 +161,18 @@ export class SportsSupporterService {
   async save() {
     const runSave = async () => {
       await mkdir(this.cacheDir, { recursive: true });
+      let payload = this.store;
+      try {
+        const current = JSON.parse(await readFile(this.storePath, 'utf8'));
+        payload = this.mergeStorePayloadForSave(current, this.store);
+        this.store = payload;
+      } catch (error) {
+        if (error?.code !== 'ENOENT') {
+          this.logger.warn?.('sports supporter store merge failed', { error: error?.message || String(error) });
+        }
+      }
       const tempPath = `${this.storePath}.${process.pid}.${Date.now()}.${randomBytes(4).toString('hex')}.tmp`;
-      await writeFile(tempPath, JSON.stringify(this.store, null, 2), { mode: 0o600 });
+      await writeFile(tempPath, JSON.stringify(payload, null, 2), { mode: 0o600 });
       await rename(tempPath, this.storePath);
       this.initialized = true;
       this.storeLoadedAt = Date.now();
@@ -170,6 +180,29 @@ export class SportsSupporterService {
     };
     this.saveChain = this.saveChain.then(runSave, runSave);
     return this.saveChain;
+  }
+
+  mergeStorePayloadForSave(current = {}, next = {}) {
+    const mergeRecords = (left, right) => ({
+      ...(left && typeof left === 'object' && !Array.isArray(left) ? left : {}),
+      ...(right && typeof right === 'object' && !Array.isArray(right) ? right : {})
+    });
+    const currentTrials = current && typeof current.trials === 'object' && !Array.isArray(current.trials) ? current.trials : {};
+    const nextTrials = next && typeof next.trials === 'object' && !Array.isArray(next.trials) ? next.trials : {};
+    return {
+      version: STORE_VERSION,
+      tokens: mergeRecords(current.tokens, next.tokens),
+      accounts: mergeRecords(current.accounts, next.accounts),
+      usernames: mergeRecords(current.usernames, next.usernames),
+      installs: mergeRecords(current.installs, next.installs),
+      sessions: mergeRecords(current.sessions, next.sessions),
+      payments: mergeRecords(current.payments, next.payments),
+      trials: {
+        emails: mergeRecords(currentTrials.emails, nextTrials.emails),
+        ipRequests: mergeRecords(currentTrials.ipRequests, nextTrials.ipRequests),
+        subnetRequests: mergeRecords(currentTrials.subnetRequests, nextTrials.subnetRequests)
+      }
+    };
   }
 
   scheduleStatsSave() {
@@ -557,7 +590,11 @@ export class SportsSupporterService {
   async validateSession(token) {
     await this.initialize();
     const hash = this.hashSessionToken(token);
-    const session = this.store.sessions[hash];
+    let session = this.store.sessions[hash];
+    if (!session && token) {
+      await this.initialize({ force: true });
+      session = this.store.sessions[hash];
+    }
     if (!session) return null;
     if (Date.parse(session.expiresAt || '') <= Date.now()) {
       delete this.store.sessions[hash];

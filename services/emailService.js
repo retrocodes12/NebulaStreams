@@ -12,6 +12,13 @@ const escapeHtml = (value) =>
 const SMTP_ACCOUNT_COUNT = 4;
 const SMTP_QUOTA_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 const SMTP_ERROR_COOLDOWN_MS = 5 * 60 * 1000;
+const SPORTS_PUBLIC_BASE_URL = 'https://sports.nebulapro.xyz';
+
+const getSportsBaseUrl = (baseUrl) => {
+  const normalized = String(baseUrl || '').trim().replace(/\/+$/u, '');
+  if (!normalized || /nebula\.work\.gd/iu.test(normalized)) return SPORTS_PUBLIC_BASE_URL;
+  return normalized;
+};
 
 export class EmailService {
   constructor({ config, logger = console } = {}) {
@@ -162,7 +169,7 @@ export class EmailService {
 
   async sendSportsToken({ to, name = '', code, expiresAt, baseUrl, tier = '' }) {
     const displayName = escapeText(name) || 'supporter';
-    const installUrl = `${String(baseUrl || '').replace(/\/+$/u, '') || 'https://nebula.work.gd'}/sports`;
+    const installUrl = `${getSportsBaseUrl(baseUrl)}/sports`;
     const expiryLabel = expiresAt || 'Lifetime';
     const premiumFuture = String(tier || '').trim().toLowerCase() === 'premium-future';
     const subject = 'Nebula Sports supporter setup';
@@ -181,23 +188,11 @@ export class EmailService {
       '',
       'If you did not request this email, ignore it.'
     ].join('\n');
-    const html = `
-      <p>Hi ${escapeHtml(displayName)},</p>
-      <p>Thanks for your Nebula Sports support.</p>
-      <p>This email confirms your supporter access and gives you the setup code for your private addon account.</p>
-      <p><strong>Setup code:</strong> <code>${escapeHtml(code)}</code></p>
-      <p><strong>Access valid until:</strong> ${escapeHtml(expiryLabel)}</p>
-      <p><a href="${escapeHtml(installUrl)}">Open Nebula Sports</a></p>
-      <p>Open the page, create your account, and enter the setup code when asked.</p>
-      ${premiumFuture ? '<p><strong>Premium Future Support:</strong> Includes premium access to future Nebula addons and projects.</p>' : ''}
-      <p>If you did not request this email, ignore it.</p>
-    `;
 
     return this.sendMail({
       to,
       subject,
-      text,
-      html
+      text
     });
   }
 
@@ -225,7 +220,7 @@ export class EmailService {
   }
 
   async sendSportsConfigUpdate({ to, baseUrl }) {
-    const configureUrl = `${String(baseUrl || '').replace(/\/+$/u, '') || 'https://nebula.work.gd'}/sports/configure`;
+    const configureUrl = `${getSportsBaseUrl(baseUrl)}/sports/configure`;
     const subject = 'New Nebula Sports supporter configuration';
     const text = [
       'Nebula Sports supporter update',
@@ -242,24 +237,12 @@ export class EmailService {
       '',
       'Sign in to Nebula Sports first, then open the configuration page.'
     ].join('\n');
-    const html = `
-      <p><strong>Nebula Sports supporter update</strong></p>
-      <p>Your supporter account now includes a private configuration page.</p>
-      <ul>
-        <li>Show live matches only</li>
-        <li>Choose which sports appear in Stremio</li>
-        <li>Set your local event timezone</li>
-        <li>Copy or reinstall your private manifest</li>
-      </ul>
-      <p><a href="${escapeHtml(configureUrl)}">Open Nebula Sports configuration</a></p>
-      <p>Sign in to Nebula Sports first, then open the configuration page.</p>
-    `;
 
-    return this.sendMail({ to, subject, text, html });
+    return this.sendMail({ to, subject, text });
   }
 
   async sendSportsLiveTvUpdate({ to, baseUrl }) {
-    const sportsUrl = `${String(baseUrl || '').replace(/\/+$/u, '') || 'https://nebula.work.gd'}/sports`;
+    const sportsUrl = `${getSportsBaseUrl(baseUrl)}/sports`;
     const subject = 'Nebula Sports live TV update';
     const text = [
       'Nebula Sports supporter update',
@@ -278,20 +261,7 @@ export class EmailService {
       '',
       'Thanks for supporting Nebula Sports.'
     ].join('\n');
-    const html = `
-      <p><strong>Nebula Sports supporter update</strong></p>
-      <p>Live TV catalogs are now available for monthly and lifetime supporters.</p>
-      <p><strong>What changed:</strong></p>
-      <ul>
-        <li>New live TV section inside Stremio</li>
-        <li>More sports channels for supporter accounts</li>
-        <li>Same private Nebula Sports install link</li>
-      </ul>
-      <p><a href="${escapeHtml(sportsUrl)}">Open Nebula Sports</a></p>
-      <p>If channels do not appear right away, refresh or reinstall your private addon from the Nebula Sports page.</p>
-      <p>Thanks for supporting Nebula Sports.</p>
-    `;
 
-    return this.sendMail({ to, subject, text, html });
+    return this.sendMail({ to, subject, text });
   }
 }

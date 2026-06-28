@@ -7625,6 +7625,7 @@ export class StreamManager {
     const isLikelyPlaylist = /\.m3u8(?:$|[?#])/iu.test(upstreamUrl);
     const sourceKey = String(source || '').trim().toLowerCase();
     const isCdnLiveTv = sourceKey === 'cdnlivetv';
+    const isRapidFootball = sourceKey === 'rapidfootball';
     const canUseMediaCache = false;
     if (canUseMediaCache) {
       const cachedMedia = this.streamedSportsAdapter.getCachedMedia(upstreamUrl);
@@ -7640,7 +7641,7 @@ export class StreamManager {
         return;
       }
     }
-    if (isLikelyPlaylist && !isCdnLiveTv) {
+    if (isLikelyPlaylist && !isCdnLiveTv && !isRapidFootball) {
       const cachedPlaylist = this.streamedSportsAdapter.getCachedPlaylist(upstreamUrl);
       const cachedText = cachedPlaylist?.body?.toString('utf8') || '';
       if (cachedText.includes('#EXTM3U')) {
@@ -7698,7 +7699,7 @@ export class StreamManager {
 
       if (directIsPlaylist) {
         const playlistText = await directResponse.text();
-        if (playlistText.includes('#EXTM3U') && !isCdnLiveTv) {
+        if (playlistText.includes('#EXTM3U') && !isCdnLiveTv && !isRapidFootball) {
           const fetched = {
             status: directResponse.status || 200,
             url: directFinalUrl,
@@ -8074,7 +8075,7 @@ export class StreamManager {
       if (isMediaSegment
         && String(source).toLowerCase() !== 'wciptv'
         && !/\.m3u8(?:$|[?#])/iu.test(parsedAbsoluteUrl.pathname)
-        && this.canHandoffStreamedSportsMediaUri(absoluteUrl)) {
+        && this.canHandoffStreamedSportsMediaUri(absoluteUrl, source)) {
         // Keep playlists proxied for rewriting, but let CDNs serve media bytes directly.
         return absoluteUrl;
       }
@@ -8101,7 +8102,7 @@ export class StreamManager {
     }).filter((line) => line !== null).join('\n');
   }
 
-  canHandoffStreamedSportsMediaUri(mediaUrl) {
+  canHandoffStreamedSportsMediaUri(mediaUrl, source = '') {
     try {
       const parsed = new URL(String(mediaUrl || ''));
       const host = parsed.hostname.toLowerCase();

@@ -61,10 +61,135 @@ const clampPosterText = (value, max = 72) => {
 };
 
 const SPORTS_ADDON_VERSION = '1.0.9';
-const SPORTS_POSTER_VERSION = 'v7';
-const SPORTS_FLIX_POSTER_BASE_URL = 'https://free.flixnest.app/api/essential-live-events/poster.jpg';
-const posterJpgCache = new Map();
-const POSTER_JPG_CACHE_MAX = 320;
+const SPORTS_POSTER_VERSION = 'v8';
+const posterImageCache = new Map();
+const POSTER_IMAGE_CACHE_MAX = 320;
+
+const wrapPosterLines = (value, maxChars = 18, maxLines = 4) => {
+  const words = String(value || 'Sports Event')
+    .replace(/\s+/gu, ' ')
+    .trim()
+    .split(' ')
+    .filter(Boolean);
+  const lines = [];
+  let line = '';
+  for (const word of words) {
+    const next = line ? `${line} ${word}` : word;
+    if (next.length > maxChars && line) {
+      lines.push(line);
+      line = word;
+      if (lines.length >= maxLines) break;
+      continue;
+    }
+    line = next;
+  }
+  if (line && lines.length < maxLines) lines.push(line);
+  if (words.join(' ').length > lines.join(' ').length && lines.length) {
+    lines[lines.length - 1] = `${lines[lines.length - 1].slice(0, Math.max(0, maxChars - 1)).trim()}…`;
+  }
+  return lines.length ? lines : ['Sports Event'];
+};
+
+const buildNebulaPosterTitleSvg = (title) => {
+  const text = clampPosterText(title || 'Sports Event', 80);
+  const versusParts = text.split(/\s+(?:vs\.?|v)\s+/iu)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (versusParts.length === 2) {
+    const home = wrapPosterLines(versusParts[0], 15, 2);
+    const away = wrapPosterLines(versusParts[1], 15, 2);
+    const homeY = home.length === 1 ? 380 : 342;
+    const awayY = away.length === 1 ? 622 : 586;
+    return [
+      ...home.map((line, index) => `<text x="360" y="${homeY + (index * 70)}" text-anchor="middle" class="team">${escapeHtml(line.toUpperCase())}</text>`),
+      '<text x="360" y="506" text-anchor="middle" class="versus">VS</text>',
+      ...away.map((line, index) => `<text x="360" y="${awayY + (index * 70)}" text-anchor="middle" class="team">${escapeHtml(line.toUpperCase())}</text>`)
+    ].join('');
+  }
+
+  const lines = wrapPosterLines(text, 15, 4);
+  const firstY = 410 - ((lines.length - 1) * 42);
+  return lines
+    .map((line, index) => `<text x="360" y="${firstY + (index * 78)}" text-anchor="middle" class="title">${escapeHtml(line.toUpperCase())}</text>`)
+    .join('');
+};
+
+const getNebulaPosterAccent = (meta = '', kind = 'event') => {
+  const text = `${meta} ${kind}`.toLowerCase();
+  if (text.includes('cricket')) return ['#22c55e', '#a3e635'];
+  if (text.includes('football') || text.includes('soccer') || text.includes('fifa')) return ['#1faa6e', '#38bdf8'];
+  if (text.includes('basketball') || text.includes('nba')) return ['#f97316', '#22d3ee'];
+  if (text.includes('fight') || text.includes('ufc') || text.includes('boxing')) return ['#ef4444', '#f59e0b'];
+  if (text.includes('tennis')) return ['#84cc16', '#22c55e'];
+  if (text.includes('live tv') || text.includes('channel')) return ['#38bdf8', '#1faa6e'];
+  return ['#1faa6e', '#22d3ee'];
+};
+
+const buildNebulaSportsPosterSvg = ({ title, meta, timeLabel, badge, sources, kind, info }) => {
+  const [accent, accent2] = getNebulaPosterAccent(meta, kind);
+  const isLive = /^live/iu.test(String(timeLabel || '')) || /^live$/iu.test(String(badge || ''));
+  const badgeLabel = clampPosterText(badge || (isLive ? 'LIVE' : 'EVENT'), 18).toUpperCase();
+  const metaLabel = clampPosterText(meta || (kind === 'channel' ? 'Live TV' : 'Sports'), 34).toUpperCase();
+  const time = clampPosterText(timeLabel || 'Starting soon', 42).toUpperCase();
+  const lowerInfo = clampPosterText(info || sources || 'Nebula Sports', 54).toUpperCase();
+  const titleSvg = buildNebulaPosterTitleSvg(title);
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="1080" viewBox="0 0 720 1080" role="img" aria-label="${escapeHtml(title || 'Nebula Sports poster')}">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#06090d"/>
+      <stop offset="0.48" stop-color="#0d1515"/>
+      <stop offset="1" stop-color="#111827"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="44%" r="64%">
+      <stop offset="0" stop-color="${accent}" stop-opacity="0.28"/>
+      <stop offset="0.48" stop-color="${accent2}" stop-opacity="0.10"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
+      <path d="M48 0H0V48" fill="none" stroke="${accent}" stroke-opacity="0.08" stroke-width="1"/>
+    </pattern>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="22" stdDeviation="20" flood-color="#000" flood-opacity="0.42"/>
+    </filter>
+    <style>
+      .micro{font:700 18px Inter,Arial,sans-serif;letter-spacing:3px;fill:#d8f5e6}
+      .pill{font:800 20px Inter,Arial,sans-serif;letter-spacing:2px;fill:#03100a}
+      .team,.title{font:900 62px Inter,Arial,sans-serif;letter-spacing:0;fill:#f7fbff}
+      .versus{font:900 30px Inter,Arial,sans-serif;letter-spacing:4px;fill:${accent2}}
+      .meta{font:800 24px Inter,Arial,sans-serif;letter-spacing:2px;fill:#d8f5e6}
+      .time{font:900 34px Inter,Arial,sans-serif;letter-spacing:1px;fill:#ffffff}
+      .sub{font:700 18px Inter,Arial,sans-serif;letter-spacing:1.6px;fill:#96a6b8}
+    </style>
+  </defs>
+  <rect width="720" height="1080" fill="url(#bg)"/>
+  <rect width="720" height="1080" fill="url(#grid)"/>
+  <rect width="720" height="1080" fill="url(#glow)"/>
+  <path d="M42 54H678V1026H42Z" fill="none" stroke="${accent}" stroke-opacity="0.42" stroke-width="2"/>
+  <path d="M64 78H250M470 78H656M64 1002H250M470 1002H656" fill="none" stroke="${accent2}" stroke-opacity="0.5" stroke-width="3"/>
+  <circle cx="360" cy="510" r="238" fill="none" stroke="${accent}" stroke-opacity="0.12" stroke-width="2"/>
+  <circle cx="360" cy="510" r="176" fill="none" stroke="${accent2}" stroke-opacity="0.12" stroke-width="1"/>
+  <path d="M132 510H588" stroke="${accent}" stroke-opacity="0.15" stroke-width="2"/>
+  <path d="M360 258V762" stroke="${accent2}" stroke-opacity="0.10" stroke-width="2"/>
+  <g transform="translate(64 86)">
+    <rect x="0" y="0" width="224" height="46" rx="8" fill="#0b1115" stroke="${accent}" stroke-opacity="0.55"/>
+    <text x="20" y="30" class="micro">NEBULA SPORTS</text>
+  </g>
+  <g transform="translate(538 86)">
+    <rect x="0" y="0" width="118" height="46" rx="23" fill="${isLive ? accent : '#d8f5e6'}"/>
+    <text x="59" y="31" text-anchor="middle" class="pill">${escapeHtml(badgeLabel)}</text>
+  </g>
+  <g filter="url(#softShadow)">${titleSvg}</g>
+  <g transform="translate(84 814)">
+    <rect x="0" y="0" width="552" height="116" rx="14" fill="#071014" stroke="${accent}" stroke-opacity="0.42"/>
+    <text x="34" y="43" class="meta">${escapeHtml(metaLabel)}</text>
+    <text x="34" y="88" class="time">${escapeHtml(time)}</text>
+  </g>
+  <text x="360" y="972" text-anchor="middle" class="sub">${escapeHtml(lowerInfo)}</text>
+  <text x="360" y="1012" text-anchor="middle" class="sub" fill="${accent2}">PRIVATE STREMIO SPORTS ADDON</text>
+</svg>`;
+};
 
 const compareVersionParts = (left, right) => {
   const a = String(left || '').split('.').map((part) => Number.parseInt(part, 10) || 0);
@@ -533,17 +658,17 @@ const getKofiAmount = (payload = {}) => {
 
 const getKofiPageName = (value = '') => {
   const raw = String(value || '').trim();
-  if (!raw) return 'redx115775';
+  if (!raw) return 'retro76005';
 
   try {
     const parsed = new URL(raw);
     const pageName = parsed.pathname.split('/').filter(Boolean)[0];
-    return pageName || 'redx115775';
+    return pageName || 'retro76005';
   } catch {
     return raw
       .replace(/^https?:\/\/(?:www\.)?ko-fi\.com\//iu, '')
       .split(/[/?#]/u)[0]
-      .trim() || 'redx115775';
+      .trim() || 'retro76005';
   }
 };
 
@@ -1283,7 +1408,7 @@ const renderConfigurePage = ({ baseUrl, providers, supporterStats = {}, userStat
   });
 
   const supportButtons = [...document.querySelectorAll('#support button')];
-  const supportUrl = ${JSON.stringify(config.DONATION_PRIMARY_URL || 'https://ko-fi.com/redx115775')};
+  const supportUrl = ${JSON.stringify(config.DONATION_PRIMARY_URL || 'https://ko-fi.com/retro76005')};
   function openSupportPage() {
     window.open(supportUrl, '_blank', 'noopener,noreferrer');
   }
@@ -2266,7 +2391,7 @@ const renderDashboardPage = ({ baseUrl, account = null, wall = [], activeSection
     ${renderHeader('Support', 'Current plan', 'Supporters keep NebulaStreams free for everyone.')}
     <section class="support-plan"><div><span>Plan</span><strong>${escapeHtml(planName)}</strong></div><div><span>Status</span><strong class="${planStatus === 'active' ? 'ok' : 'bad'}">${escapeHtml(planStatus)}</strong></div><div><span>Renewal</span><strong>${account?.lifetime ? 'Lifetime' : escapeHtml(fmtDate(account?.expiresAt))}</strong></div></section>
     <section class="panel"><div class="panel-title"><h2>Supporter perks</h2><p>No providers, quality, or stream count are gated.</p></div><ul class="perk-list"><li>Profile Sync</li><li>Backups</li><li>Short URLs</li><li>Themes</li><li>Early Access</li></ul></section>
-    <section class="panel"><div class="panel-title"><h2>Manage subscription</h2><p>${account?.lifetime ? 'Lifetime member. No renewal needed.' : 'Monthly supporter. Manage payment through Ko-fi.'}</p></div><a class="ghost link" href="https://ko-fi.com/nebulastreams">Open Ko-fi</a></section>
+    <section class="panel"><div class="panel-title"><h2>Manage subscription</h2><p>${account?.lifetime ? 'Lifetime member. No renewal needed.' : 'Monthly supporter. Manage payment through Ko-fi.'}</p></div><a class="ghost link" href="${escapeHtml(config.DONATION_PRIMARY_URL || 'https://ko-fi.com/retro76005')}">Open Ko-fi</a></section>
     <section class="panel"><div class="panel-title"><h2>Supporters wall</h2><p>Optional public thanks.</p></div><div class="wall-list">${wall.length ? wall.map((entry) => `<span>${escapeHtml(entry.label)} · ${escapeHtml(entry.lifetime ? 'Founder' : entry.tier)}</span>`).join('') : '<p class="empty">Wall empty.</p>'}</div></section>`;
   const renderSection = () => ({ overview: renderOverview, profiles: renderProfiles, backups: renderBackups, install: renderInstall, themes: renderThemes, analytics: renderAnalytics, badges: renderBadges, support: renderSupport }[section] || renderOverview)();
   return `<!doctype html>
@@ -2294,28 +2419,44 @@ const renderSportsPage = ({ baseUrl, account = null, errorMessage = '', successM
   const sportsBase = String(baseUrl || '').replace(/\/+$/u, '') + '/sports';
   const installUrl = account?.installKey ? sportsBase + '/i/' + account.installKey + '/manifest.json' : '';
   const canConfigureSports = ['monthly', 'lifetime', 'premium-future', 'trial', 'community-week'].includes(String(account?.tier || '').toLowerCase());
-  const kofiUrlRaw = config.DONATION_PRIMARY_URL || 'https://ko-fi.com/redx115775';
+  const kofiUrlRaw = config.DONATION_PRIMARY_URL || 'https://ko-fi.com/retro76005';
   const kofiPageNameJson = JSON.stringify(getKofiPageName(kofiUrlRaw));
   const kofiUrl = escapeHtml(kofiUrlRaw);
   const accountCount = escapeHtml(String(stats.accounts || 0));
   const activeCount = escapeHtml(String(stats.active || 0));
   const promoActive = isSportsLaunchPromoActive();
+  const sportsPaymentMaintenance = true;
   const monthlyPriceLabel = promoActive ? '$1' : '$3';
   const lifetimePriceLabel = promoActive ? '$3' : '$7';
-  const pricingHeadingLabel = promoActive ? 'Launch pricing ends June 29' : 'Sports supporter pricing';
-  const pricingIntroLabel = promoActive
-    ? 'Launch pricing is $1/month or $3 once until June 29, 2026. After that pricing becomes $3/month or $7 lifetime. Premium Future Support is $15 once. Your one-use setup code is emailed automatically after payment.'
-    : 'Pricing is $3/month, $7 lifetime, or $15 Premium Future Support. Pay through Ko-fi and include &ldquo;Nebula Sports&rdquo; in the note. Your one-use setup code is emailed automatically after payment.';
+  const pricingHeadingLabel = sportsPaymentMaintenance
+    ? 'Supporter payments are under maintenance'
+    : (promoActive ? 'Launch pricing ends June 29' : 'Sports supporter pricing');
+  const pricingIntroLabel = sportsPaymentMaintenance
+    ? 'Supporter payments are temporarily paused while we maintain the payment system. Please use the 24-hour supporter trial in the meantime; existing supporter accounts still work normally.'
+    : (promoActive
+        ? 'Launch pricing is $1/month or $3 once until June 29, 2026. After that pricing becomes $3/month or $7 lifetime. Premium Future Support is $15 once. Your one-use setup code is emailed automatically after payment.'
+        : 'Pricing is $3/month, $7 lifetime, or $15 Premium Future Support. Pay through Ko-fi and include &ldquo;Nebula Sports&rdquo; in the note. Your one-use setup code is emailed automatically after payment.');
+  const monthlyButtonHtml = sportsPaymentMaintenance
+    ? 'href="#trial">Use trial for now</a>'
+    : 'href="' + kofiUrl + '" target="_blank" rel="noopener">Choose monthly</a>';
+  const lifetimeButtonHtml = sportsPaymentMaintenance
+    ? 'href="#trial">Use trial for now</a>'
+    : 'href="' + kofiUrl + '" target="_blank" rel="noopener">Get lifetime access</a>';
+  const premiumButtonHtml = sportsPaymentMaintenance
+    ? 'href="#trial">Use trial for now</a>'
+    : 'href="' + kofiUrl + '" target="_blank" rel="noopener">Get premium future support</a>';
   const monthlyDescriptionLabel = 'Full supporter access while your subscription runs: all playable sources, Live TV catalogs, private Stremio install, catalog filters, live-only mode, and timezone settings.';
   const lifetimeDescriptionLabel = 'Permanent Nebula Sports access with all playable sources, Live TV catalogs, private Stremio install, catalog filters, live-only mode, and timezone settings.';
   const premiumFutureCardHtml = '          <a class="btn btn-primary btn-block" href="#account">Get lifetime access</a>\n        </div>\n        <div class="plan">\n          <span class="badge">Future access</span>\n          <div class="pname">Premium Future Support</div>\n          <div class="price">$15<span> / once</span></div>\n          <p class="pdesc">Lifetime Nebula Sports plus premium access to future Nebula addons and projects.</p>\n          <a class="btn btn-ghost btn-block" href="#account">Get premium future support</a>\n        </div>\n      </div>';
   const freeInstallUrl = `${sportsBase}/i/free/manifest.json`;
   const freeStremioUrl = `stremio://${freeInstallUrl.replace(/^https?:\/\//u, '')}`;
-  const freeTierCardHtml = '<div class="plan">\n          <span class="badge">Free preview</span>\n          <div class="pname">Free</div>\n          <div class="price">$0<span> / preview</span></div>\n          <p class="pdesc">Free tier installs show one easiest available stream per event. Subscribe to unlock every playable source.</p>\n          <a class="btn btn-ghost btn-block" href="' + escapeHtml(freeStremioUrl) + '">Install free tier</a>\n          <button class="btn btn-ghost btn-block" type="button" data-copy="' + escapeHtml(freeInstallUrl) + '" style="margin-top:10px">Copy manifest URL</button>\n        </div>\n        ';
+  const freeTierCardHtml = '<div class="plan">\n          <span class="badge">Free preview</span>\n          <div class="pname">Free</div>\n          <div class="price">$0<span> / preview</span></div>\n          <p class="pdesc">Free tier installs show easiest available streams per event. Subscribe to unlock every playable source.</p>\n          <a class="btn btn-ghost btn-block" href="' + escapeHtml(freeStremioUrl) + '">Install free tier</a>\n          <button class="btn btn-ghost btn-block" type="button" data-copy="' + escapeHtml(freeInstallUrl) + '" style="margin-top:10px">Copy manifest URL</button>\n        </div>\n        ';
   const sportsMoreStreamsNoteHtml = '<div style="margin-top:18px;max-width:760px;padding:16px 18px;border:1px solid var(--line-strong);border-radius:12px;background:var(--surface-2)"><strong style="display:block;color:var(--ink);font-size:15px;margin-bottom:4px">More streams coming in a few days</strong><span style="color:var(--ink-soft);font-size:14px">All active Nebula Sports supporters will get the new stream sources automatically. No plan change needed.</span></div>';
   const sportsLiveTvNoteHtml = '<div style="max-width:760px;margin:-12px 0 24px;padding:16px 18px;border:1px solid var(--line-strong);border-radius:12px;background:var(--surface-2)"><strong style="display:block;color:var(--ink);font-size:15px;margin-bottom:4px">Live TV is available for supporters</strong><span style="color:var(--ink-soft);font-size:14px">Monthly and lifetime supporters get the Live TV catalog inside Stremio with their private Nebula Sports install.</span></div>';
   const sportsDnsNoteHtml = '<p style="margin-top:18px;color:var(--ink-soft);font-size:14px;max-width:62ch">Change your DNS to <strong style="color:var(--ink)">1.1.1.1</strong> if the catalogs are not loading or streams are buffering.</p>';
   const sportsClaimAlertHtml = '<div role="alert" style="max-width:760px;margin:-12px 0 24px;padding:16px 18px;border:2px solid var(--accent);border-radius:9px;background:var(--accent-soft);color:#bbf7d0"><strong style="display:block;font-size:16px;color:#d1fae5;margin-bottom:4px">Email setup codes are back</strong><span style="font-size:14px">After Ko-fi payment, check your inbox for your one-use Nebula Sports setup code. If it is not there, check spam or junk.</span></div>';
+  const sportsPaymentMaintenanceHtml = '<div role="alert" style="max-width:760px;margin:-12px 0 24px;padding:17px 18px;border:2px solid #f59e0b;border-radius:9px;background:rgba(245,158,11,.12);color:#fde68a"><strong style="display:block;font-size:16px;color:#fef3c7;margin-bottom:4px">Supporter payment system is in maintenance</strong><span style="font-size:14px">New card and PayPal payments are temporarily paused while we fix the payment flow. Existing supporter accounts continue to work.</span></div>';
+  const sportsCryptoPaymentHtml = '<div style="max-width:760px;margin:-12px 0 24px;padding:18px;border:1px solid var(--line-strong);border-radius:12px;background:var(--surface-2)"><strong style="display:block;color:var(--ink);font-size:16px;margin-bottom:6px">Crypto payments are available for now</strong><p style="color:var(--ink-soft);font-size:14px;margin-bottom:14px">Use crypto while card and PayPal payments are being fixed. After payment, send your payment email or transaction hash on Discord/email so your supporter account can be created manually.</p><button class="btn btn-primary" type="button" data-open-crypto>Pay with crypto</button><div id="sportsCryptoWidget" hidden style="width:100%;max-width:346px;margin-top:14px;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#fff"></div><p style="color:var(--muted);font-size:12px;margin-top:10px">Crypto payments are checked manually, so access is not instant.</p></div>';
   const flashHtml = [
     errorMessage ? '<div class="wrap" style="padding-top:18px"><div class="card" style="border-color:rgba(251,113,133,.4);color:#fecdd3">' + escapeHtml(errorMessage) + '</div></div>' : '',
     successMessage ? '<div class="wrap" style="padding-top:18px"><div class="card" style="border-color:rgba(31,170,110,.42);color:#bbf7d0">' + escapeHtml(successMessage) + '</div></div>' : ''
@@ -2327,21 +2468,25 @@ const renderSportsPage = ({ baseUrl, account = null, errorMessage = '', successM
     .replace('<div class="stat"><div class="num">10</div><div class="lbl">Sports accounts</div></div>', '<div class="stat"><div class="num">' + accountCount + '</div><div class="lbl">Sports accounts</div></div>')
     .replace('<div class="stat"><div class="num">6</div><div class="lbl">Active now</div></div>', '<div class="stat"><div class="num">' + activeCount + '</div><div class="lbl">Active now</div></div>')
     .replace('action="/sports/trial"', 'action="/sports/trial/request"')
-    .replace('action="/sports/register"', 'action="/sports/signup"')
-    .replace('name="token" placeholder="paste your one-use token"', 'name="tokenCode" placeholder="paste your one-use token"')
-    .replace('Simple, one-off pricing', pricingHeadingLabel)
+	    .replace('action="/sports/register"', 'action="/sports/signup"')
+	    .replace('name="token" placeholder="paste your one-use token"', 'name="tokenCode" placeholder="paste your one-use token"')
+	    .replace('Start 24-hour free trial', 'Start 24-hour supporter trial')
+	    .replace('Simple, one-off pricing', pricingHeadingLabel)
     .replace('Pay through Ko-fi and include &ldquo;Nebula Sports&rdquo; in the note. Your access token is emailed automatically.', pricingIntroLabel)
     .replace('$1<span> / month</span>', monthlyPriceLabel + '<span> / month</span>')
     .replace('$3<span> / once</span>', lifetimePriceLabel + '<span> / once</span>')
-    .replace('<div class="pricing">', sportsClaimAlertHtml + '\n      ' + sportsLiveTvNoteHtml + '\n      <div class="pricing">\n        ' + freeTierCardHtml)
+    .replace('<div class="pricing">', (sportsPaymentMaintenance ? sportsPaymentMaintenanceHtml + '\n      ' + sportsCryptoPaymentHtml : sportsClaimAlertHtml) + '\n      ' + sportsLiveTvNoteHtml + '\n      <div class="pricing">\n        ' + freeTierCardHtml)
     .replace('Access stays active while the subscription is running. Include &ldquo;Nebula Sports&rdquo; in your Ko-fi note.', monthlyDescriptionLabel)
     .replace('One payment, permanent access. The webhook treats a $3 sports payment as lifetime access.', lifetimeDescriptionLabel)
     .replace('          <a class="btn btn-primary btn-block" href="#account">Get lifetime access</a>\n        </div>\n      </div>', premiumFutureCardHtml)
     .replace('<span class="chip">Darts</span>\n      </div>', '<span class="chip">Darts</span>\n      </div>\n      ' + sportsMoreStreamsNoteHtml + '\n      ' + sportsDnsNoteHtml)
-    .replaceAll('href="#account">Choose monthly</a>', 'href="' + kofiUrl + '" target="_blank" rel="noopener">Choose monthly</a>')
-    .replaceAll('href="#account">Get lifetime access</a>', 'href="' + kofiUrl + '" target="_blank" rel="noopener">Get lifetime access</a>')
-    .replaceAll('href="#account">Get premium future support</a>', 'href="' + kofiUrl + '" target="_blank" rel="noopener">Get premium future support</a>')
-    .replace('Enter your email. If eligible, a one-use trial token arrives by email. One trial per user.', 'Enter your email. If eligible, a trial setup email arrives. One trial per user.')
+    .replaceAll('href="#account">Choose monthly</a>', monthlyButtonHtml)
+    .replaceAll('href="#account">Get lifetime access</a>', lifetimeButtonHtml)
+    .replaceAll('href="#account">Get premium future support</a>', premiumButtonHtml)
+    .replace('Pay on Ko-fi', sportsPaymentMaintenance ? 'Use the trial' : 'Pay on Ko-fi')
+    .replace('After payment, the Ko-fi webhook emails you a one-use secret token.', sportsPaymentMaintenance ? 'While payments are paused, request a 24-hour supporter trial token by email.' : 'After payment, the Ko-fi webhook emails you a one-use secret token.')
+	    .replace('Try free for 24 hours', 'Try supporter access for 24 hours')
+	    .replace('Enter your email. If eligible, a one-use trial token arrives by email. One trial per user.', 'The 24-hour trial gives you supporter-tier access. If you like the addon after trying it, please consider supporting to keep streams and servers running.')
     .replace(
       '<a class="btn btn-ghost" href="#pricing">View pricing</a>',
       '<a class="btn btn-ghost" href="#pricing">View pricing</a><a class="btn btn-ghost" href="https://discord.gg/YMjzX8AER" target="_blank" rel="noopener noreferrer">Join Discord</a>'
@@ -2356,33 +2501,52 @@ const renderSportsPage = ({ baseUrl, account = null, errorMessage = '', successM
     const statusLabel = account.lifetime
       ? 'Lifetime access'
       : 'Active until ' + (account.expiresAt ? new Date(account.expiresAt).toLocaleDateString('en') : 'renewal');
-    const accountSection = '<section class="block" id="account">' +
+    const accountName = account.username || 'sports user';
+    const stremioInstallUrl = installUrl
+      ? `stremio://${installUrl.replace(/^https?:\/\//u, '')}`
+      : '';
+    const configButtonHtml = canConfigureSports
+      ? '<a class="btn btn-ghost" href="/sports/configure">Configure catalogs</a>'
+      : '';
+    const signedInActionsHtml = '<div class="actions">' +
+      '<a class="btn btn-primary" href="' + escapeHtml(stremioInstallUrl || installUrl) + '">Install in Stremio</a>' +
+      configButtonHtml +
+      '<button class="btn btn-ghost" type="button" data-copy="' + escapeHtml(installUrl) + '">Copy manifest</button>' +
+      '<form method="post" action="/sports/logout" style="display:inline"><button class="btn btn-ghost" type="submit">Sign out</button></form>' +
+      '</div>';
+    const signedInQuickAccessSection = '<section class="block" id="quick-access">' +
       '<div class="wrap">' +
-        '<div class="section-head">' +
-          '<div class="kicker">Access</div>' +
-          '<h2>Your private Stremio manifest</h2>' +
-          '<p>' + escapeHtml(statusLabel) + '. Keep this install URL private; it belongs to your Nebula Sports account.</p>' +
-        '</div>' +
         '<div class="card">' +
-          '<h3>Signed in as ' + escapeHtml(account.username || 'sports user') + '</h3>' +
-          '<p class="hint">Add this manifest URL in Stremio to unlock Nebula Sports catalogs.</p>' +
+          '<h3>Your private install is ready</h3>' +
+          '<p class="hint">' + escapeHtml(statusLabel) + '. Install in Stremio, copy your manifest, or tune catalogs.</p>' +
           '<div class="field">' +
-            '<label for="sports-install-url">Install URL</label>' +
-            '<input id="sports-install-url" class="mono" type="text" readonly value="' + escapeHtml(installUrl) + '" />' +
+            '<label for="sports-install-url-quick">Manifest URL</label>' +
+            '<input id="sports-install-url-quick" class="mono" type="text" readonly value="' + escapeHtml(installUrl) + '" />' +
           '</div>' +
-          '<div class="actions" style="margin-top:18px">' +
-            '<a class="btn btn-primary" href="' + escapeHtml(installUrl) + '">Install manifest</a>' +
-            (canConfigureSports ? '<a class="btn btn-ghost" href="/sports/configure">Configure catalogs</a>' : '') +
-            '<button class="btn btn-ghost" type="button" data-copy="' + escapeHtml(installUrl) + '">Copy URL</button>' +
-            '<form method="post" action="/sports/logout" style="display:inline"><button class="btn btn-ghost" type="submit">Sign out</button></form>' +
-          '</div>' +
+          signedInActionsHtml +
         '</div>' +
       '</div>' +
     '</section>';
-    html = html.replace(/<section class="block" id="account">[\s\S]*?<\/section>\n<\/main>/u, accountSection + '\n</main>');
+    html = html
+      .replace('<a class="btn btn-primary" href="#account">Sign in</a>', '<a class="btn btn-primary" href="' + escapeHtml(stremioInstallUrl || installUrl) + '">Install</a>')
+      .replaceAll('<a href="#account">Account</a>', '<a href="#quick-access">Access</a>')
+      .replaceAll('<a href="#pricing">Pricing</a>', '<a href="#quick-access">Access</a>')
+      .replaceAll('<a href="#account">Sign in</a>', '<a href="#quick-access">Access</a>')
+      .replace('<span class="eyebrow"><span class="dot"></span> Private sports addon</span>', '<span class="eyebrow"><span class="dot"></span> Signed in</span>')
+      .replace('<h1>Live sports events for Stremio.</h1>', '<h1>Welcome back, ' + escapeHtml(accountName) + '.</h1>')
+      .replace('<p class="lead">A private sports addon with clean catalogs, a small manifest, and username/password access. Built separately from the main NebulaStreams addon so sports catalogs stay fast on TV clients.</p>', '<p class="lead">' + escapeHtml(statusLabel) + '. Your private Nebula Sports manifest is ready for Stremio.</p>')
+	      .replace(/<div class="actions">\n        <a class="btn btn-primary" href="#trial">Start 24-hour supporter trial<\/a>\n        <a class="btn btn-ghost" href="#pricing">View pricing<\/a><a class="btn btn-ghost" href="https:\/\/discord\.gg\/YMjzX8AER" target="_blank" rel="noopener noreferrer">Join Discord<\/a>\n      <\/div>/u, signedInActionsHtml)
+      .replace('</section>\n\n  <!-- SPORTS -->', '</section>\n\n  <!-- QUICK ACCESS -->\n  ' + signedInQuickAccessSection + '\n\n  <!-- SPORTS -->')
+      .replace(/<section class="block" id="pricing">[\s\S]*?<\/section>\n\n  <!-- HOW IT WORKS -->/u, '<!-- HOW IT WORKS -->')
+      .replace(/<section class="block" id="trial">[\s\S]*?<\/section>\n\n  <!-- ACCOUNT -->\n  <section class="block" id="account">[\s\S]*?<\/section>\n<\/main>/u, '</main>');
   }
 
-  html = html.replace('</body>', '<a id="sportsKofiFallback" href="' + kofiUrl + '" target="_blank" rel="noopener noreferrer" style="position:fixed;right:18px;bottom:18px;z-index:80;border:1px solid var(--line-strong);border-radius:999px;background:var(--accent);color:#fff;padding:11px 16px;font-weight:750;box-shadow:0 12px 30px rgba(0,0,0,.35)">Support on Ko-fi</a><script>document.querySelectorAll("[data-copy]").forEach((btn)=>btn.addEventListener("click",async()=>{const value=btn.getAttribute("data-copy")||"";if(!value)return;const label=btn.dataset.copyLabel||btn.textContent||"Copy URL";btn.dataset.copyLabel=label;await navigator.clipboard.writeText(value);btn.textContent="Copied";setTimeout(()=>btn.textContent=label,1400)}));(()=>{if(window.__nebulaSportsKofiWidgetLoaded)return;window.__nebulaSportsKofiWidgetLoaded=true;const draw=()=>{if(!window.kofiWidgetOverlay?.draw)return;window.kofiWidgetOverlay.draw(' + kofiPageNameJson + ',{type:"floating-chat","floating-chat.donateButton.text":"Support","floating-chat.donateButton.background-color":"#1faa6e","floating-chat.donateButton.text-color":"#ffffff"});document.getElementById("sportsKofiFallback")?.remove()};const existing=document.querySelector("script[data-nebula-sports-kofi-widget]");if(existing){existing.addEventListener("load",draw,{once:true});draw();return}const script=document.createElement("script");script.src="https://storage.ko-fi.com/cdn/scripts/overlay-widget.js";script.async=true;script.defer=true;script.dataset.nebulaSportsKofiWidget="true";script.addEventListener("load",draw,{once:true});document.body.appendChild(script)})();</script>\n</body>');
+  const sportsCopyScript = '<script>document.querySelectorAll("[data-copy]").forEach((btn)=>btn.addEventListener("click",async()=>{const value=btn.getAttribute("data-copy")||"";if(!value)return;const label=btn.dataset.copyLabel||btn.textContent||"Copy URL";btn.dataset.copyLabel=label;await navigator.clipboard.writeText(value);btn.textContent="Copied";setTimeout(()=>btn.textContent=label,1400)}));document.querySelectorAll("[data-open-crypto]").forEach((btn)=>btn.addEventListener("click",()=>{const box=document.getElementById("sportsCryptoWidget");if(!box)return;box.hidden=false;if(!box.dataset.loaded){box.dataset.loaded="1";box.innerHTML=\'<iframe src="https://nowpayments.io/embeds/donation-widget?api_key=3acd79dd-66e2-48c4-9a7a-8938cb9a7a12" width="346" height="623" frameborder="0" scrolling="no" style="display:block;width:100%;max-width:346px;height:623px;overflow-y:hidden;border:0" title="Nebula Sports crypto payment widget">Cannot load widget</iframe>\'};btn.textContent="Crypto payment widget opened";}));</script>';
+  if (sportsPaymentMaintenance) {
+    html = html.replace('</body>', '<a id="sportsTrialFallback" href="#trial" style="position:fixed;right:18px;bottom:18px;z-index:80;border:1px solid var(--line-strong);border-radius:999px;background:var(--accent);color:#fff;padding:11px 16px;font-weight:750;box-shadow:0 12px 30px rgba(0,0,0,.35)">Get trial</a>' + sportsCopyScript + '\n</body>');
+  } else {
+    html = html.replace('</body>', '<a id="sportsKofiFallback" href="' + kofiUrl + '" target="_blank" rel="noopener noreferrer" style="position:fixed;right:18px;bottom:18px;z-index:80;border:1px solid var(--line-strong);border-radius:999px;background:var(--accent);color:#fff;padding:11px 16px;font-weight:750;box-shadow:0 12px 30px rgba(0,0,0,.35)">Support on Ko-fi</a>' + sportsCopyScript + '<script>(()=>{if(window.__nebulaSportsKofiWidgetLoaded)return;window.__nebulaSportsKofiWidgetLoaded=true;const draw=()=>{if(!window.kofiWidgetOverlay?.draw)return;window.kofiWidgetOverlay.draw(' + kofiPageNameJson + ',{type:"floating-chat","floating-chat.donateButton.text":"Support","floating-chat.donateButton.background-color":"#1faa6e","floating-chat.donateButton.text-color":"#ffffff"});document.getElementById("sportsKofiFallback")?.remove()};const existing=document.querySelector("script[data-nebula-sports-kofi-widget]");if(existing){existing.addEventListener("load",draw,{once:true});draw();return}const script=document.createElement("script");script.src="https://storage.ko-fi.com/cdn/scripts/overlay-widget.js";script.async=true;script.defer=true;script.dataset.nebulaSportsKofiWidget="true";script.addEventListener("load",draw,{once:true});document.body.appendChild(script)})();</script>\n</body>');
+  }
   return html;
 };
 
@@ -2639,7 +2803,7 @@ const renderWatchTogetherOfflinePage = (baseUrl) => {
 
 const renderWatchTogetherPage = ({ baseUrl, account = null, errorMessage = '' }) => {
   const safeBaseUrl = String(baseUrl || '').replace(/\/+$/u, '');
-  const kofiPageName = escapeHtml(getKofiPageName(config.DONATION_PRIMARY_URL || 'https://ko-fi.com/redx115775'));
+  const kofiPageName = escapeHtml(getKofiPageName(config.DONATION_PRIMARY_URL || 'https://ko-fi.com/retro76005'));
   const cboxUrl = (() => {
     try {
       const parsed = new URL(config.WATCH_TOGETHER_CBOX_URL || '');
@@ -2832,7 +2996,7 @@ const renderWatchTogetherPage = ({ baseUrl, account = null, errorMessage = '' })
 		            <button class="nav-item" type="button" data-rail="multi" aria-label="Multiview"><span aria-hidden="true">▣</span><span class="label">Multiview</span></button>
 		            <div class="rail-spacer"></div>
 		            <a class="nav-item" href="/sports" aria-label="Stremio addon"><span aria-hidden="true">□</span><span class="label">Addon</span></a>
-		            <a class="rail-avatar" href="${escapeHtml(config.DONATION_PRIMARY_URL || 'https://ko-fi.com/redx115775')}" target="_blank" rel="noopener noreferrer" aria-label="Support Nebula Sports">N</a>
+		            <a class="rail-avatar" href="${escapeHtml(config.DONATION_PRIMARY_URL || 'https://ko-fi.com/retro76005')}" target="_blank" rel="noopener noreferrer" aria-label="Support Nebula Sports">N</a>
 	          </nav>
 	          <div class="workspace">
 	        <header class="top">
@@ -2898,7 +3062,7 @@ const renderWatchTogetherPage = ({ baseUrl, account = null, errorMessage = '' })
 	        </div>
 	        </div>
 	        </div>
-	        <a class="kofi-fallback" id="kofiFallback" href="${escapeHtml(config.DONATION_PRIMARY_URL || 'https://ko-fi.com/redx115775')}" target="_blank" rel="noopener noreferrer">Support Us</a>
+	        <a class="kofi-fallback" id="kofiFallback" href="${escapeHtml(config.DONATION_PRIMARY_URL || 'https://ko-fi.com/retro76005')}" target="_blank" rel="noopener noreferrer">Support</a>
 	      </main>
       <script>
 			        const state={catalogs:[],events:[],event:null,streams:[],stream:null,multiView:false,multiItems:[],sportFilter:'all',statsOpen:false,statsTimer:null,statsAbort:null};
@@ -3206,7 +3370,7 @@ const renderWatchTogetherPage = ({ baseUrl, account = null, errorMessage = '' })
 		            if (!window.kofiWidgetOverlay?.draw) return;
 		            window.kofiWidgetOverlay.draw('${kofiPageName}', {
 		              type: 'floating-chat',
-		              'floating-chat.donateButton.text': 'Support Us',
+		              'floating-chat.donateButton.text': 'Support',
 			              'floating-chat.donateButton.background-color': '#e8113b',
 			              'floating-chat.donateButton.text-color': '#ffffff'
 		            });
@@ -4237,45 +4401,58 @@ const bootstrap = async () => {
     maxAge: '7d',
     immutable: true
   }));
-  app.get(['/sports/poster.jpg', '/sports/poster.png', '/sports/poster/:version/:sig.jpg', '/sports/poster/:version/:sig.png'], async (req, res) => {
+  app.get(['/sports/poster.jpg', '/sports/poster.png', '/sports/poster.svg', '/sports/poster/:version/:sig.jpg', '/sports/poster/:version/:sig.png', '/sports/poster/:version/:sig.svg'], async (req, res) => {
     const title = clampPosterText(req.query?.title || 'Sports Event', 80);
     const meta = clampPosterText(req.query?.meta || req.query?.genre || 'Sports', 44);
     const timeLabel = clampPosterText(req.query?.time || 'Starting soon', 44);
     const badge = clampPosterText(req.query?.badge || 'EVENT', 18);
     const sources = clampPosterText(req.query?.sources || 'Nebula Sports', 24);
-    const cacheKey = `${SPORTS_POSTER_VERSION}:${title}:${meta}:${timeLabel}:${badge}:${sources}:${req.params.sig || ''}`;
-    const cached = posterJpgCache.get(cacheKey);
+    const kind = clampPosterText(req.query?.kind || 'event', 24);
+    const info = clampPosterText(req.query?.info || sources || 'Nebula Sports', 70);
+    const wantsSvg = String(req.path || '').endsWith('.svg');
+    const wantsPng = String(req.path || '').endsWith('.png');
+    const outputType = wantsSvg ? 'svg' : (wantsPng ? 'png' : 'jpg');
+    const cacheKey = `${SPORTS_POSTER_VERSION}:${outputType}:${title}:${meta}:${timeLabel}:${badge}:${sources}:${kind}:${info}:${req.params.sig || ''}`;
+    const cached = posterImageCache.get(cacheKey);
     if (cached) {
-      res.type('image/jpeg').setHeader('Cache-Control', 'public, max-age=300').send(cached);
+      res.type(wantsSvg ? 'image/svg+xml' : (wantsPng ? 'image/png' : 'image/jpeg'))
+        .setHeader('Cache-Control', 'public, max-age=86400, immutable')
+        .send(cached);
       return;
     }
-    const params = new URLSearchParams({
-      v: '5',
+    const svg = buildNebulaSportsPosterSvg({
       title,
       meta,
-      time: timeLabel,
+      timeLabel,
       badge,
-      sources
+      sources,
+      kind,
+      info
     });
     try {
-      const response = await fetch(`${SPORTS_FLIX_POSTER_BASE_URL}?${params.toString()}`, {
-        signal: AbortSignal.timeout(4_000)
-      });
-      if (!response.ok) throw new Error(`Flix poster HTTP ${response.status}`);
-      const contentType = String(response.headers.get('content-type') || '');
-      if (!contentType.includes('image/')) throw new Error(`Flix poster content-type ${contentType || 'missing'}`);
-      const buffer = Buffer.from(await response.arrayBuffer());
-      if (buffer.length < 1024) throw new Error('Flix poster too small');
-      posterJpgCache.set(cacheKey, buffer);
-      while (posterJpgCache.size > POSTER_JPG_CACHE_MAX) {
-        posterJpgCache.delete(posterJpgCache.keys().next().value);
+      const body = wantsSvg
+        ? svg
+        : await import('sharp')
+          .then(({ default: sharp }) => {
+            const pipeline = sharp(Buffer.from(svg)).resize(720, 1080, { fit: 'cover' });
+            return wantsPng
+              ? pipeline.png({ compressionLevel: 8 }).toBuffer()
+              : pipeline.jpeg({ quality: 88, mozjpeg: true }).toBuffer();
+          });
+      posterImageCache.set(cacheKey, body);
+      while (posterImageCache.size > POSTER_IMAGE_CACHE_MAX) {
+        posterImageCache.delete(posterImageCache.keys().next().value);
       }
-      res.type('image/jpeg').setHeader('Cache-Control', 'public, max-age=300').send(buffer);
+      res.type(wantsSvg ? 'image/svg+xml' : (wantsPng ? 'image/png' : 'image/jpeg'))
+        .setHeader('Cache-Control', 'public, max-age=86400, immutable')
+        .send(body);
     } catch (error) {
-      logger.warn('nebula sports flix-style poster unavailable', {
+      logger.warn('nebula sports poster render failed', {
         error: error?.message || String(error)
       });
-      res.status(502).json({ error: 'Poster unavailable' });
+      res.type('image/svg+xml')
+        .setHeader('Cache-Control', 'public, max-age=300')
+        .send(svg);
     }
   });
   app.get('/webos/repo.json', (_req, res) => {
@@ -4461,7 +4638,12 @@ const bootstrap = async () => {
 
   const getSportsAccountFromRequest = async (req) => {
     const cookies = parseCookies(req.headers.cookie);
-    return sportsSupporterService.validateSession(cookies[SPORTS_COOKIE_NAME]);
+    const sessionAccount = await sportsSupporterService.validateSession(cookies[SPORTS_COOKIE_NAME]);
+    if (sportsSupporterService.isAccountActive(sessionAccount)) return sessionAccount;
+    const installKey = String(req.query?.key || '').trim();
+    if (!installKey) return null;
+    const keyAccount = sportsSupporterService.getAccountByInstallKey(installKey);
+    return sportsSupporterService.isAccountActive(keyAccount) ? keyAccount : null;
   };
 
   const redirectSports = (res, params = {}) => {
@@ -4900,45 +5082,6 @@ const bootstrap = async () => {
     return Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
   };
 
-  const isSportsTvClient = (req) => {
-    const userAgent = String(req.headers['user-agent'] || '').toLowerCase();
-    return /androidtv|android tv|aft|bravia|chromecast|fire tv|google tv|hisense|lge|netcast|shield|smarttv|stremio tv|stremio-shell|tizen|tv\b|webos/u.test(userAgent);
-  };
-
-  const SPORTS_TV_META_CACHE_TTL_MS = 10 * 60 * 1000;
-  const SPORTS_TV_META_CACHE_MAX = 1000;
-  const sportsTvMetaCache = new Map();
-
-  const getSportsTvMetaCacheKey = (account, id) => `${account?.id || account?.installKey || 'anon'}:${String(id || '')}`;
-
-  const getCachedSportsTvMeta = (account, id) => {
-    const key = getSportsTvMetaCacheKey(account, id);
-    const entry = sportsTvMetaCache.get(key);
-    if (!entry) return null;
-    if (entry.expiresAt <= Date.now()) {
-      sportsTvMetaCache.delete(key);
-      return null;
-    }
-    return entry.meta;
-  };
-
-  const cacheSportsTvMetas = (account, metas = []) => {
-    const now = Date.now();
-    for (const meta of metas) {
-      if (!meta?.id) continue;
-      sportsTvMetaCache.set(getSportsTvMetaCacheKey(account, meta.id), {
-        meta,
-        expiresAt: now + SPORTS_TV_META_CACHE_TTL_MS
-      });
-    }
-    if (sportsTvMetaCache.size <= SPORTS_TV_META_CACHE_MAX) return;
-    const targetSize = Math.floor(SPORTS_TV_META_CACHE_MAX * 0.8);
-    for (const key of sportsTvMetaCache.keys()) {
-      sportsTvMetaCache.delete(key);
-      if (sportsTvMetaCache.size <= targetSize) break;
-    }
-  };
-
   const buildFallbackSportsMeta = (id) => {
     const rawId = String(id || '');
     const name = decodeURIComponent(rawId.replace(/^streamed:/u, ''))
@@ -4959,7 +5102,6 @@ const bootstrap = async () => {
 
   const decorateSportsMeta = (meta, reqOrBaseUrl, account = null) => {
     const baseUrl = typeof reqOrBaseUrl === 'string' ? reqOrBaseUrl : getPublicBaseUrl(reqOrBaseUrl);
-    const tvClient = typeof reqOrBaseUrl !== 'string' && isSportsTvClient(reqOrBaseUrl);
     const genres = Array.isArray(meta?.genres) && meta.genres.length ? meta.genres : ['Sports'];
     const primaryGenre = genres.find((genre) => genre && genre !== 'Sports') || genres[0] || 'Sports';
     const metaName = String(meta?.name || 'Live Sports Event').trim();
@@ -5015,41 +5157,14 @@ const bootstrap = async () => {
     };
   };
 
-  const prewarmSportsTvMetaCache = async (account, catalogDefinitions, req) => {
-    if (!isSportsTvClient(req)) return;
-    const baseUrl = getPublicBaseUrl(req);
-    const warmCatalogs = [
-      catalogDefinitions.find((catalog) => catalog.id === 'streamed-events-live'),
-      catalogDefinitions.find((catalog) => catalog.id === 'streamed-events-today'),
-      catalogDefinitions.find((catalog) => catalog.id === 'streamed-events-popular')
-    ].filter(Boolean);
-    if (!warmCatalogs.length) return;
-    const results = await Promise.allSettled(warmCatalogs.map(async (catalog) => {
-      const metas = await streamManager.streamedSportsAdapter.getEventCatalog({
-        catalog,
-        limit: 24,
-        signal: AbortSignal.timeout(2_500)
-      });
-      cacheSportsTvMetas(account, metas.map((meta) => decorateSportsMeta(meta, baseUrl, account)));
-    }));
-    const failures = results.filter((result) => result.status === 'rejected').length;
-    if (failures) {
-      logger.info('nebula sports tv meta prewarm partial failure', {
-        failures,
-        total: results.length
-      });
-    }
-  };
-
   const sendSportsManifest = async (req, res, next) => {
     try {
       const account = await getSportsAccountFromInstall(req, res);
       if (!account) return;
       touchSportsLivePrewarm(account, req);
       const baseUrl = getPublicBaseUrl(req);
-      const tvClient = isSportsTvClient(req);
       const catalogDefinitions = filterSportsCatalogsForAccount(
-        await getSportsCatalogDefinitions({ timeoutMs: tvClient ? 1_500 : 6_000 }),
+        await getSportsCatalogDefinitions({ timeoutMs: 6_000 }),
         account
       );
       const sportsConfig = getSportsConfig(account);
@@ -5061,45 +5176,17 @@ const bootstrap = async () => {
           || selectedSports.has(catalog.id))
         .map((catalog) => String(catalog.name || '').replace(/^Sports Events:\s*/u, '').trim())
         .filter(Boolean);
-      const tvCoreCatalogIds = new Set([
-        'streamed-events-live',
-        'streamed-events-today',
-        'streamed-events-popular',
-        'streamed-events-fifa-wc',
-        'streamed-events-cdnlivetv',
-        'streamed-replays',
-        DLHD_CHANNEL_CATALOG_ID
-      ]);
-      const catalogs = tvClient
-        ? catalogDefinitions
-          .filter((catalog) => !sportsConfig.liveOnly
-            || catalog.id === 'streamed-events-live'
-            || catalog.id === 'streamed-events-cdnlivetv'
-            || catalog.id === DLHD_CHANNEL_CATALOG_ID)
-          .filter((catalog) => selectedSports.size === 0 || tvCoreCatalogIds.has(catalog.id) || selectedSports.has(catalog.id))
-          .filter((catalog) => selectedSports.size > 0 || tvCoreCatalogIds.has(catalog.id))
-          .slice(0, 10)
-	          .map((catalog) => ({
-	            type: SPORTS_STREMIO_TYPE,
-	            id: catalog.id,
-	            name: catalog.id === DLHD_CHANNEL_CATALOG_ID
-	              ? 'Nebula Sports: Live TV'
-	              : `Nebula Sports: ${String(catalog.name || '').replace(/^Sports Events:\s*/u, '').trim() || 'Events'}`,
-	            ...(catalog.id === DLHD_CHANNEL_CATALOG_ID
-	              ? { extra: [{ name: 'genre', options: LIVE_TV_GENRE_OPTIONS, isRequired: false }] }
-	              : {})
-	          }))
-        : [{
-          type: SPORTS_STREMIO_TYPE,
-          id: SPORTS_MAIN_CATALOG_ID,
-          name: 'Nebula Sports',
+      const catalogs = [{
+	          type: SPORTS_STREMIO_TYPE,
+	          id: SPORTS_MAIN_CATALOG_ID,
+	          name: 'Nebula Sports',
           extra: [
             { name: 'genre', options: genreOptions, isRequired: false }
           ]
-        }];
+	        }];
       const liveTvCatalog = catalogDefinitions.find((catalog) => catalog.id === DLHD_CHANNEL_CATALOG_ID);
-      if (!tvClient && liveTvCatalog && hasDlhdChannelAccess(account)) {
-	        catalogs.push({
+      if (liveTvCatalog && hasDlhdChannelAccess(account)) {
+		        catalogs.push({
 	          type: SPORTS_STREMIO_TYPE,
 	          id: DLHD_CHANNEL_CATALOG_ID,
 	          name: 'Nebula Sports: Live TV',
@@ -5110,11 +5197,6 @@ const bootstrap = async () => {
 	      }
       if (!isFreeSportsTier(account)) {
         streamManager.streamedSportsAdapter.prewarmCatalogs(catalogDefinitions);
-        void prewarmSportsTvMetaCache(account, catalogDefinitions, req).catch((error) => {
-          logger.info('nebula sports tv meta prewarm failed', {
-            error: error?.message || String(error)
-          });
-        });
       }
       void sportsSupporterService.increment(account.id, 'manifests', 1).catch((error) => {
         logger.debug?.('sports manifest stat increment failed', { error: error?.message || String(error) });
@@ -5153,11 +5235,12 @@ const bootstrap = async () => {
         res.json({ metas: [] });
         return;
       }
-      const tvClient = isSportsTvClient(req);
       const sportsConfig = getSportsConfig(account);
-      const catalogCacheKey = getSportsCatalogResponseCacheKey(req, account, sportsConfig, tvClient);
+      const requestedCatalogId = String(req.params.id || '').trim();
+      const isChannelCatalogRequest = requestedCatalogId === DLHD_CHANNEL_CATALOG_ID;
+      const catalogCacheKey = getSportsCatalogResponseCacheKey(req, account, sportsConfig);
       const cachedCatalogResponse = sportsCatalogResponseCache.get(catalogCacheKey);
-      const cacheControl = tvClient ? 'no-store, no-cache, must-revalidate, max-age=0' : 'private, max-age=30';
+      const cacheControl = isChannelCatalogRequest ? 'private, max-age=21600' : 'private, max-age=120';
       if (cachedCatalogResponse?.expiresAt > Date.now()) {
         sportsRouteMetrics.cacheStats.catalog.hits += 1;
         void sportsSupporterService.increment(account.id, 'catalogs', 1).catch((error) => {
@@ -5170,14 +5253,13 @@ const bootstrap = async () => {
       if (cachedCatalogResponse) sportsCatalogResponseCache.delete(catalogCacheKey);
       sportsRouteMetrics.cacheStats.catalog.misses += 1;
       const catalogs = filterSportsCatalogsForAccount(
-        await getSportsCatalogDefinitions({ timeoutMs: tvClient ? 1_500 : 6_000 }),
+        await getSportsCatalogDefinitions({ timeoutMs: 6_000 }),
         account
       );
       const selectedCatalogs = catalogs.filter((entry) => sportsConfig.sports.includes(entry.id));
       const selectedSportNames = selectedCatalogs
         .map((entry) => String(entry.name || '').replace(/^Sports Events:\s*/u, '').trim().toLowerCase())
         .filter(Boolean);
-      const requestedCatalogId = String(req.params.id || '').trim();
       if (requestedCatalogId === 'streamed-events-flix-dlstreams') {
         res.setHeader('Cache-Control', 'private, max-age=15').json({ metas: [] });
         return;
@@ -5198,19 +5280,25 @@ const bootstrap = async () => {
         res.json({ metas: [] });
         return;
       }
+      const requestedGenreCatalogMatched = useUnifiedCatalog
+        && requestedGenre
+        && String(catalog.name || '').replace(/^Sports Events:\s*/u, '').trim() === requestedGenre;
       let metas = [];
       try {
+        const catalogLimit = [DLHD_CHANNEL_CATALOG_ID, 'streamed-events-cdnlivetv'].includes(catalog.id)
+          || (useUnifiedCatalog && !requestedGenreNeedle)
+          ? 500
+          : 50;
         metas = await streamManager.streamedSportsAdapter.getEventCatalog({
-          catalog,
-          search: getCatalogSearchValue(req),
-          skip: getCatalogSkipValue(req),
-          limit: catalog.id === DLHD_CHANNEL_CATALOG_ID ? 200 : (tvClient ? 24 : 50),
-          signal: AbortSignal.timeout(tvClient ? 3_500 : 6_000)
+	          catalog,
+	          search: getCatalogSearchValue(req),
+	          skip: getCatalogSkipValue(req),
+		          limit: catalogLimit,
+          signal: AbortSignal.timeout(6_000)
         });
       } catch (error) {
         logger.warn('nebula sports catalog load failed', {
           catalog: catalog.id,
-          tvClient,
           error: error?.message || String(error)
         });
       }
@@ -5230,7 +5318,7 @@ const bootstrap = async () => {
 	            ].join(' '));
 	            return sportsGenreNeedles(requestedGenreNeedle).some((needle) => text.includes(needle));
 	          }
-	          if (useUnifiedCatalog && requestedGenreNeedle) {
+	          if (useUnifiedCatalog && requestedGenreNeedle && !requestedGenreCatalogMatched) {
             const text = normalizeSportsCatalogText([
               meta.genre,
               ...(meta.genres || []),
@@ -5247,13 +5335,10 @@ const bootstrap = async () => {
             .toLowerCase();
           return selectedSportNames.some((sport) => text.includes(sport));
         });
-      if (tvClient) {
-        cacheSportsTvMetas(account, decoratedMetas);
-      }
       const payload = JSON.stringify({ metas: decoratedMetas });
       sportsCatalogResponseCache.set(catalogCacheKey, {
         payload,
-        expiresAt: Date.now() + SPORTS_CATALOG_RESPONSE_TTL_MS
+        expiresAt: Date.now() + (isChannelCatalogRequest ? SPORTS_CHANNEL_CATALOG_RESPONSE_TTL_MS : SPORTS_CATALOG_RESPONSE_TTL_MS)
       });
       pruneSportsCatalogResponseCache();
       recordSportsRouteMetric('catalog', startedAt, { ok: true, status: 200, cacheHit: false });
@@ -5272,12 +5357,6 @@ const bootstrap = async () => {
     try {
       const account = await getSportsAccountFromInstall(req, res);
       if (!account) return;
-      const tvClient = isSportsTvClient(req);
-      const cachedMeta = tvClient ? getCachedSportsTvMeta(account, req.params.id) : null;
-      if (cachedMeta) {
-        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0').json({ meta: cachedMeta });
-        return;
-      }
       let meta = null;
       try {
         meta = await streamManager.streamedSportsAdapter.getEventMeta(req.params.id, AbortSignal.timeout(3_000));
@@ -5288,10 +5367,7 @@ const bootstrap = async () => {
         });
       }
       const decoratedMeta = decorateSportsMeta(meta || buildFallbackSportsMeta(req.params.id), req, account);
-      if (tvClient) {
-        cacheSportsTvMetas(account, [decoratedMeta]);
-      }
-      res.setHeader('Cache-Control', tvClient ? 'no-store, no-cache, must-revalidate, max-age=0' : 'private, max-age=30').json({ meta: decoratedMeta });
+      res.setHeader('Cache-Control', 'private, max-age=30').json({ meta: decoratedMeta });
     } catch (error) {
       next(error);
     }
@@ -5315,6 +5391,8 @@ const bootstrap = async () => {
       : `${hourCount} ${hourCount === 1 ? 'hour' : 'hours'}`;
 
     const baseUrl = getPublicBaseUrl(req);
+    const installKey = String(req.params.installKey || '').trim();
+    const accountUrl = installKey ? `${baseUrl}/sports/i/${encodeURIComponent(installKey)}/configure` : `${baseUrl}/sports`;
     return {
       name: 'Nebula Sports Trial',
       title: [
@@ -5322,7 +5400,7 @@ const bootstrap = async () => {
         'Click to continue using Nebula Sports',
         'Normal sports streams are below'
       ].join('\n'),
-      externalUrl: `${baseUrl}/sports`,
+      externalUrl: accountUrl,
       behaviorHints: {
         notWebReady: true,
         bingeGroup: 'nebula-sports-trial-expiry'
@@ -5332,10 +5410,12 @@ const bootstrap = async () => {
 
   const buildSportsNoStreamsCard = (req) => {
     const baseUrl = getPublicBaseUrl(req);
+    const installKey = String(req.params.installKey || '').trim();
+    const accountUrl = installKey ? `${baseUrl}/sports/i/${encodeURIComponent(installKey)}/configure` : `${baseUrl}/sports`;
     return {
       name: 'Nebula Sports',
       title: 'No streams currently available for this event',
-      externalUrl: `${baseUrl}/sports`,
+      externalUrl: accountUrl,
       behaviorHints: {
         notWebReady: true,
         bingeGroup: `nebula-sports-empty-${String(req.params.id || 'event').slice(0, 120)}`
@@ -5345,14 +5425,16 @@ const bootstrap = async () => {
 
   const buildSportsFreeUpgradeStreamCard = (req) => {
     const baseUrl = getPublicBaseUrl(req);
+    const installKey = String(req.params.installKey || '').trim();
+    const accountUrl = installKey ? `${baseUrl}/sports/i/${encodeURIComponent(installKey)}/configure` : `${baseUrl}/sports`;
     return {
       name: 'Nebula Sports Supporter',
       title: [
         'Subscribe to unlock more streams',
-        'Free tier shows the easiest available stream only',
+        'Free tier shows easiest available streams',
         'Click to get every playable source'
       ].join('\n'),
-      externalUrl: `${baseUrl}/sports`,
+      externalUrl: accountUrl,
       behaviorHints: {
         notWebReady: true,
         bingeGroup: `nebula-sports-upgrade-${String(req.params.id || 'event').slice(0, 120)}`
@@ -5362,14 +5444,16 @@ const bootstrap = async () => {
 
   const buildSportsUpdateNoticeStreamCard = (req) => {
     const baseUrl = getPublicBaseUrl(req);
+    const installKey = String(req.params.installKey || '').trim();
+    const accountUrl = installKey ? `${baseUrl}/sports/i/${encodeURIComponent(installKey)}/configure` : `${baseUrl}/sports`;
     return {
       name: 'Nebula Sports Update',
       title: [
         'Nebula Sports update available',
-        'Refresh or reinstall addon to load new colorful posters',
+        'Refresh or reinstall addon to load the new Nebula poster style',
         'Click to open update page'
       ].join('\n'),
-      externalUrl: `${baseUrl}/sports`,
+      externalUrl: accountUrl,
       behaviorHints: {
         notWebReady: true,
         bingeGroup: 'nebula-sports-update-1-0-5'
@@ -5379,10 +5463,11 @@ const bootstrap = async () => {
 
   const SPORTS_STREAM_RESPONSE_CACHE_MAX = 500;
   const SPORTS_STREAM_RESPONSE_TTL_MS = 15_000;
-  const SPORTS_STREAM_RESPONSE_PAID_TTL_MS = 60_000;
+  const SPORTS_STREAM_RESPONSE_PAID_TTL_MS = 10_000;
   const SPORTS_STREAM_EMPTY_TTL_MS = 4_000;
   const SPORTS_CATALOG_RESPONSE_CACHE_MAX = 300;
-  const SPORTS_CATALOG_RESPONSE_TTL_MS = 20_000;
+  const SPORTS_CATALOG_RESPONSE_TTL_MS = 120_000;
+  const SPORTS_CHANNEL_CATALOG_RESPONSE_TTL_MS = 6 * 60 * 60 * 1000;
   const SPORTS_ROUTE_METRIC_MAX = 500;
   const SPORTS_ROUTE_ERROR_MAX = 25;
   const SPORTS_LIVE_PREWARM_INTERVAL_MS = 25_000;
@@ -5418,9 +5503,8 @@ const bootstrap = async () => {
     }
   };
 
-  const getSportsCatalogResponseCacheKey = (req, account, sportsConfig, tvClient) => [
+  const getSportsCatalogResponseCacheKey = (req, account, sportsConfig) => [
     account?.id || account?.installKey || 'anon',
-    tvClient ? 'tv' : 'client',
     String(req.params.type || ''),
     String(req.params.id || ''),
     String(req.params.extra || ''),
@@ -5754,7 +5838,7 @@ const bootstrap = async () => {
       const freeTierEligibleStreams = freeTier
         ? streams.filter((stream) => !isCdnLiveTvSportsStream(stream))
         : streams;
-      const playableStreams = freeTier && freeTierEligibleStreams.length ? freeTierEligibleStreams.slice(0, 1) : freeTierEligibleStreams;
+      const playableStreams = freeTier && freeTierEligibleStreams.length ? freeTierEligibleStreams.slice(0, 2) : freeTierEligibleStreams;
       const responseStreams = [
         ...(expiryCard ? [expiryCard] : []),
         ...(playableStreams.length ? playableStreams : [buildSportsNoStreamsCard(req)]),
@@ -6871,13 +6955,52 @@ render();
     }
   });
 
+  const normalizeSportsTokenCode = (value) =>
+    String(value || '').trim().replace(/\s+/gu, '').toUpperCase();
+  const getSportsTokenHashCandidates = (tokenCode) => {
+    const normalizedCode = normalizeSportsTokenCode(tokenCode);
+    if (!normalizedCode) return [];
+    const secrets = [
+      config.SUPPORTER_CODE_SECRET,
+      process.env.SUPPORTER_CODE_SECRET,
+      process.env.ADMIN_PASSWORD,
+      process.env.STREMIO_ADDON_ID,
+      'nebulastreams-supporters',
+      'community.nebulastreams',
+      'sohil@123'
+    ]
+      .map((secret) => String(secret || '').trim())
+      .filter(Boolean);
+    return [...new Set(secrets.map((secret) =>
+      crypto.createHash('sha256').update(`${secret}:sports:code:${normalizedCode}`).digest('hex')
+    ))];
+  };
+
   app.post('/sports/signup', async (req, res, next) => {
     try {
-      const account = await sportsSupporterService.claimToken({
-        username: req.body?.username,
-        password: req.body?.password,
-        tokenCode: req.body?.tokenCode
-      });
+      const tokenCode = req.body?.tokenCode || req.body?.token;
+      const tokenHashes = getSportsTokenHashCandidates(tokenCode);
+      let account = null;
+      let lastError = null;
+      for (const tokenHash of tokenHashes) {
+        try {
+          account = await sportsSupporterService.claimTokenHash({
+            username: req.body?.username,
+            password: req.body?.password,
+            tokenHash
+          });
+          break;
+        } catch (error) {
+          lastError = error;
+          if (error?.message !== 'Invalid sports token') throw error;
+        }
+      }
+      if (!account) throw lastError || new Error('Invalid sports token');
+      for (const tokenHash of tokenHashes) {
+        if (tokenHash !== account.tokenHash) {
+          await sportsSupporterService.revokeToken(tokenHash).catch(() => {});
+        }
+      }
       const token = await sportsSupporterService.createSession(account.id);
       setSportsSessionCookie(req, res, token);
       redirectSports(res, { success: 'Sports account created' });
@@ -6949,6 +7072,8 @@ render();
         redirectSports(res, { error: 'Sign in with an active supporter account to configure Nebula Sports' });
         return;
       }
+      const token = await sportsSupporterService.createSession(account.id);
+      setSportsSessionCookie(req, res, token);
       res.redirect(302, '/sports/configure');
     } catch (error) {
       next(error);

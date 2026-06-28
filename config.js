@@ -126,7 +126,7 @@ export const config = Object.freeze({
   INCLUDE_LIVE_CATALOGS: toBoolean(process.env.INCLUDE_LIVE_CATALOGS, false),
   DISABLED_SOURCES: toStringList(process.env.DISABLED_SOURCES || process.env.DISABLED_PROVIDERS || ''),
   PROXY_CONFIG: toProxyRuleList(process.env.PROXY_CONFIG || ''),
-  DONATION_PRIMARY_URL: process.env.DONATION_PRIMARY_URL || 'https://ko-fi.com/redx115775',
+  DONATION_PRIMARY_URL: process.env.DONATION_PRIMARY_URL || 'https://ko-fi.com/retro76005',
   DONATION_SECONDARY_URL: process.env.DONATION_SECONDARY_URL || '',
   DONATION_NOWPAYMENTS_WIDGET_URL: process.env.DONATION_NOWPAYMENTS_WIDGET_URL || 'https://nowpayments.io/embeds/donation-widget?api_key=3acd79dd-66e2-48c4-9a7a-8938cb9a7a12',
   DONATION_CRYPTO_LABEL: process.env.DONATION_CRYPTO_LABEL || 'USDT (TRC20)',

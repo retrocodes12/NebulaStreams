@@ -35,6 +35,8 @@ const CDNLIVETV_USER = String(process.env.CDNLIVETV_USER || 'cdnlivetv').trim();
 const CDNLIVETV_PLAN = String(process.env.CDNLIVETV_PLAN || 'free').trim();
 const CDNLIVETV_STREAM_CACHE_MS = 60 * 1000;
 const CDNLIVETV_STREAM_STALE_MS = 5 * 60 * 1000;
+const CDNLIVETV_HEALTH_CACHE_MS = 60 * 1000;
+const CDNLIVETV_DOWN_CACHE_MS = 2 * 60 * 1000;
 const REXDEX_SOURCE = 'rexdex';
 const REXDEX_ORIGIN = 'https://www.rexdexsports.in';
 const REXDEX_FEED_URL = `${REXDEX_ORIGIN}/feeds/posts/default?alt=json&max-results=30`;
@@ -47,8 +49,10 @@ const REXDEX_PORTUGAL_UZBEKISTAN_UNTIL_MS = Date.parse('2026-06-24T06:00:00.000Z
 const HELLOSPORTS_SOURCE = 'hellosports';
 const HELLOSPORTS_ORIGIN = 'https://hellosports.jkssbcares.in';
 const HELLOSPORTS_4K_PAGE = 'https://hellosports.jkssbcares.in/p/live-matches.html?m=1';
+const HELLOSPORTS_FEED_URL = `${HELLOSPORTS_ORIGIN}/feeds/posts/default?alt=json&max-results=50`;
 const HELLOSPORTS_4K_CACHE_MS = 60 * 1000;
-const HELLOSPORTS_4K_MAX_CARDS = 2;
+const HELLOSPORTS_POST_CACHE_MS = 5 * 60 * 1000;
+const HELLOSPORTS_4K_MAX_CARDS = 4;
 const KNOWN_SPORTS_SOURCE = 'knownsports';
 const KNOWN_SPORTS_MAX_CARDS = 3;
 const KNOWN_SPORTS_HLS_TIMEOUT_MS = 7_000;
@@ -104,6 +108,16 @@ const SPORTSRC_DETAIL_CACHE_MS = 10 * 60 * 1000;
 const SPORTSRC_VALIDATION_BUDGET_MS = 5_000;
 const SPORTSRC_MAX_CANDIDATES = 4;
 const SPORTSRC_MAX_CARDS = 2;
+const RAPID_FOOTBALL_SOURCE = 'rapidfootball';
+const RAPID_FOOTBALL_API_HOST = 'football-live-streaming-api.p.rapidapi.com';
+const RAPID_FOOTBALL_MATCHES_URL = `https://${RAPID_FOOTBALL_API_HOST}/matches`;
+const RAPID_FOOTBALL_CACHE_KEY = 'rapidfootball:matches:page1';
+const RAPID_FOOTBALL_MATCH_CACHE_MS = 30 * 60 * 1000;
+const RAPID_FOOTBALL_STALE_CACHE_MS = 2 * 60 * 60 * 1000;
+const RAPID_FOOTBALL_VALIDATION_BUDGET_MS = 14_000;
+const RAPID_FOOTBALL_MAX_CANDIDATES = 48;
+const RAPID_FOOTBALL_MAX_CARDS = 6;
+const RAPID_FOOTBALL_DAILY_LIMIT = Math.max(1, Number.parseInt(process.env.RAPID_FOOTBALL_DAILY_LIMIT || '40', 10) || 40);
 const REPLAYZONE_SOURCE = 'replayzone';
 const REPLAYZONE_CATALOG_ID = 'streamed-replays';
 const REPLAYZONE_CACHE_KEY = 'replayzone';
@@ -127,7 +141,7 @@ const DLHD_SCHEDULE_CACHE_MS = 60_000;
 const DLHD_SCHEDULE_STALE_MS = 6 * 60 * 60 * 1000;
 const DLHD_CHANNEL_CATALOG_ID = 'streamed-events-dlhd-channels';
 const DLHD_CHANNEL_CACHE_KEY = 'cdnlivetv-channels';
-const DLHD_CHANNEL_CATALOG_LIMIT = 200;
+const DLHD_CHANNEL_CATALOG_LIMIT = 1200;
 const DLHD_CHANNEL_CACHE_MS = 6 * 60 * 60 * 1000;
 const DLHD_CHANNEL_STALE_MS = 7 * 24 * 60 * 60 * 1000;
 const DLHD_HLS_MAX_CACHE_MS = 10 * 60 * 1000;
@@ -155,12 +169,14 @@ const HLS_PROBE_SCRIPT = path.join(process.cwd(), 'scripts', 'streamed_hls_probe
 const HLS_CONTENT_TYPE_RE = /(?:mpegurl|m3u8|application\/vnd\.apple|application\/x-mpegurl)/iu;
 const STREAM_VALIDATION_TOTAL_BUDGET_MS = 8_000;
 const STREAM_DIRECT_HLS_FAST_SOURCE_MS = 1_800;
-const STREAM_DIRECT_HLS_FAST_VALIDATION_MS = 1_500;
+const STREAM_DIRECT_HLS_FAST_VALIDATION_MS = 3_000;
 const STREAM_VALIDATION_CANDIDATE_TIMEOUT_MS = 7_500;
 const STREAM_VALIDATION_MAX_CANDIDATES = 8;
 const STREAM_VALIDATION_MAX_PER_SOURCE = 2;
 const STREAM_BROWSER_FALLBACK_TOTAL_BUDGET_MS = 4_000;
 const STREAM_BROWSER_FALLBACK_MAX_CANDIDATES = 2;
+const HLS_SEGMENT_PROBE_TIMEOUT_MS = 2_500;
+const HLS_SEGMENT_PROBE_MAX_BYTES = 256 * 1024;
 const LIVE_STREAM_PREWARM_LIMIT = 6;
 const LIVE_STREAM_PREWARM_TIMEOUT_MS = 22_000;
 const LICENSED_EXTERNAL_VALIDATION_BUDGET_MS = 1_500;
@@ -173,6 +189,7 @@ const STREAM_SOURCE_RANK = new Map([
   ['echo', 0],
   ['golf', 1],
   ['nebulasports', 2],
+  [RAPID_FOOTBALL_SOURCE, 2],
   [FLIX_DLSTREAMS_SOURCE, 3],
   [REXDEX_SOURCE, 3],
   [SPORTSRC_SOURCE, 3],
@@ -185,7 +202,7 @@ const STREAM_SOURCE_RANK = new Map([
 ]);
 const STREAMED_SOURCE_DEFAULT_RANK = 5;
 const SUPPLEMENTAL_SPORTS_SOURCES_ENABLED = true;
-const SUPPLEMENTAL_SPORTS_SOURCES = new Set([SPORTSBITE_SOURCE, STREAMFREE_SOURCE, FLIX_DLSTREAMS_SOURCE, CDNLIVETV_SOURCE, STREAMZY_4K_SOURCE, SPORTSRC_SOURCE, 'sportzx']);
+const SUPPLEMENTAL_SPORTS_SOURCES = new Set([SPORTSBITE_SOURCE, STREAMFREE_SOURCE, FLIX_DLSTREAMS_SOURCE, CDNLIVETV_SOURCE, STREAMZY_4K_SOURCE, SPORTSRC_SOURCE, RAPID_FOOTBALL_SOURCE, 'sportzx']);
 const STREAMZY_4K_STREAMS = Object.freeze([
   {
     id: 'fox-sports-1-4k',
@@ -507,6 +524,26 @@ const getMatchEventKey = (match = {}) => {
 
 const isFifaWorldCupTeam = (team) => FIFA_WC_TEAM_ALIASES.has(normalizeTeamName(team));
 
+const extractFifaWorldCupTeamsFromText = (value = '') => {
+  const normalized = ` ${normalizeTitle(value)} `;
+  const matches = [];
+  for (const alias of FIFA_WC_TEAM_ALIASES) {
+    const team = normalizeTeamName(alias);
+    const index = normalized.indexOf(` ${team} `);
+    if (index >= 0) matches.push({ team, index });
+  }
+  const seen = new Set();
+  return matches
+    .sort((left, right) => left.index - right.index || right.team.length - left.team.length)
+    .map((match) => match.team)
+    .filter((team) => {
+      if (seen.has(team)) return false;
+      seen.add(team);
+      return true;
+    })
+    .slice(0, 2);
+};
+
 const isFifaWorldCupMatch = (match = {}) => {
   const text = `${match.title || ''} ${match.category || ''}`;
   if (/\bworld\s+cup\b/iu.test(text) && /\b(?:fifa|football|soccer)\b/iu.test(text)) return true;
@@ -569,6 +606,12 @@ const isHlsPlaylistText = (value) => toString(value).trimStart().startsWith('#EX
 const extractDirectHlsUrl = (value) => {
   const normalized = toString(value);
   if (!normalized) return null;
+  try {
+    const parsed = new URL(normalized);
+    if (/\.m3u8$/iu.test(parsed.pathname) && isHttpUrl(normalized)) return normalized;
+  } catch {
+    // Fall through to nested parameter and text extraction.
+  }
   const candidates = [];
   try {
     const parsed = new URL(normalized);
@@ -610,18 +653,59 @@ const formatEventTime = (dateValue) => {
   return new Date(date).toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
 };
 
-const LIVE_EVENT_WINDOW_MS = 6 * 60 * 60 * 1000;
+const LIVE_EVENT_WINDOW_MS = 3 * 60 * 60 * 1000;
+const SHORT_SESSION_LIVE_WINDOW_MS = 2 * 60 * 60 * 1000;
+const LONG_LIVE_EVENT_WINDOW_MS = 4 * 60 * 60 * 1000;
+const HELLOSPORTS_PRESTART_WINDOW_MS = 15 * 60 * 1000;
 
-const isEventLiveByTime = (dateValue, now = Date.now()) => {
+const getLiveEventWindowMs = (match = {}) => {
+  const haystack = normalizeTitle([
+    match?.title,
+    match?.category,
+    Array.isArray(match?.teams) ? match.teams.join(' ') : '',
+    match?.normalizedTitle
+  ].filter(Boolean).join(' '));
+  if (/\b(?:practice|qualifying|sprint|stage|heat|session)\b/u.test(haystack)) {
+    return SHORT_SESSION_LIVE_WINDOW_MS;
+  }
+  if (/\b(?:cricket|test match|golf|tennis|atp|wta|wimbledon|ufc|boxing|snooker|darts|cycling|road championships)\b/u.test(haystack)) {
+    return LONG_LIVE_EVENT_WINDOW_MS;
+  }
+  return LIVE_EVENT_WINDOW_MS;
+};
+
+const isEventLiveByTime = (dateValue, now = Date.now(), match = {}) => {
   const date = Number(dateValue || 0);
-  return Number.isFinite(date) && date > 0 && date <= now && now <= date + LIVE_EVENT_WINDOW_MS;
+  return Number.isFinite(date) && date > 0 && date <= now && now <= date + getLiveEventWindowMs(match);
 };
 
 const isLiveCatalog = (catalog = {}) =>
   toString(catalog?.id) === 'streamed-events-live' || toString(catalog?.endpoint) === '/api/matches/live';
 
-const isCurrentlyLiveMatch = (match = {}) =>
-  Boolean(match?.isLive || match?.live || match?.currentlyLive || isEventLiveByTime(match?.date));
+const isCurrentlyLiveMatch = (match = {}) => {
+  const date = Number(match?.date || 0);
+  const hasDate = Number.isFinite(date) && date > 0;
+  const explicitLive = Boolean(
+    match?.isLive
+    || match?.live
+    || match?.currentlyLive
+    || normalizeIdPart(match?.status) === 'live'
+  );
+  if (hasDate) {
+    const now = Date.now();
+    if (date > now || now > date + getLiveEventWindowMs(match)) return false;
+    return explicitLive || isEventLiveByTime(date, now, match);
+  }
+  return explicitLive;
+};
+
+const isWithinPrestartWindow = (match = {}, windowMs = 0, now = Date.now()) => {
+  const date = Number(match?.date || 0);
+  return Number.isFinite(date) && date > now && date - now <= windowMs;
+};
+
+const shouldProbeHelloSportsForMatch = (match = {}) =>
+  isCurrentlyLiveMatch(match) || isWithinPrestartWindow(match, HELLOSPORTS_PRESTART_WINDOW_MS);
 
 const inferLiveTvGenres = (title = '') => {
   const normalized = normalizeTitle(title);
@@ -629,13 +713,15 @@ const inferLiveTvGenres = (title = '') => {
   const add = (genre) => {
     if (!genres.includes(genre)) genres.push(genre);
   };
-  if (/\b(?:fifa|world cup|wc|bein sports|fox sports|fox deportes|fs1|fs2|tsn|tudn|telemundo|universo|itv|bbc|sport tv|supersport|sbs)\b/u.test(normalized)) {
+  const cricketSpecific = /\b(?:cricket|willow|criclife|cricbuzz)\b/u.test(normalized);
+  const explicitWorldCup = /\b(?:fifa|world cup|wc)\b/u.test(normalized);
+  if (explicitWorldCup || (!cricketSpecific && /\b(?:bein sports|bein max|fox sports|fox deportes|fs1|fs2|tsn|rds|ctv|tudn|univision|telemundo|universo|itv\d*|bbc|sport tv|rtp|tve|la 1|tf1|m6|ard|zdf|das erste|srf|orf|rai|optus|supersport|sabc|sbs|astro|sony sports|sony ten|star sports|sports18|jio|hotstar|viaplay|svt|nrk|yle|nos|vrt|rtbf|tvp|match tv)\b/u.test(normalized))) {
     add('FIFA WC');
   }
-  if (/\b(?:football|soccer|fifa|world cup|premier league|laliga|serie a|bundesliga|ligue 1|uefa|espn|bein sports|fox sports|tudn|telemundo|universo)\b/u.test(normalized)) {
+  if (!cricketSpecific && /\b(?:football|soccer|fifa|world cup|premier league|laliga|serie a|bundesliga|ligue 1|uefa|espn|bein sports|bein max|fox sports|fs1|fs2|tudn|univision|telemundo|universo|itv\d*|bbc|sport tv|supersport football|astro supersport)\b/u.test(normalized)) {
     add('Football');
   }
-  if (/\b(?:cricket|willow|sky sports cricket|star sports|ptv sports|ten sports|sony sports|t sports|super sport cricket)\b/u.test(normalized)) {
+  if (/\b(?:cricket|willow|sky sports cricket|sky sports main event|sky sports mix|star sports|starsports|ptv sports|ten sports|sony sports|sony ten|sports18|jio|hotstar|fancode|t sports|tsports|gazi tv|gtv|super sport cricket|supersport cricket|criclife|asports|a sports|ary zap|rta sport|tnt sports)\b/u.test(normalized)) {
     add('Cricket');
   }
   if (/\b(?:tennis|atp|wta|eurosport|tennis channel)\b/u.test(normalized)) {
@@ -660,6 +746,57 @@ const inferLiveTvGenres = (title = '') => {
     add('Sports News');
   }
   return genres;
+};
+
+const LIVE_TV_GENRE_RANK = new Map([
+  ['FIFA WC', 0],
+  ['Cricket', 1],
+  ['Football', 2],
+  ['Tennis', 3],
+  ['US Sports', 4],
+  ['Motorsport', 5],
+  ['Fight', 6],
+  ['Golf', 7],
+  ['Rugby', 8],
+  ['Sports News', 9],
+  ['Live TV', 20]
+]);
+
+const getLiveTvChannelRank = (channel = {}) => {
+  const genres = Array.isArray(channel?.genres) ? channel.genres : inferLiveTvGenres(channel?.title);
+  const ranked = genres
+    .map((genre) => LIVE_TV_GENRE_RANK.get(toString(genre)))
+    .filter(Number.isFinite);
+  const base = ranked.length ? Math.min(...ranked) : 30;
+  return base + (isLikelySportsDlhdChannelTitle(channel?.title) ? 0 : 40);
+};
+
+const getCdnLiveTvChannelPayloadFromMatch = (channel = {}) => {
+  const source = (Array.isArray(channel?.sources) ? channel.sources : [])
+    .find((entry) => toString(entry?.id));
+  if (!source) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(toString(source.id), 'base64url').toString('utf8'));
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
+const withLiveTvChannelGenres = (channel = {}) => {
+  const rawTitle = toString(channel?.title);
+  const payload = getCdnLiveTvChannelPayloadFromMatch(channel);
+  const code = toString(payload?.code).toUpperCase();
+  const title = code && rawTitle && !new RegExp(`\\(${code.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}\\)$`, 'u').test(rawTitle)
+    ? `${rawTitle} (${code})`
+    : rawTitle;
+  const genres = inferLiveTvGenres(title);
+  return {
+    ...channel,
+    title,
+    genres,
+    normalizedTitle: normalizeTitle(`${title} live tv cdnlivetv channel ${genres.join(' ')}`)
+  };
 };
 
 export class StreamedSportsAdapter {
@@ -696,10 +833,14 @@ export class StreamedSportsAdapter {
     this.worldCupXtreamStreamsCache = null;
     this.sportSrcMatchesCache = new Map();
     this.sportSrcDetailCache = new Map();
+    this.rapidFootballMatchesCache = null;
     this.rexdexPostsCache = null;
     this.helloSports4kCache = null;
+    this.helloSportsPostsCache = null;
     this.knownSportsHealthCache = new Map();
     this.knownSportsHealthInFlight = new Map();
+    this.cdnLiveTvHealthCache = new Map();
+    this.cdnLiveTvHealthInFlight = new Map();
     this.replayZoneMatchesCache = null;
     this.replayZoneHlsCache = new Map();
     this.dlhdHlsCache = new Map();
@@ -881,6 +1022,60 @@ export class StreamedSportsAdapter {
     return posts;
   }
 
+  getHelloSportsMatchTeams(match = {}) {
+    const teams = Array.isArray(match.teams) && match.teams.length >= 2
+      ? match.teams.map(normalizeTeamName).filter(Boolean)
+      : [];
+    if (teams.length >= 2) return teams.slice(0, 2);
+    const splitTeams = splitFixtureTeams(match.title);
+    if (splitTeams.length >= 2 && splitTeams.every(isFifaWorldCupTeam)) return splitTeams;
+    return extractFifaWorldCupTeamsFromText(`${match.title || ''} ${match.category || ''}`);
+  }
+
+  async fetchHelloSportsPosts(signal = null) {
+    if (this.helloSportsPostsCache?.expiresAt > Date.now()) {
+      return this.helloSportsPostsCache.value;
+    }
+
+    const response = await this.fetchImpl(HELLOSPORTS_FEED_URL, {
+      signal,
+      redirect: 'follow',
+      headers: this.getHelloSportsHeaders({
+        accept: 'application/json,text/javascript,*/*;q=0.8'
+      })
+    });
+    if (!response.ok) throw new Error(`HelloSports feed HTTP ${response.status}`);
+    const payload = await response.json();
+    const posts = (Array.isArray(payload?.feed?.entry) ? payload.feed.entry : [])
+      .map((entry) => {
+        const title = toString(entry?.title?.$t);
+        const url = (Array.isArray(entry?.link) ? entry.link : [])
+          .find((link) => toString(link?.rel) === 'alternate' && isHttpUrl(link?.href))?.href;
+        const categories = (Array.isArray(entry?.category) ? entry.category : [])
+          .map((category) => toString(category?.term))
+          .filter(Boolean);
+        if (!title || !url) return null;
+        const teams = extractFifaWorldCupTeamsFromText(title);
+        const categoryText = categories.join(' ');
+        const isWorldCupPost = isFifaWorldCupMatch({ title, category: categoryText, teams })
+          || /\b(?:fifa|world cup|wc)\b/iu.test(`${title} ${categoryText}`);
+        if (!isWorldCupPost) return null;
+        return {
+          title,
+          url,
+          published: toString(entry?.published?.$t),
+          normalizedTitle: normalizeTitle(`${title} ${categoryText}`),
+          teams
+        };
+      })
+      .filter(Boolean);
+    this.helloSportsPostsCache = {
+      value: posts,
+      expiresAt: Date.now() + HELLOSPORTS_POST_CACHE_MS
+    };
+    return posts;
+  }
+
   encodeHelloSportsStreamId(stream = {}) {
     return Buffer.from(JSON.stringify({
       url: toString(stream?.embedUrl || stream?.url),
@@ -907,16 +1102,31 @@ export class StreamedSportsAdapter {
     return toString(label)
       .replace(/\bLink\s*\d+\s*\|?/giu, '')
       .replace(/\bClick\s+Here\s+to\s+Watch\s+Live\b/giu, '')
-      .replace(/\b(?:hd|uhd|4k|quality|stream)\b/giu, '')
+      .replace(/\b(?:hd|fhd|uhd|4k|1080p?|full\s*hd|quality|stream)\b/giu, '')
       .replace(/\|/gu, ' ')
       .replace(/\s+/gu, ' ')
       .trim() || '4K Channel';
   }
 
+  inferHelloSportsPlaybackProfile(label = '') {
+    const normalized = normalizeTitle(label);
+    if (/\b(?:4k|uhd|2160p?)\b/u.test(normalized)) {
+      return { quality: '4K', speedMbps: 25 };
+    }
+    if (/\b(?:fhd|1080p?|full\s*hd)\b/u.test(normalized)) {
+      return { quality: '1080p', speedMbps: 10 };
+    }
+    if (/\bmalayal?am\b/u.test(normalized)) {
+      return { quality: '1080p', speedMbps: 10 };
+    }
+    return { quality: 'HD', speedMbps: 8 };
+  }
+
   extractHelloSportsButtonUrl(value = '') {
     const text = toString(value);
     const match = text.match(/location\.href\s*=\s*['"]([^'"]+)['"]/iu)
-      || text.match(/window\.location(?:\.href)?\s*=\s*['"]([^'"]+)['"]/iu);
+      || text.match(/window\.location(?:\.href)?\s*=\s*['"]([^'"]+)['"]/iu)
+      || text.match(/window\.open\(\s*['"]([^'"]+)['"]/iu);
     if (!match?.[1]) return '';
     try {
       return new URL(match[1], HELLOSPORTS_4K_PAGE).toString();
@@ -942,7 +1152,7 @@ export class StreamedSportsAdapter {
     $('button, a').each((_, element) => {
       const label = $(element).text().replace(/\s+/gu, ' ').trim();
       const qualityText = normalizeTitle(label);
-      if (!/\b(?:4k|uhd)\b/u.test(qualityText)) return;
+      if (!/\b(?:4k|uhd|fhd|1080p?|full\s*hd|malayal?am|malaylam)\b/u.test(qualityText)) return;
       const href = toString($(element).attr('href')) || this.extractHelloSportsButtonUrl($(element).attr('onclick'));
       if (!href) return;
       let embedUrl = '';
@@ -956,7 +1166,8 @@ export class StreamedSportsAdapter {
       entries.push({
         embedUrl,
         channelName: this.cleanHelloSportsChannelName(label),
-        label
+        label,
+        playbackProfile: this.inferHelloSportsPlaybackProfile(label)
       });
     });
     this.helloSports4kCache = {
@@ -964,6 +1175,138 @@ export class StreamedSportsAdapter {
       expiresAt: Date.now() + HELLOSPORTS_4K_CACHE_MS
     };
     return entries;
+  }
+
+  normalizeHelloSportsEmbedText(value = '') {
+    let normalized = toString(value)
+      .replace(/\\u0026/giu, '&')
+      .replace(/\\\//gu, '/')
+      .replace(/&amp;/giu, '&')
+      .replace(/&#038;/giu, '&')
+      .replace(/&quot;/giu, '"')
+      .replace(/&#39;/giu, "'");
+    for (let index = 0; index < 2; index += 1) {
+      try {
+        const decoded = decodeURIComponent(normalized);
+        if (decoded === normalized) break;
+        normalized = decoded;
+      } catch {
+        break;
+      }
+    }
+    return normalized;
+  }
+
+  extractHelloSportsHlsCandidates(html = '', contextUrl = HELLOSPORTS_4K_PAGE) {
+    const candidates = new Map();
+    const addDirect = (value = '', referrer = contextUrl) => {
+      const normalized = this.normalizeHelloSportsEmbedText(value).replace(/[),;]+$/u, '');
+      if (!isHttpUrl(normalized)) return;
+      try {
+        const parsed = new URL(normalized);
+        if (!/\.m3u8$/iu.test(parsed.pathname)) return;
+        if (!candidates.has(parsed.toString())) {
+          candidates.set(parsed.toString(), {
+            url: parsed.toString(),
+            contextUrl: referrer || contextUrl
+          });
+        }
+      } catch {
+        // Ignore malformed candidate.
+      }
+    };
+    const inspectUrl = (value = '', referrer = contextUrl) => {
+      const normalized = this.normalizeHelloSportsEmbedText(value).replace(/[),;]+$/u, '');
+      if (!isHttpUrl(normalized)) return;
+      try {
+        const parsed = new URL(normalized, contextUrl);
+        for (const key of ['x', 'url', 'file', 'src', 'hls', 'stream']) {
+          const nested = parsed.searchParams.get(key);
+          if (nested) addDirect(nested, parsed.toString());
+        }
+        addDirect(parsed.toString(), referrer);
+      } catch {
+        // Ignore malformed wrapper URL.
+      }
+    };
+    const normalizedHtml = this.normalizeHelloSportsEmbedText(html);
+    for (const match of normalizedHtml.matchAll(/https?:\/\/[^\s"'<>]+/giu)) {
+      inspectUrl(match[0], contextUrl);
+    }
+    return Array.from(candidates.values());
+  }
+
+  async resolveHelloSportsEmbedHls(embedUrl, signal = null) {
+    const response = await this.fetchImpl(embedUrl, {
+      signal,
+      redirect: 'follow',
+      headers: this.getHelloSportsHeaders({
+        referer: HELLOSPORTS_4K_PAGE
+      })
+    });
+    if (!response.ok) throw new Error(`HelloSports embed HTTP ${response.status}`);
+    const html = await response.text();
+    const contextUrl = response.url || embedUrl;
+    const candidates = this.extractHelloSportsHlsCandidates(html, contextUrl);
+    if (!candidates.length) throw new Error('HelloSports HLS not found');
+
+    let lastError = null;
+    for (const candidate of candidates.slice(0, 8)) {
+      const headers = this.getHelloSportsHlsHeaders(candidate.contextUrl || contextUrl);
+      try {
+        const playbackProfile = await this.validateDirectHlsUrl(candidate.url, signal, headers, {
+          probeSegments: false,
+          timeoutMs: 6_000
+        });
+        return {
+          url: candidate.url,
+          contextUrl: candidate.contextUrl || contextUrl,
+          headers,
+          playbackProfile,
+          resolveOnPlayback: this.requiresBrowserHlsContext(candidate.url)
+        };
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError || new Error('HelloSports HLS not playable');
+  }
+
+  scoreHelloSportsPostForMatch(post = {}, match = {}) {
+    const matchTeams = this.getHelloSportsMatchTeams(match);
+    const postTeams = Array.isArray(post.teams) && post.teams.length >= 2
+      ? post.teams.map(normalizeTeamName).filter(Boolean)
+      : extractFifaWorldCupTeamsFromText(post.title);
+    if (matchTeams.length >= 2 && postTeams.length >= 2) {
+      const matchedTeams = matchTeams.filter((team) => postTeams.includes(team)).length;
+      if (matchedTeams >= 2) return 100;
+      if (matchedTeams === 1) return 30;
+    }
+
+    const matchKey = getMatchEventKey(match);
+    const postKey = getMatchEventKey({ title: post.title, teams: postTeams });
+    if (matchKey && postKey && matchKey === postKey) return 90;
+
+    const matchWords = new Set(normalizeTitle(`${match.title || ''} ${match.category || ''}`).split(/\s+/u).filter((word) => word.length > 2));
+    const postWords = new Set(normalizeTitle(`${post.title || ''} ${post.normalizedTitle || ''}`).split(/\s+/u).filter((word) => word.length > 2));
+    const hits = [...matchWords].filter((word) => postWords.has(word)).length;
+    return hits >= 3 ? hits * 10 : 0;
+  }
+
+  async findHelloSportsPostForMatch(match = {}, signal = null) {
+    if (!SUPPLEMENTAL_SPORTS_SOURCES_ENABLED || !isFifaWorldCupMatch(match) || !match?.title) return null;
+    const posts = await this.fetchHelloSportsPosts(signal);
+    const candidates = posts
+      .map((post) => ({
+        post,
+        score: this.scoreHelloSportsPostForMatch(post, match)
+      }))
+      .filter((entry) => entry.score >= 90)
+      .sort((left, right) =>
+        right.score - left.score
+        || Date.parse(right.post.published || 0) - Date.parse(left.post.published || 0)
+      );
+    return candidates[0]?.post || null;
   }
 
   async fetchFlixDlstreamsJson(pathName, signal = null) {
@@ -1097,8 +1440,12 @@ export class StreamedSportsAdapter {
     const playerUrl = toString(entry.url || entry.playerUrl || entry.player_url);
     const channelId = toString(entry.channel_id || entry.channelId || entry.id)
       || normalizeIdPart(`${entry.name || entry.channel_name || entry.channelName || entry.title}-${entry.code || entry.channel_code || entry.channelCode || playerUrl}`);
-    const title = cleanDlhdChannelTitle(entry.channel_name || entry.channelName || entry.name || entry.title);
-    if (!channelId || !title) return null;
+    const rawTitle = cleanDlhdChannelTitle(entry.channel_name || entry.channelName || entry.name || entry.title);
+    if (!channelId || !rawTitle) return null;
+    const code = toString(entry.channel_code || entry.channelCode || entry.code).toUpperCase();
+    const title = code && !new RegExp(`\\(${code.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}\\)$`, 'u').test(rawTitle)
+      ? `${rawTitle} (${code})`
+      : rawTitle;
     const genres = inferLiveTvGenres(title);
     return {
       id: `streamed:${encodeURIComponent(`cdnlivetv-channel-${channelId}`)}`,
@@ -1114,7 +1461,7 @@ export class StreamedSportsAdapter {
         source: CDNLIVETV_SOURCE,
         id: this.encodeCdnLiveTvSourceId({
           id: channelId,
-          channel_name: title,
+          channel_name: rawTitle,
           channel_code: entry.channel_code || entry.channelCode || entry.code || '',
           url: playerUrl,
           image: entry.image || entry.logo_url || entry.logoUrl || '',
@@ -1133,6 +1480,7 @@ export class StreamedSportsAdapter {
       : (Array.isArray(payload?.channels) ? payload.channels : []);
     return entries
       .map((entry) => this.toDlhdChannelMatch(entry))
+      .map((channel) => channel ? withLiveTvChannelGenres(channel) : null)
       .filter(Boolean);
   }
 
@@ -1303,7 +1651,7 @@ export class StreamedSportsAdapter {
       normalizeIdPart(channel?.sourceId).startsWith('cdnlivetv-channel-')
         && (Array.isArray(channel?.sources) ? channel.sources : [])
           .some((source) => normalizeIdPart(source?.source) === CDNLIVETV_SOURCE)
-    );
+    ).map((channel) => withLiveTvChannelGenres(channel));
     if (cdnSharedChannels.length) {
       this.dlhdChannelsCache = {
         value: cdnSharedChannels,
@@ -1327,7 +1675,11 @@ export class StreamedSportsAdapter {
     const task = (async () => {
 	    const apiChannels = await this.loadDlhdApiChannels(signal);
 	    if (apiChannels.length) {
-	      const channels = apiChannels.sort((left, right) => left.title.localeCompare(right.title));
+	      const channels = apiChannels.sort((left, right) => {
+	        const rankDelta = getLiveTvChannelRank(left) - getLiveTvChannelRank(right);
+	        if (rankDelta !== 0) return rankDelta;
+	        return toString(left.title).localeCompare(toString(right.title));
+	      });
 	      this.dlhdChannelsCache = {
 	        value: channels,
 	        expiresAt: Date.now() + DLHD_CHANNEL_CACHE_MS
@@ -1758,7 +2110,7 @@ export class StreamedSportsAdapter {
 
 	    const shared = liveEndpoint ? null : await this.readSharedCache(`matches:${endpoint}`);
     if (Array.isArray(shared)) {
-      let matches = this.filterSupplementalMatches(this.mergeMatches(shared));
+      let matches = this.filterSupplementalMatches(this.mergeMatches(this.stripSupplementalSourcesFromMatches(shared)));
       if (this.shouldMergeSportsBiteIntoCatalog(catalog)) {
         const sportsBiteMatches = await this.loadSportsBiteMatches({
           id: SPORTSBITE_CATALOG_ID,
@@ -1798,9 +2150,13 @@ export class StreamedSportsAdapter {
 
     try {
 	      const payload = await this.fetchJson(endpoint, signal);
-	      let matches = (Array.isArray(payload) ? payload : [])
+	      const baseMatches = (Array.isArray(payload) ? payload : [])
 	        .map((entry) => this.toMatch(entry, { liveEndpoint }))
 	        .filter((match) => match.id && match.title);
+      if (!liveEndpoint) {
+        await this.writeSharedCache(`matches:${endpoint}`, baseMatches, CACHE_TTL_MS).catch(() => {});
+      }
+      let matches = baseMatches;
       matches = this.filterSupplementalMatches(matches);
       if (this.shouldMergeSportsBiteIntoCatalog(catalog)) {
         const sportsBiteMatches = await this.loadSportsBiteMatches({
@@ -1836,9 +2192,6 @@ export class StreamedSportsAdapter {
 	      });
 	      const filteredMatches = this.filterMatchesForCatalogSport(catalog, matches);
 	      this.indexMatches(catalog, filteredMatches);
-	      if (!liveEndpoint) {
-	        await this.writeSharedCache(`matches:${endpoint}`, matches, CACHE_TTL_MS).catch(() => {});
-	      }
       return filteredMatches;
     } catch (error) {
       this.logger.warn?.('streamed matches load failed', {
@@ -1969,6 +2322,22 @@ export class StreamedSportsAdapter {
         const sources = (Array.isArray(match?.sources) ? match.sources : [])
           .filter((source) => !isSupplementalSportsSource(source?.source));
         if (!sources.length) return null;
+        return {
+          ...match,
+          sources,
+          sportsBiteStreams: undefined
+        };
+      })
+      .filter(Boolean);
+  }
+
+  stripSupplementalSourcesFromMatches(matches = []) {
+    return (Array.isArray(matches) ? matches : [])
+      .map((match) => {
+        const originalSources = Array.isArray(match?.sources) ? match.sources : [];
+        const sources = originalSources
+          .filter((source) => !isSupplementalSportsSource(source?.source));
+        if (originalSources.length && !sources.length) return null;
         return {
           ...match,
           sources,
@@ -2109,6 +2478,8 @@ export class StreamedSportsAdapter {
         id: this.encodeCdnLiveTvSourceId(channel)
       }))
       .filter((source) => source.id);
+    const teams = [home, away].filter(Boolean);
+    const liveCandidate = { title, category, date, teams };
     return {
       id: `streamed:${encodeURIComponent(sourceId)}`,
       sourceId,
@@ -2119,9 +2490,9 @@ export class StreamedSportsAdapter {
 	      poster: null,
 	      posterShape: 'poster',
 	      popular: normalizeIdPart(entry?.status) === 'live' || Date.now() >= date,
-	      isLive: normalizeIdPart(entry?.status) === 'live' || isEventLiveByTime(date),
+	      isLive: isCurrentlyLiveMatch({ ...liveCandidate, isLive: normalizeIdPart(entry?.status) === 'live' }),
 	      sources,
-      teams: [home, away].filter(Boolean),
+      teams,
       normalizedTitle: normalizeTitle(`${title} ${category} ${home} ${away} ${tournament} ${country} cdnlivetv`)
     };
   }
@@ -2437,6 +2808,8 @@ export class StreamedSportsAdapter {
       .filter(Boolean);
 
     if (!title || !sportsBiteStreams.length) return null;
+    const teams = [home, away].filter(Boolean);
+    const explicitLive = Boolean(entry?.is_live || entry?.live || normalizeIdPart(entry?.status) === 'live');
     return {
       id: `streamed:${encodeURIComponent(sourceId)}`,
       sourceId,
@@ -2446,10 +2819,10 @@ export class StreamedSportsAdapter {
 	      date,
 	      poster: null,
 	      popular: Boolean(entry?.is_live || entry?.popular),
-	      isLive: Boolean(entry?.is_live || entry?.live || normalizeIdPart(entry?.status) === 'live' || isEventLiveByTime(date)),
+	      isLive: isCurrentlyLiveMatch({ title, category, date, teams, isLive: explicitLive }),
 	      sources: [{ source: SPORTSBITE_SOURCE, id: sourceId }],
       sportsBiteStreams,
-      teams: [home, away].filter(Boolean),
+      teams,
       normalizedTitle: normalizeTitle(`${title} ${category} ${home} ${away} ${toString(entry?.league)}`)
     };
   }
@@ -2499,7 +2872,7 @@ export class StreamedSportsAdapter {
 	      poster: null,
 	      posterShape: 'poster',
 	      popular: /sources=(?:[2-9]|\d{2,})/iu.test(toString(meta?.poster)) || /sources:\s*(?:[2-9]|\d{2,})/iu.test(description),
-	      isLive: isEventLiveByTime(date),
+	      isLive: isCurrentlyLiveMatch({ title, category, date, teams }),
 	      sources: [{ source: FLIX_DLSTREAMS_SOURCE, id: sourceId }],
       teams,
       normalizedTitle: normalizeTitle(`${title} ${category} ${description} nebulasp dlstreams`)
@@ -2528,18 +2901,21 @@ export class StreamedSportsAdapter {
     const poster = toAbsoluteStreamedUrl(entry?.poster);
     const home = entry?.teams?.home?.name ? toString(entry.teams.home.name) : '';
     const away = entry?.teams?.away?.name ? toString(entry.teams.away.name) : '';
+    const date = Number(entry?.date || 0);
+    const teams = [home, away].filter(Boolean);
+    const explicitLive = Boolean(liveEndpoint || entry?.is_live || entry?.live || normalizeIdPart(entry?.status) === 'live');
     return {
       id: `streamed:${encodeURIComponent(sourceId)}`,
       sourceId,
       type: STREMIO_SPORTS_TYPE,
       title,
       category,
-      date: Number(entry?.date || 0),
+      date,
       poster: isHttpUrl(poster) ? poster : null,
 	      popular: Boolean(entry?.popular),
-	      isLive: Boolean(liveEndpoint || entry?.is_live || entry?.live || normalizeIdPart(entry?.status) === 'live' || isEventLiveByTime(Number(entry?.date || 0))),
+	      isLive: isCurrentlyLiveMatch({ title, category, date, teams, isLive: explicitLive }),
 	      sources,
-      teams: [home, away].filter(Boolean),
+      teams,
       normalizedTitle: normalizeTitle(`${title} ${category} ${home} ${away}`)
     };
   }
@@ -2626,12 +3002,11 @@ export class StreamedSportsAdapter {
 	      : limit;
 	    return matches
 	      .filter((match) => !needle || match.normalizedTitle.includes(needle))
-	      .filter((match) => !isDlhdChannelCatalog || needle || isLikelySportsDlhdChannelTitle(match.title))
-	      .filter((match) => !liveCatalog || isCurrentlyLiveMatch(match))
+      .filter((match) => !liveCatalog || isCurrentlyLiveMatch(match))
 	      .sort((left, right) => {
         if (isDlhdChannelCatalog) {
-          const sportsScore = Number(isLikelySportsDlhdChannelTitle(right.title)) - Number(isLikelySportsDlhdChannelTitle(left.title));
-          if (sportsScore !== 0) return sportsScore;
+          const rankDelta = getLiveTvChannelRank(left) - getLiveTvChannelRank(right);
+          if (rankDelta !== 0) return rankDelta;
           return toString(left.title).localeCompare(toString(right.title));
         }
         const eventScore = Number(!isSourceOnlyMatch(right, STREAMFREE_SOURCE)) - Number(!isSourceOnlyMatch(left, STREAMFREE_SOURCE));
@@ -3109,6 +3484,55 @@ export class StreamedSportsAdapter {
     };
   }
 
+  async validateCdnLiveTvChannelFresh(sourceId, signal = null) {
+    return this.resolveCdnLiveTvChannel(sourceId, signal);
+  }
+
+  async isCdnLiveTvChannelHealthy(sourceId, signal = null) {
+    const globalCached = this.cdnLiveTvHealthCache.get('__global__');
+    if (globalCached && globalCached.expiresAt > Date.now() && globalCached.ok) return true;
+    const key = toString(sourceId);
+    if (!key) return false;
+    const cached = this.cdnLiveTvHealthCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) return Boolean(cached.ok);
+    if (cached) this.cdnLiveTvHealthCache.delete(key);
+    if (this.cdnLiveTvHealthInFlight.has(key)) return this.cdnLiveTvHealthInFlight.get(key);
+
+    const task = this.validateCdnLiveTvChannelFresh(key, signal)
+      .then((hls) => {
+        this.cdnLiveTvHealthCache.set(key, {
+          ok: true,
+          checkedAt: Date.now(),
+          expiresAt: Date.now() + CDNLIVETV_HEALTH_CACHE_MS
+        });
+        this.cdnLiveTvHealthCache.set('__global__', {
+          ok: true,
+          checkedAt: Date.now(),
+          expiresAt: Date.now() + CDNLIVETV_HEALTH_CACHE_MS
+        });
+        return Boolean(hls?.url);
+      })
+      .catch((error) => {
+        if (error?.name !== 'AbortError') {
+          this.cdnLiveTvHealthCache.set(key, {
+            ok: false,
+            error: error?.message || String(error),
+            checkedAt: Date.now(),
+            expiresAt: Date.now() + CDNLIVETV_DOWN_CACHE_MS
+          });
+          this.logger.warn?.('CDNLiveTV playback health check failed; hiding CDN cards briefly', {
+            error: error?.message || String(error)
+          });
+        }
+        return false;
+      })
+      .finally(() => {
+        this.cdnLiveTvHealthInFlight.delete(key);
+      });
+    this.cdnLiveTvHealthInFlight.set(key, task);
+    return task;
+  }
+
   getSourceStreamsBounded(source, signal = null) {
     const sourceSignal = signal && typeof AbortSignal.any === 'function'
       ? AbortSignal.any([signal, AbortSignal.timeout(STREAM_SOURCE_LOAD_TIMEOUT_MS)])
@@ -3242,7 +3666,7 @@ export class StreamedSportsAdapter {
   }
 
   async getPlayableHelloSports4kCards(match, { baseUrl = '', privateConfigId = '', signal = null } = {}) {
-    if (!baseUrl || !privateConfigId || !isFifaWorldCupMatch(match) || !isCurrentlyLiveMatch(match)) return [];
+    if (!baseUrl || !privateConfigId || !isFifaWorldCupMatch(match) || !shouldProbeHelloSportsForMatch(match)) return [];
     const streams = await this.getHelloSports4kStreamsForMatch(match, signal).catch((error) => {
       this.logger.debug?.('hellosports 4k stream load failed', {
         match: match.sourceId || match.id,
@@ -3258,7 +3682,7 @@ export class StreamedSportsAdapter {
           allowBrowserFallback: false
         });
         const hls = result?.hls;
-        if (!hls?.url || !this.isHelloSports4kPlaybackProfile(hls.playbackProfile || stream.playbackProfile)) continue;
+        if (!hls?.url || !this.isPlayableHelloSportsProfile(stream, hls.playbackProfile || stream.playbackProfile)) continue;
         const privateUrl = this.getPrivateStreamUrl(stream, { baseUrl, privateConfigId });
         if (!privateUrl) continue;
         const playbackUrl = hls.resolveOnPlayback
@@ -3268,7 +3692,7 @@ export class StreamedSportsAdapter {
             hls.contextUrl ? `ctx=${Buffer.from(hls.contextUrl).toString('base64url')}` : ''
           ].filter(Boolean).join('&');
         cards.push({
-          name: 'Nebula Sports 4K',
+          name: this.getHelloSportsCardName(stream, hls.playbackProfile),
           title: this.buildPlaybackCardTitle(stream, hls),
           url: playbackUrl,
           behaviorHints: {
@@ -3290,7 +3714,7 @@ export class StreamedSportsAdapter {
     if (!SUPPLEMENTAL_SPORTS_SOURCES_ENABLED || !isCurrentlyLiveMatch(match)) return [];
     const category = normalizeIdPart(match?.category);
     return KNOWN_SPORTS_CHANNELS.filter((channel) => {
-      if (channel.worldCup && isFifaWorldCupMatch(match)) return true;
+      if (channel.worldCup) return false;
       return channel.category && normalizeIdPart(channel.category) === category;
     });
   }
@@ -3790,6 +4214,316 @@ export class StreamedSportsAdapter {
     return cards;
   }
 
+  getRapidFootballApiKey() {
+    return toString(process.env.RAPID_FOOTBALL_API_KEY || process.env.RAPIDAPI_FOOTBALL_STREAMS_KEY).trim();
+  }
+
+  getRapidFootballHeaders() {
+    return {
+      accept: 'application/json,text/plain,*/*',
+      'content-type': 'application/json',
+      'x-rapidapi-host': RAPID_FOOTBALL_API_HOST,
+      'x-rapidapi-key': this.getRapidFootballApiKey(),
+      'user-agent': BROWSER_USER_AGENT
+    };
+  }
+
+  getRapidFootballUsageKey(date = new Date()) {
+    return `rapidfootball:usage:${date.toISOString().slice(0, 10)}`;
+  }
+
+  async canUseRapidFootballRequest() {
+    const usage = await this.readSharedCache(this.getRapidFootballUsageKey()).catch(() => null);
+    return Number(usage?.count || 0) < RAPID_FOOTBALL_DAILY_LIMIT;
+  }
+
+  async incrementRapidFootballUsage() {
+    const key = this.getRapidFootballUsageKey();
+    const usage = await this.readSharedCache(key).catch(() => null);
+    await this.writeSharedCache(key, {
+      count: Number(usage?.count || 0) + 1,
+      updatedAt: Date.now()
+    }, 48 * 60 * 60 * 1000).catch(() => {});
+  }
+
+  collectRapidFootballObjects(value, output = [], depth = 0) {
+    if (depth > 5 || output.length > 200) return output;
+    if (Array.isArray(value)) {
+      for (const item of value) this.collectRapidFootballObjects(item, output, depth + 1);
+      return output;
+    }
+    if (!value || typeof value !== 'object') return output;
+    const hasTitle = toString(value.title || value.name || value.match || value.event || value.fixture);
+    const hasTeams = toString(value.home_team_name || value.away_team_name || value.home || value.away || value.homeTeam || value.awayTeam || value.team1 || value.team2 || value.home_team || value.away_team);
+    const serialized = JSON.stringify(value);
+    const hasStream = /https?:\/\/[^"\s]+/iu.test(serialized) && /(?:m3u8|stream|embed|player|watch|live)/iu.test(serialized);
+    if ((hasTitle || hasTeams) && hasStream) output.push(value);
+    for (const key of ['data', 'matches', 'results', 'items', 'events', 'fixtures', 'list']) {
+      if (value[key]) this.collectRapidFootballObjects(value[key], output, depth + 1);
+    }
+    return output;
+  }
+
+  extractRapidFootballTeams(entry = {}) {
+    const pick = (...values) => values.map(toString).find(Boolean) || '';
+    const home = pick(
+      entry.home_team_name,
+      entry.home,
+      entry.homeTeam,
+      entry.home_team,
+      entry.team1,
+      entry?.teams?.home?.name,
+      entry?.teams?.home
+    );
+    const away = pick(
+      entry.away_team_name,
+      entry.away,
+      entry.awayTeam,
+      entry.away_team,
+      entry.team2,
+      entry?.teams?.away?.name,
+      entry?.teams?.away
+    );
+    return [home, away].filter(Boolean);
+  }
+
+  extractRapidFootballUrls(entry = {}) {
+    const urls = new Map();
+    if (Array.isArray(entry?.servers)) {
+      for (const [index, server] of entry.servers.entries()) {
+        const url = toString(server?.url);
+        if (!isHttpUrl(url)) continue;
+        urls.set(url, {
+          url,
+          label: toString(server?.name || `Server ${index + 1}`),
+          headers: server?.header && typeof server.header === 'object' ? server.header : null,
+          type: toString(server?.type)
+        });
+      }
+    }
+    const visit = (value, label = '', depth = 0) => {
+      if (depth > 6 || urls.size > 20) return;
+      if (typeof value === 'string') {
+        for (const match of value.matchAll(/https?:\/\/[^\s"'<>]+/giu)) {
+          const rawUrl = match[0].replace(/[),;]+$/u, '');
+          if (!isHttpUrl(rawUrl)) continue;
+          if (!/(?:m3u8|stream|embed|player|watch|live)/iu.test(rawUrl)) continue;
+          if (/\.(?:png|jpe?g|webp|svg|gif)(?:$|[?#])/iu.test(rawUrl)) continue;
+          if (!urls.has(rawUrl)) urls.set(rawUrl, { url: rawUrl, label });
+        }
+        return;
+      }
+      if (Array.isArray(value)) {
+        for (const item of value) visit(item, label, depth + 1);
+        return;
+      }
+      if (!value || typeof value !== 'object') return;
+      for (const [key, nested] of Object.entries(value)) {
+        visit(nested, key, depth + 1);
+      }
+    };
+    visit(entry);
+    return Array.from(urls.values());
+  }
+
+  flattenRapidFootballMatches(payload = {}) {
+    return this.collectRapidFootballObjects(payload)
+      .map((entry, index) => {
+        const teams = this.extractRapidFootballTeams(entry);
+        const title = toString(entry.title || entry.name || entry.match || entry.event || entry.fixture)
+          || (teams.length >= 2 ? `${teams[0]} vs ${teams[1]}` : '');
+        const streams = this.extractRapidFootballUrls(entry);
+        return {
+          id: toString(entry.id || entry.match_id || entry.fixture_id || normalizeIdPart(title) || `match-${index + 1}`),
+          title,
+          category: 'football',
+          teams,
+          league: toString(entry.league_name || entry.league || entry.competition || entry.tournament),
+          status: toString(entry.match_status || entry.status || entry.state),
+          timestamp: Number(entry.match_time || entry.timestamp || entry.time || entry.start_time || entry.date || 0),
+          streams
+        };
+      })
+      .filter((entry) => entry.title && entry.streams.length);
+  }
+
+  async fetchRapidFootballMatches(signal = null) {
+    const apiKey = this.getRapidFootballApiKey();
+    if (!apiKey) return [];
+    const now = Date.now();
+    if (this.rapidFootballMatchesCache?.expiresAt > now) return this.rapidFootballMatchesCache.value;
+    const shared = await this.readSharedCache(RAPID_FOOTBALL_CACHE_KEY).catch(() => null);
+    if (shared?.matches && now - Number(shared.fetchedAt || 0) < RAPID_FOOTBALL_MATCH_CACHE_MS) {
+      this.rapidFootballMatchesCache = {
+        value: shared.matches,
+        expiresAt: now + Math.min(RAPID_FOOTBALL_MATCH_CACHE_MS, 30 * 60 * 1000)
+      };
+      return shared.matches;
+    }
+    const canRequest = await this.canUseRapidFootballRequest();
+    if (!canRequest) {
+      return Array.isArray(shared?.matches) ? shared.matches : [];
+    }
+    const url = new URL(RAPID_FOOTBALL_MATCHES_URL);
+    url.searchParams.set('page', '1');
+    try {
+      const response = await this.fetchImpl(url, {
+        signal,
+        headers: this.getRapidFootballHeaders()
+      });
+      await this.incrementRapidFootballUsage();
+      if (!response.ok) throw new Error(`RapidFootball matches HTTP ${response.status}`);
+      const matches = this.flattenRapidFootballMatches(await response.json());
+      this.rapidFootballMatchesCache = {
+        value: matches,
+        expiresAt: now + RAPID_FOOTBALL_MATCH_CACHE_MS
+      };
+      await this.writeSharedCache(RAPID_FOOTBALL_CACHE_KEY, {
+        matches,
+        fetchedAt: now
+      }, RAPID_FOOTBALL_STALE_CACHE_MS).catch(() => {});
+      return matches;
+    } catch (error) {
+      this.logger.debug?.('rapid football matches load failed', {
+        error: error?.message || String(error)
+      });
+      return Array.isArray(shared?.matches) ? shared.matches : [];
+    }
+  }
+
+  findRapidFootballMatchScore(match = {}, candidate = {}) {
+    return this.getSportSrcMatchScore(match, candidate);
+  }
+
+  async findRapidFootballMatch(match = {}, signal = null) {
+    if (!this.getRapidFootballApiKey() || !isFifaWorldCupMatch(match)) return null;
+    const candidates = await this.fetchRapidFootballMatches(signal);
+    return candidates
+      .map((candidate) => ({
+        candidate,
+        score: this.findRapidFootballMatchScore(match, candidate)
+      }))
+      .filter((entry) => entry.score >= 60)
+      .sort((left, right) => right.score - left.score)[0]?.candidate || null;
+  }
+
+  async validateRapidFootballHlsUrl(url, signal = null, headers = null, timeoutMs = 2_500) {
+    const controller = new AbortController();
+    let parentAbortHandler = null;
+    let timeout = null;
+    const abort = (reason) => {
+      if (!controller.signal.aborted) controller.abort(reason);
+    };
+    if (signal) {
+      if (signal.aborted) throw signal.reason || new Error('Rapid football validation aborted');
+      parentAbortHandler = () => abort(signal.reason || new Error('Rapid football validation aborted'));
+      signal.addEventListener('abort', parentAbortHandler, { once: true });
+    }
+    const fetchTask = (async () => {
+      const response = await fetch(url, {
+        headers: {
+          accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,text/plain,*/*',
+          ...(headers || {})
+        },
+        redirect: 'follow',
+        signal: controller.signal
+      });
+      if (!response.ok) throw new Error(`Rapid football HLS HTTP ${response.status}`);
+      const text = await response.text();
+      if (!text.includes('#EXTM3U')) throw new Error('Rapid football HLS playlist is not playable');
+      return this.extractHlsPlaybackProfile(text) || { quality: 'HD', speedMbps: 8 };
+    })();
+    const timeoutTask = new Promise((_, reject) => {
+      timeout = setTimeout(() => {
+        const error = new Error('Rapid football HLS validation timeout');
+        abort(error);
+        reject(error);
+      }, Math.max(250, timeoutMs));
+    });
+    try {
+      return await Promise.race([fetchTask, timeoutTask]);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+      if (signal && parentAbortHandler) signal.removeEventListener('abort', parentAbortHandler);
+    }
+  }
+
+  async getPlayableRapidFootballCards(match, { baseUrl = '', privateConfigId = '', signal = null } = {}) {
+    if (!baseUrl || !privateConfigId || !isFifaWorldCupMatch(match) || !this.getRapidFootballApiKey()) return [];
+    const rapidMatch = await this.findRapidFootballMatch(match, signal);
+    if (!rapidMatch?.streams?.length) return [];
+    const candidates = rapidMatch.streams
+      .filter((stream) => extractDirectHlsUrl(stream.url))
+      .slice(0, RAPID_FOOTBALL_MAX_CANDIDATES);
+    const selected = [];
+    const deadlineAt = Date.now() + RAPID_FOOTBALL_VALIDATION_BUDGET_MS;
+    for (const [index, candidate] of candidates.entries()) {
+      if (selected.length >= RAPID_FOOTBALL_MAX_CARDS || signal?.aborted || Date.now() >= deadlineAt) break;
+      const hlsUrl = extractDirectHlsUrl(candidate.url);
+      if (!hlsUrl) continue;
+      const headers = candidate.headers || this.getPlaybackHeadersForSource(RAPID_FOOTBALL_SOURCE, candidate.url);
+      try {
+        const remainingMs = Math.max(500, deadlineAt - Date.now());
+        const timeoutMs = Math.min(2_500, remainingMs);
+        const playbackProfile = await this.validateRapidFootballHlsUrl(hlsUrl, signal, headers, timeoutMs);
+        selected.push({
+          stream: {
+            id: `${rapidMatch.id}:${index + 1}`,
+            source: RAPID_FOOTBALL_SOURCE,
+            streamNo: index + 1,
+            language: '',
+            hd: true,
+            embedUrl: candidate.url,
+            contextUrl: candidate.url,
+            viewers: 0
+          },
+          hls: {
+            url: hlsUrl,
+            contextUrl: candidate.url,
+            headers,
+            playbackProfile,
+            resolveOnPlayback: this.requiresBrowserHlsContext(hlsUrl)
+          }
+        });
+      } catch (error) {
+        this.logger.debug?.('rapid football playlist validation failed', {
+          match: rapidMatch.id,
+          stream: candidate.label,
+          error: error?.message || String(error)
+        });
+      }
+    }
+    const cards = [];
+    for (const { stream, hls } of selected) {
+      try {
+        const cacheKey = `${RAPID_FOOTBALL_SOURCE}:${stream.id}:${stream.streamNo}`;
+        this.setCachedHls(cacheKey, hls);
+        await this.setSharedHls(cacheKey, hls);
+        const privateUrl = this.getPrivateStreamUrl(stream, { baseUrl, privateConfigId });
+        if (!privateUrl) continue;
+        cards.push({
+          name: 'NebulaStreams Football API',
+          title: this.buildPlaybackCardTitle(stream, hls),
+          url: hls.resolveOnPlayback
+            ? privateUrl
+            : [
+              `${privateUrl}?url=${Buffer.from(hls.url).toString('base64url')}`,
+              hls.contextUrl ? `ctx=${Buffer.from(hls.contextUrl).toString('base64url')}` : ''
+            ].filter(Boolean).join('&'),
+          behaviorHints: {
+            bingeGroup: `streamed-${match.normalizedTitle}`
+          }
+        });
+      } catch (error) {
+        this.logger.debug?.('rapid football hls validation failed', {
+          match: rapidMatch.id,
+          error: error?.message || String(error)
+        });
+      }
+    }
+    return cards;
+  }
+
   getLicensedExternalEmbedSource(id) {
     return LICENSED_EXTERNAL_EMBED_STREAM_BY_ID.get(normalizeIdPart(id)) || null;
   }
@@ -3816,6 +4550,131 @@ export class StreamedSportsAdapter {
       quality: this.formatQualityLabel(best.height),
       speedMbps: this.estimateNetworkSpeedMbps(best.bandwidth, best.height)
     };
+  }
+
+  getHlsVariantPlaylists(text = '', playlistUrl = '') {
+    const lines = toString(text).split(/\r?\n/u);
+    const variants = [];
+    let pending = null;
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      if (trimmed.startsWith('#EXT-X-STREAM-INF:')) {
+        const bandwidthMatch = trimmed.match(/\bBANDWIDTH=(\d+)/iu);
+        const resolutionMatch = trimmed.match(/\bRESOLUTION=(\d+)x(\d+)/iu);
+        pending = {
+          bandwidth: bandwidthMatch ? Number.parseInt(bandwidthMatch[1], 10) : 0,
+          height: resolutionMatch ? Number.parseInt(resolutionMatch[2], 10) : 0
+        };
+        continue;
+      }
+      if (!pending || trimmed.startsWith('#')) continue;
+      try {
+        variants.push({
+          ...pending,
+          url: new URL(trimmed, playlistUrl).toString()
+        });
+      } catch {
+        // Ignore malformed variant URL.
+      }
+      pending = null;
+    }
+    return variants.sort((left, right) =>
+      Number(right.height || 0) - Number(left.height || 0)
+      || Number(right.bandwidth || 0) - Number(left.bandwidth || 0)
+    );
+  }
+
+  getHlsMediaSegmentUrls(text = '', playlistUrl = '', limit = 2) {
+    const urls = [];
+    let awaitingSegment = false;
+    for (const line of toString(text).split(/\r?\n/u)) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      if (trimmed.startsWith('#')) {
+        if (trimmed.toUpperCase().startsWith('#EXTINF')) awaitingSegment = true;
+        continue;
+      }
+      if (!awaitingSegment) continue;
+      awaitingSegment = false;
+      try {
+        urls.push(new URL(trimmed, playlistUrl).toString());
+      } catch {
+        // Ignore malformed segment URL.
+      }
+    }
+    return urls.slice(-Math.max(1, limit)).reverse();
+  }
+
+  async fetchHlsPlaylistText(url, signal = null, headers = null, timeoutMs = 4_000) {
+    const validationSignal = signal && typeof AbortSignal.any === 'function'
+      ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)])
+      : AbortSignal.timeout(timeoutMs);
+    const response = await fetch(url, {
+      headers: {
+        accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,text/plain,*/*',
+        ...(headers || {})
+      },
+      redirect: 'follow',
+      signal: validationSignal
+    });
+    if (!response.ok) throw new Error(`Direct HLS HTTP ${response.status}`);
+    const text = await response.text();
+    if (!text.includes('#EXTM3U')) throw new Error('Direct HLS playlist is not playable');
+    return {
+      status: response.status,
+      url: response.url || url,
+      headers: Object.fromEntries(response.headers.entries()),
+      text
+    };
+  }
+
+  async probeHlsMediaSegment(playlistUrl, playlistText, signal = null, headers = null) {
+    let mediaPlaylistUrl = playlistUrl;
+    let mediaPlaylistText = playlistText;
+    const variants = this.getHlsVariantPlaylists(playlistText, playlistUrl);
+    if (variants[0]?.url) {
+      const variant = variants[0];
+      const fetched = await this.fetchHlsPlaylistText(variant.url, signal, headers, HLS_SEGMENT_PROBE_TIMEOUT_MS);
+      mediaPlaylistUrl = fetched.url || variant.url;
+      mediaPlaylistText = fetched.text;
+    }
+
+    const segmentUrls = this.getHlsMediaSegmentUrls(mediaPlaylistText, mediaPlaylistUrl, 2);
+    if (!segmentUrls.length) throw new Error('Direct HLS playlist has no media segments');
+
+    let lastError = null;
+    for (const segmentUrl of segmentUrls) {
+      const startedAt = Date.now();
+      try {
+        const probeSignal = signal && typeof AbortSignal.any === 'function'
+          ? AbortSignal.any([signal, AbortSignal.timeout(HLS_SEGMENT_PROBE_TIMEOUT_MS)])
+          : AbortSignal.timeout(HLS_SEGMENT_PROBE_TIMEOUT_MS);
+        const response = await fetch(segmentUrl, {
+          headers: {
+            ...(headers || {}),
+            accept: 'video/mp2t,video/mp4,application/octet-stream,*/*',
+            range: `bytes=0-${HLS_SEGMENT_PROBE_MAX_BYTES - 1}`
+          },
+          redirect: 'follow',
+          signal: probeSignal
+        });
+        if (!response.ok && response.status !== 206) throw new Error(`Direct HLS segment HTTP ${response.status}`);
+        const body = Buffer.from(await response.arrayBuffer());
+        if (body.length < 1024) throw new Error('Direct HLS segment probe returned too few bytes');
+        const durationMs = Math.max(1, Date.now() - startedAt);
+        const measuredMbps = (body.length * 8) / (durationMs / 1000) / 1_000_000;
+        return {
+          url: segmentUrl,
+          bytes: body.length,
+          durationMs,
+          measuredMbps: Math.round(measuredMbps * 10) / 10
+        };
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError || new Error('Direct HLS segment probe failed');
   }
 
   formatQualityLabel(height = 0) {
@@ -3871,6 +4730,7 @@ export class StreamedSportsAdapter {
       [REXDEX_SOURCE, 'RexDex'],
       [WC_XTREAM_SOURCE, 'World Cup IPTV'],
       [SPORTSRC_SOURCE, 'SportSRC'],
+      [RAPID_FOOTBALL_SOURCE, 'Football API'],
       [REPLAYZONE_SOURCE, 'ReplayZone'],
       ['nebulasports', 'Nebula Sports'],
       [HELLOSPORTS_SOURCE, 'Hello Sports'],
@@ -3904,8 +4764,9 @@ export class StreamedSportsAdapter {
       CDNLIVETV_SOURCE,
       REXDEX_SOURCE,
       WC_XTREAM_SOURCE,
-      SPORTSRC_SOURCE,
-      REPLAYZONE_SOURCE,
+	      SPORTSRC_SOURCE,
+	      RAPID_FOOTBALL_SOURCE,
+	      REPLAYZONE_SOURCE,
       'nebulasports',
       HELLOSPORTS_SOURCE,
       KNOWN_SPORTS_SOURCE,
@@ -3923,7 +4784,9 @@ export class StreamedSportsAdapter {
     const channelName = [CDNLIVETV_SOURCE, HELLOSPORTS_SOURCE, KNOWN_SPORTS_SOURCE].includes(sourceKey)
       ? toString(stream?.channelName)
       : '';
-    const highlightLabel = toString(stream?.highlightLabel);
+    const highlightLabel = sourceKey === HELLOSPORTS_SOURCE && profile?.quality
+      ? `${profile.quality} Stream`
+      : toString(stream?.highlightLabel);
     return [
       highlightLabel,
       channelName ? `Channel: ${channelName}` : '',
@@ -4096,13 +4959,17 @@ export class StreamedSportsAdapter {
   }
 
   async getHelloSports4kStreamsForMatch(match = {}, signal = null) {
-    if (!SUPPLEMENTAL_SPORTS_SOURCES_ENABLED || !isFifaWorldCupMatch(match) || !isCurrentlyLiveMatch(match)) return [];
+    if (!SUPPLEMENTAL_SPORTS_SOURCES_ENABLED || !isFifaWorldCupMatch(match) || !shouldProbeHelloSportsForMatch(match)) return [];
+    const post = await this.findHelloSportsPostForMatch(match, signal);
+    if (!post?.url) return [];
     const entries = await this.fetchHelloSports4kEntries(signal);
     return entries.map((entry, index) => {
       const stream = {
         embedUrl: entry.embedUrl,
         channelName: entry.channelName
       };
+      const playbackProfile = entry.playbackProfile || this.inferHelloSportsPlaybackProfile(entry.label || entry.channelName);
+      const qualityLabel = normalizeTitle(playbackProfile.quality || '');
       return {
         id: this.encodeHelloSportsStreamId(stream),
         streamNo: index + 1,
@@ -4111,13 +4978,13 @@ export class StreamedSportsAdapter {
         hd: true,
         embedUrl: entry.embedUrl,
         contextUrl: HELLOSPORTS_4K_PAGE,
+        helloSportsPostUrl: post.url,
         source: HELLOSPORTS_SOURCE,
         viewers: 0,
-        highlightLabel: '4K Stream',
-        playbackProfile: {
-          quality: '4K',
-          speedMbps: 25
-        }
+        highlightLabel: qualityLabel.includes('4k') || qualityLabel.includes('uhd')
+          ? '4K Stream'
+          : (qualityLabel.includes('1080') || qualityLabel.includes('fhd') ? 'FHD Stream' : 'HD Stream'),
+        playbackProfile
       };
     });
   }
@@ -4127,6 +4994,20 @@ export class StreamedSportsAdapter {
     const heightMatch = quality.match(/\b(\d{3,4})p?\b/u);
     const height = heightMatch ? Number.parseInt(heightMatch[1], 10) : 0;
     return quality.includes('4k') || quality.includes('uhd') || height >= 1080;
+  }
+
+  isMalayalamHelloSportsStream(stream = {}) {
+    return /\bmalayal?am\b/iu.test(`${stream?.channelName || ''} ${stream?.language || ''} ${stream?.highlightLabel || ''}`);
+  }
+
+  isPlayableHelloSportsProfile(stream = {}, profile = null) {
+    return this.isMalayalamHelloSportsStream(stream) || this.isHelloSports4kPlaybackProfile(profile);
+  }
+
+  getHelloSportsCardName(stream = {}, profile = null) {
+    const quality = normalizeTitle(profile?.quality || stream?.playbackProfile?.quality || '');
+    if (quality.includes('4k') || quality.includes('uhd')) return 'Nebula Sports 4K';
+    return 'Nebula Sports FHD';
   }
 
   getStreamzy4kStreamsForMatch(match = {}) {
@@ -4347,8 +5228,8 @@ export class StreamedSportsAdapter {
       return [];
     });
     const eventSources = [...this.filterSupplementalSources(match.sources), ...dlhdSources];
-    const deferredCdnStreams = eventSources
-      .filter((source) => normalizeIdPart(source?.source) === CDNLIVETV_SOURCE)
+    const cdnSources = eventSources.filter((source) => normalizeIdPart(source?.source) === CDNLIVETV_SOURCE);
+    const deferredCdnStreams = cdnSources
       .map((source) => {
         const channel = this.decodeCdnLiveTvSourceId(source.id) || {};
         const channelName = toString(channel.name) || 'Live TV';
@@ -4403,12 +5284,18 @@ export class StreamedSportsAdapter {
         includeQuotaSources
           ? this.getPlayableSportSrcCards(match, { baseUrl, privateConfigId, signal })
           : Promise.resolve([]),
+        includeQuotaSources
+          ? this.getPlayableRapidFootballCards(match, { baseUrl, privateConfigId, signal })
+          : Promise.resolve([]),
       ]).then((groups) => groups.flat())
       : Promise.resolve([]);
     if (baseUrl && privateConfigId) {
       const playableKeys = new Set();
-      const playbackOnlyResults = this.getPlaybackOnlyHlsResults(rankedStreams, playableKeys);
-      const directHlsResults = this.getTrustedDirectHlsResults(rankedStreams, playableKeys);
+      const playbackOnlyResults = await this.getPlaybackOnlyHlsResults(rankedStreams, playableKeys, signal);
+      const directHlsCandidates = this.getTrustedDirectHlsResults(rankedStreams, playableKeys);
+      const directHlsResults = await this.validateTrustedDirectHlsResults(directHlsCandidates, signal, {
+        totalBudgetMs: STREAM_DIRECT_HLS_FAST_VALIDATION_MS
+      });
       const validationStreams = (this.hlsProbeEnabled || this.hlsBrowserFallbackEnabled)
         ? this.getStreamValidationCandidates(rankedStreams.filter((stream) => {
           const sourceKey = normalizeIdPart(stream?.source);
@@ -4429,52 +5316,93 @@ export class StreamedSportsAdapter {
         .filter((result) => result?.hls?.url);
       for (const result of playableResults) {
         const streamNo = result.stream?.streamNo || 1;
-        playableKeys.add(`${normalizeIdPart(result.stream?.source)}:${toString(result.stream?.id)}:${toString(streamNo)}`);
+          playableKeys.add(`${normalizeIdPart(result.stream?.source)}:${toString(result.stream?.id)}:${toString(streamNo)}`);
       }
       displayStreams = [...playbackOnlyResults, ...directHlsResults, ...playableResults]
+        .sort((left, right) => this.comparePlayableHlsResults(left, right))
         .map((result) => {
           const { stream, hls } = result;
           playableHlsByKey.set(`${stream.source}:${stream.id}:${stream.streamNo || 1}`, hls);
           return stream;
         })
-        .sort(compareStreamsBySourceRank)
         .slice(0, 12);
     }
+    const temporaryUnavailableCard = cdnSources.length
+      && baseUrl
+      && !displayStreams.some((stream) => normalizeIdPart(stream?.source) === CDNLIVETV_SOURCE)
+      ? {
+        source: CDNLIVETV_SOURCE,
+        name: 'Nebula Sports',
+        title: [
+          'More streams will be available soon',
+          'Some live streams are temporarily unavailable',
+          'Check again shortly'
+        ].join('\n'),
+        externalUrl: `${String(baseUrl).replace(/\/+$/u, '')}/sports`,
+        behaviorHints: {
+          notWebReady: true,
+          bingeGroup: `streamed-temporary-${match.normalizedTitle}`
+        }
+      }
+      : null;
     const cards = displayStreams.map((stream) => {
         const hls = playableHlsByKey.get(`${stream.source}:${stream.id}:${stream.streamNo || 1}`);
         const privateUrl = this.getPrivateStreamUrl(stream, { baseUrl, privateConfigId });
-        const playbackUrl = privateUrl && hls?.url
+        const directPlaybackUrl = '';
+        const playbackUrl = directPlaybackUrl || (privateUrl && hls?.url
           ? (hls.resolveOnPlayback
             ? privateUrl
             : [
             `${privateUrl}?url=${Buffer.from(hls.url).toString('base64url')}`,
             hls.contextUrl ? `ctx=${Buffer.from(hls.contextUrl).toString('base64url')}` : ''
           ].filter(Boolean).join('&'))
-          : null;
+          : null);
         if (!playbackUrl) return null;
         const sourceLabel = this.formatStreamSourceLabel(stream?.source);
         return {
           name: sourceLabel ? `NebulaStreams ${sourceLabel}` : 'NebulaStreams Streamed',
           title: this.buildPlaybackCardTitle(stream, hls),
           url: playbackUrl,
-          behaviorHints: {
-            bingeGroup: `streamed-${match.normalizedTitle}`
-          }
-        };
-      }).filter(Boolean);
+	          behaviorHints: {
+	            bingeGroup: `streamed-${match.normalizedTitle}`,
+	            ...(directPlaybackUrl
+	              ? {
+	                notWebReady: false,
+	                proxyHeaders: {
+	                  request: {
+	                    Accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,text/plain,*/*',
+	                    Origin: CDNLIVETV_ORIGIN,
+	                    Referer: hls.contextUrl || stream.contextUrl || stream.embedUrl || `${CDNLIVETV_ORIGIN}/`,
+	                    'User-Agent': BROWSER_USER_AGENT
+	                  }
+	                }
+	              }
+	              : {})
+	          }
+	        };
+	      }).filter(Boolean);
     const externalCards = await externalCardsPromise;
-    const helloSports4kCards = externalCards.filter((card) => card?.name === 'Nebula Sports 4K');
+    const helloSportsCards = externalCards.filter((card) =>
+      card?.name === 'Nebula Sports 4K' || card?.name === 'Nebula Sports FHD' || card?.name === 'Nebula Sports Malayalam'
+    );
     const knownSportsCards = externalCards.filter((card) => card?.name === 'Nebula Sports Fast');
+    const rapidFootballCards = externalCards.filter((card) => card?.name === 'NebulaStreams Football API');
     const otherExternalCards = externalCards.filter((card) =>
-      card?.name !== 'Nebula Sports 4K' && card?.name !== 'Nebula Sports Fast'
+      card?.name !== 'Nebula Sports 4K'
+        && card?.name !== 'Nebula Sports FHD'
+        && card?.name !== 'Nebula Sports Malayalam'
+        && card?.name !== 'Nebula Sports Fast'
+        && card?.name !== 'NebulaStreams Football API'
     );
     if (prewarm && baseUrl && privateConfigId && this.hlsCacheMs > 0) {
       this.prewarmStreams(this.getStreamValidationCandidates(rankedStreams).slice(0, 2));
     }
     return [
-      ...helloSports4kCards,
+      ...rapidFootballCards,
+      ...helloSportsCards,
       ...knownSportsCards,
       ...cards.slice(0, 2),
+      ...(temporaryUnavailableCard ? [temporaryUnavailableCard] : []),
       ...otherExternalCards,
       ...cards.slice(2)
     ];
@@ -4565,7 +5493,7 @@ export class StreamedSportsAdapter {
     return results;
   }
 
-  getPlaybackOnlyHlsResults(streams = [], existingKeys = new Set()) {
+  async getPlaybackOnlyHlsResults(streams = [], existingKeys = new Set(), signal = null) {
     const results = [];
     for (const stream of streams) {
       const sourceKey = normalizeIdPart(stream?.source);
@@ -4574,21 +5502,112 @@ export class StreamedSportsAdapter {
       const cacheKey = `${sourceKey}:${toString(stream.id)}:${toString(streamNo)}`;
       if (existingKeys.has(cacheKey)) continue;
       existingKeys.add(cacheKey);
-      results.push({
-        stream,
-        hls: {
-          url: 'resolve-on-playback',
-          contextUrl: stream.contextUrl || stream.embedUrl || '',
-          headers: this.getCdnLiveTvHeaders({
-            accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,text/plain,*/*',
-            referer: stream.contextUrl || stream.embedUrl || `${CDNLIVETV_ORIGIN}/`
-          }),
-          resolveOnPlayback: true,
-          playbackProfile: stream.playbackProfile || this.inferStreamPlaybackProfile(stream)
-        }
-      });
+      try {
+        const hls = await this.resolveCdnLiveTvChannel(stream.id, signal);
+        if (!hls?.url) continue;
+        results.push({
+          stream,
+          hls: {
+            ...hls,
+            directPlayback: false,
+            resolveOnPlayback: true,
+            playbackProfile: hls.playbackProfile || stream.playbackProfile || this.inferStreamPlaybackProfile(stream)
+          }
+        });
+      } catch (error) {
+        this.logger.debug?.('CDNLiveTV direct stream card resolve failed', {
+          error: error?.message || String(error)
+        });
+      }
     }
     return results;
+  }
+
+  getPlayableResultMeasuredMbps(result = {}) {
+    return Number(
+      result?.hls?.playbackProfile?.measuredMbps
+      || result?.hls?.segmentProbe?.measuredMbps
+      || 0
+    ) || 0;
+  }
+
+  comparePlayableHlsResults(left = {}, right = {}) {
+    return compareStreamsBySourceRank(left.stream || {}, right.stream || {})
+      || this.getPlayableResultMeasuredMbps(right) - this.getPlayableResultMeasuredMbps(left)
+      || Number(right?.stream?.hd) - Number(left?.stream?.hd)
+      || Number(right?.stream?.viewers || 0) - Number(left?.stream?.viewers || 0);
+  }
+
+  async validateTrustedDirectHlsResults(results = [], signal = null, { totalBudgetMs = STREAM_DIRECT_HLS_FAST_VALIDATION_MS } = {}) {
+    const candidates = Array.isArray(results)
+      ? results.filter((result) => result?.hls?.url && result.hls.url !== 'resolve-on-playback')
+      : [];
+    const passthrough = Array.isArray(results)
+      ? results.filter((result) => result?.hls?.url === 'resolve-on-playback')
+      : [];
+    if (!candidates.length) return passthrough;
+
+    const controller = new AbortController();
+    const combinedSignal = signal && typeof AbortSignal.any === 'function'
+      ? AbortSignal.any([signal, controller.signal])
+      : controller.signal;
+    const budgetMs = Math.max(750, Number(totalBudgetMs) || STREAM_DIRECT_HLS_FAST_VALIDATION_MS);
+    const deadlineAt = Date.now() + budgetMs;
+    const timeout = setTimeout(() => controller.abort(new Error('Direct HLS segment validation budget expired')), budgetMs);
+    timeout.unref?.();
+
+    const playable = [...passthrough];
+    const pending = new Set();
+    for (const result of candidates) {
+      let wrapped;
+      wrapped = this.validateDirectHlsUrl(result.hls.url, combinedSignal, result.hls.headers, {
+        timeoutMs: Math.min(4_000, Math.max(1_000, budgetMs)),
+        probeSegments: true
+      })
+        .then((playbackProfile) => ({
+          ok: true,
+          value: {
+            ...result,
+            hls: {
+              ...result.hls,
+              playbackProfile: playbackProfile || result.hls.playbackProfile || result.stream?.playbackProfile
+            }
+          },
+          task: wrapped
+        }))
+        .catch((error) => ({ ok: false, error, result, task: wrapped }));
+      pending.add(wrapped);
+    }
+
+    try {
+      while (pending.size > 0 && !combinedSignal.aborted) {
+        const remainingMs = Math.max(0, deadlineAt - Date.now());
+        if (remainingMs <= 0) break;
+        const raced = await Promise.race([
+          ...pending,
+          new Promise((resolve) => {
+            const timer = setTimeout(() => resolve(null), Math.max(1, remainingMs));
+            timer.unref?.();
+          })
+        ]);
+        if (!raced) break;
+        pending.delete(raced.task);
+        if (raced.ok && raced.value?.hls?.url) {
+          playable.push(raced.value);
+        } else {
+          this.logger.debug?.('trusted direct hls segment probe failed', {
+            source: raced?.result?.stream?.source,
+            streamNo: raced?.result?.stream?.streamNo,
+            error: raced?.error?.message || String(raced?.error || '')
+          });
+        }
+      }
+    } finally {
+      clearTimeout(timeout);
+      controller.abort(new Error('Direct HLS segment validation complete'));
+    }
+
+    return playable;
   }
 
   shouldResolveDirectHlsOnPlayback(source = '') {
@@ -4716,6 +5735,9 @@ export class StreamedSportsAdapter {
           resolveOnPlayback: this.shouldResolveDirectHlsOnPlayback(stream.source)
         };
       }
+      if (!hls && sourceKey === HELLOSPORTS_SOURCE) {
+        hls = await this.resolveHelloSportsEmbedHls(embedUrl, validationSignal);
+      }
       if (!hls) {
         const probed = await this.resolvePlayableHlsWithProbe(embedUrl, validationSignal);
         if (probed?.url) {
@@ -4831,6 +5853,10 @@ export class StreamedSportsAdapter {
   getCachedHls(cacheKey) {
     const cached = this.hlsCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) {
+      if (!this.shouldCacheHlsValue(cacheKey, cached.value)) {
+        this.hlsCache.delete(cacheKey);
+        return null;
+      }
       if (this.requiresBrowserHlsContext(cached.value?.url) && !cached.value?.resolveOnPlayback && !this.getCachedPlaylist(cached.value.url)) {
         this.hlsCache.delete(cacheKey);
         return null;
@@ -4843,6 +5869,7 @@ export class StreamedSportsAdapter {
 
   setCachedHls(cacheKey, value) {
     if (!this.hlsCacheMs || !value) return;
+    if (!this.shouldCacheHlsValue(cacheKey, value)) return;
     this.hlsCache.set(cacheKey, {
       value,
       expiresAt: Date.now() + this.hlsCacheMs
@@ -4861,7 +5888,45 @@ export class StreamedSportsAdapter {
 
   async setSharedHls(cacheKey, value) {
     if (!this.hlsCacheMs || !value?.url) return;
+    if (!this.shouldCacheHlsValue(cacheKey, value)) return;
     await this.writeSharedCache(`hls:${cacheKey}`, value, this.hlsCacheMs).catch(() => {});
+  }
+
+  shouldCacheHlsValue(cacheKey = '', value = {}) {
+    const sourceKey = normalizeIdPart(toString(cacheKey).split(':')[0]);
+    if (sourceKey === CDNLIVETV_SOURCE) return false;
+    if (!value?.url) return false;
+    return !this.isLikelySignedHlsUrl(value.url);
+  }
+
+  isLikelySignedHlsUrl(url = '') {
+    try {
+      const parsed = new URL(toString(url));
+      const signedKeys = new Set([
+        'token',
+        'expires',
+        'expire',
+        'expiry',
+        'exp',
+        'sig',
+        'signature',
+        'auth',
+        'hmac',
+        'md5',
+        'hdntl',
+        'hdnts',
+        'policy',
+        'key',
+        'st',
+        'e'
+      ]);
+      for (const key of parsed.searchParams.keys()) {
+        if (signedKeys.has(key.toLowerCase())) return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
   }
 
   getCachedPlaylist(url) {
@@ -4931,34 +5996,24 @@ export class StreamedSportsAdapter {
     }, DEFAULT_PLAYLIST_CACHE_MS).catch(() => {});
   }
 
-  async validateDirectHlsUrl(url, signal = null, headers = null) {
-    const validationSignal = signal && typeof AbortSignal.any === 'function'
-      ? AbortSignal.any([signal, AbortSignal.timeout(4_000)])
-      : AbortSignal.timeout(4_000);
-    const response = await fetch(url, {
-      headers: {
-        accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,text/plain,*/*',
-        ...(headers || {})
-      },
-      redirect: 'follow',
-      signal: validationSignal
-    });
-    if (!response.ok) {
-      throw new Error(`Direct HLS HTTP ${response.status}`);
-    }
-    const text = await response.text();
-    if (!text.includes('#EXTM3U')) {
-      throw new Error('Direct HLS playlist is not playable');
-    }
+  async validateDirectHlsUrl(url, signal = null, headers = null, { probeSegments = true, timeoutMs = 4_000 } = {}) {
+    const fetchedPlaylist = await this.fetchHlsPlaylistText(url, signal, headers, timeoutMs);
+    const text = fetchedPlaylist.text;
     const fetched = {
-      status: response.status,
-      url: response.url || url,
-      headers: Object.fromEntries(response.headers.entries()),
+      status: fetchedPlaylist.status,
+      url: fetchedPlaylist.url || url,
+      headers: fetchedPlaylist.headers,
       body: Buffer.from(text)
     };
     this.setCachedPlaylist(url, fetched);
     await this.setSharedPlaylist(url, fetched);
-    return this.extractHlsPlaybackProfile(text);
+    const playbackProfile = this.extractHlsPlaybackProfile(text) || {};
+    if (probeSegments) {
+      const segmentProbe = await this.probeHlsMediaSegment(fetched.url || url, text, signal, headers);
+      playbackProfile.measuredMbps = segmentProbe.measuredMbps;
+      playbackProfile.segmentProbeMs = segmentProbe.durationMs;
+    }
+    return Object.keys(playbackProfile).length ? playbackProfile : null;
   }
 
   async validateBrowserContextHlsUrl(url, { signal = null, contextUrl = '' } = {}) {
@@ -4988,6 +6043,8 @@ export class StreamedSportsAdapter {
     this.browserFetchInFlight.clear();
     this.hlsResolveInFlight.clear();
     this.playlistPrewarmInFlight.clear();
+    this.cdnLiveTvHealthCache.clear();
+    this.cdnLiveTvHealthInFlight.clear();
     this.liveStreamPrewarmInFlight = null;
     if (!critical) {
       await Promise.allSettled([
@@ -5375,6 +6432,12 @@ export class StreamedSportsAdapter {
   }
 
   async resolvePlayableHlsFresh({ cacheKey, embedUrl, normalizedSource, normalizedStreamNo, signal = null }) {
+    if (normalizedSource === HELLOSPORTS_SOURCE) {
+      const value = await this.resolveHelloSportsEmbedHls(embedUrl, signal);
+      this.setCachedHls(cacheKey, value);
+      await this.setSharedHls(cacheKey, value);
+      return value;
+    }
     const probed = await this.resolvePlayableHlsWithProbe(embedUrl, signal);
     if (probed?.url) {
       const probedHlsUrl = extractDirectHlsUrl(probed.url) || probed.url;
@@ -5630,6 +6693,20 @@ export class StreamedSportsAdapter {
         origin = new URL(contextUrl).origin;
       } catch {
         origin = SPORTSRC_API_BASE;
+      }
+      return {
+        ...this.getBrowserFetchHeaders(),
+        accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,video/mp2t,*/*',
+        origin,
+        referer: contextUrl
+      };
+    }
+    if (normalizeIdPart(source) === RAPID_FOOTBALL_SOURCE && contextUrl) {
+      let origin = RAPID_FOOTBALL_MATCHES_URL;
+      try {
+        origin = new URL(contextUrl).origin;
+      } catch {
+        origin = RAPID_FOOTBALL_MATCHES_URL;
       }
       return {
         ...this.getBrowserFetchHeaders(),

@@ -35,6 +35,7 @@
     "nuvio-providers-latino": "github:KennethJYS/Nuvio-Providers-Latino#874690c9653e5edc759538384fb36c04cd84f028",
     "puppeteer-core": "^24.40.0",
     "redis": "^5.11.0",
+    "sharp": "^0.35.2",
     "torrent-stream": "^1.2.1",
     "unpacker": "^1.0.1",
     "ws": "^8.18.3"
