@@ -142,8 +142,8 @@ const DLHD_SCHEDULE_STALE_MS = 6 * 60 * 60 * 1000;
 const DLHD_CHANNEL_CATALOG_ID = 'streamed-events-dlhd-channels';
 const DLHD_CHANNEL_CACHE_KEY = 'cdnlivetv-channels';
 const DLHD_CHANNEL_CATALOG_LIMIT = 1200;
-const DLHD_CHANNEL_CACHE_MS = 6 * 60 * 60 * 1000;
-const DLHD_CHANNEL_STALE_MS = 7 * 24 * 60 * 60 * 1000;
+const DLHD_CHANNEL_CACHE_MS = 10 * 60 * 1000;
+const DLHD_CHANNEL_STALE_MS = 30 * 60 * 1000;
 const DLHD_HLS_MAX_CACHE_MS = 10 * 60 * 1000;
 const DLHD_HLS_EXPIRY_MARGIN_MS = 45_000;
 const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -4791,6 +4791,7 @@ export class StreamedSportsAdapter {
       highlightLabel,
       channelName ? `Channel: ${channelName}` : '',
       `Recommended speed: ${profile.speedMbps || 5} Mbps+`,
+      'Use MPV or external player for smoother playback',
       languageLabel ? `Language: ${languageLabel}` : ''
     ].filter(Boolean).join('\n');
   }

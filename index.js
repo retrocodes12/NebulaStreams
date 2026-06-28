@@ -60,7 +60,7 @@ const clampPosterText = (value, max = 72) => {
   return text.length > max ? `${text.slice(0, max - 1).trim()}…` : text;
 };
 
-const SPORTS_ADDON_VERSION = '1.0.9';
+const SPORTS_ADDON_VERSION = '1.0.10';
 const SPORTS_POSTER_VERSION = 'v8';
 const posterImageCache = new Map();
 const POSTER_IMAGE_CACHE_MAX = 320;
@@ -708,6 +708,141 @@ const getSportsKofiTier = (amount, now = Date.now()) => {
   }
   return paidAmount >= 7 ? 'lifetime' : 'monthly';
 };
+
+const normalizeLemonId = (value) => String(value || '').trim().toLowerCase();
+
+const verifyLemonSqueezySignature = (rawBody, signature, secret) => {
+  const body = Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(String(rawBody || ''), 'utf8');
+  const received = String(signature || '').trim();
+  const expected = crypto.createHmac('sha256', String(secret || '')).update(body).digest('hex');
+  if (!received || received.length !== expected.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(received), Buffer.from(expected));
+};
+
+const getLemonSqueezyPayloadData = (payload = {}) =>
+  payload?.data && typeof payload.data === 'object' ? payload.data : {};
+
+const getLemonSqueezyAttributes = (payload = {}) => {
+  const data = getLemonSqueezyPayloadData(payload);
+  return data?.attributes && typeof data.attributes === 'object' ? data.attributes : {};
+};
+
+const getLemonSqueezyEventName = (payload = {}, req = null) =>
+  String(payload?.meta?.event_name || req?.get?.('x-event-name') || '').trim().toLowerCase();
+
+const getLemonSqueezyFirstOrderItem = (attributes = {}) => {
+  const item = Array.isArray(attributes.first_order_item) ? attributes.first_order_item[0] : attributes.first_order_item;
+  return item && typeof item === 'object' ? item : {};
+};
+
+const getLemonSqueezyVariantId = (payload = {}) => {
+  const data = getLemonSqueezyPayloadData(payload);
+  const attributes = getLemonSqueezyAttributes(payload);
+  const firstItem = getLemonSqueezyFirstOrderItem(attributes);
+  return normalizeLemonId(
+    firstItem.variant_id
+    || firstItem.variantId
+    || attributes.variant_id
+    || attributes.variantId
+    || data?.relationships?.variant?.data?.id
+    || ''
+  );
+};
+
+const getLemonSqueezyText = (payload = {}) => {
+  const attributes = getLemonSqueezyAttributes(payload);
+  const firstItem = getLemonSqueezyFirstOrderItem(attributes);
+  return [
+    attributes.product_name,
+    attributes.variant_name,
+    attributes.productName,
+    attributes.variantName,
+    firstItem.product_name,
+    firstItem.variant_name,
+    firstItem.productName,
+    firstItem.variantName,
+    attributes.custom_data,
+    payload?.meta?.custom_data
+  ].map((value) => {
+    if (Array.isArray(value)) return value.map((entry) => String(entry || '')).join(' ');
+    if (value && typeof value === 'object') return Object.values(value).join(' ');
+    return String(value || '');
+  }).join(' ').toLowerCase();
+};
+
+const getLemonSqueezySportsTier = (payload = {}) => {
+  const variantId = getLemonSqueezyVariantId(payload);
+  if (variantId && config.LEMON_SQUEEZY_PREMIUM_VARIANT_IDS.includes(variantId)) return 'premium-future';
+  if (variantId && config.LEMON_SQUEEZY_LIFETIME_VARIANT_IDS.includes(variantId)) return 'lifetime';
+  if (variantId && config.LEMON_SQUEEZY_MONTHLY_VARIANT_IDS.includes(variantId)) return 'monthly';
+
+  const text = getLemonSqueezyText(payload);
+  if (/\bpremium\b|\bfuture\b/u.test(text)) return 'premium-future';
+  if (/\blifetime\b|\bone[-\s]?time\b/u.test(text)) return 'lifetime';
+  return 'monthly';
+};
+
+const getLemonSqueezyTransactionId = (payload = {}) => {
+  const data = getLemonSqueezyPayloadData(payload);
+  const attributes = getLemonSqueezyAttributes(payload);
+  return String(
+    attributes.identifier
+    || attributes.order_number
+    || attributes.orderNumber
+    || attributes.invoice_id
+    || attributes.invoiceId
+    || attributes.subscription_id
+    || attributes.subscriptionId
+    || data.id
+    || ''
+  ).trim();
+};
+
+const getLemonSqueezyEmail = (payload = {}) => {
+  const attributes = getLemonSqueezyAttributes(payload);
+  const user = attributes.user && typeof attributes.user === 'object' ? attributes.user : {};
+  const customer = attributes.customer && typeof attributes.customer === 'object' ? attributes.customer : {};
+  const billing = attributes.billing_address && typeof attributes.billing_address === 'object' ? attributes.billing_address : {};
+  return String(
+    attributes.user_email
+    || attributes.customer_email
+    || attributes.email
+    || user.email
+    || customer.email
+    || billing.email
+    || ''
+  ).trim();
+};
+
+const getLemonSqueezyName = (payload = {}) => {
+  const attributes = getLemonSqueezyAttributes(payload);
+  const user = attributes.user && typeof attributes.user === 'object' ? attributes.user : {};
+  const customer = attributes.customer && typeof attributes.customer === 'object' ? attributes.customer : {};
+  return String(
+    attributes.user_name
+    || attributes.customer_name
+    || attributes.name
+    || user.name
+    || customer.name
+    || ''
+  ).trim();
+};
+
+const getLemonSqueezyAmount = (payload = {}) => {
+  const attributes = getLemonSqueezyAttributes(payload);
+  const raw = attributes.total_usd ?? attributes.total ?? attributes.subtotal_usd ?? attributes.subtotal ?? attributes.price ?? 0;
+  const amount = Number.parseFloat(String(raw || '0'));
+  if (!Number.isFinite(amount)) return 0;
+  return amount > 100 ? amount / 100 : amount;
+};
+
+const getLemonSqueezyCurrency = (payload = {}) => {
+  const attributes = getLemonSqueezyAttributes(payload);
+  return String(attributes.currency || attributes.currency_code || 'USD').trim().toUpperCase();
+};
+
+const shouldFulfillLemonSqueezyEvent = (eventName = '') =>
+  ['order_created', 'subscription_payment_success'].includes(String(eventName || '').trim().toLowerCase());
 
 const createUptimeKumaProxy = ({ targetBaseUrl, mountPath = '/status' }) => {
   const target = new URL(targetBaseUrl);
@@ -2461,7 +2596,7 @@ const renderSportsPage = ({ baseUrl, account = null, errorMessage = '', successM
     errorMessage ? '<div class="wrap" style="padding-top:18px"><div class="card" style="border-color:rgba(251,113,133,.4);color:#fecdd3">' + escapeHtml(errorMessage) + '</div></div>' : '',
     successMessage ? '<div class="wrap" style="padding-top:18px"><div class="card" style="border-color:rgba(31,170,110,.42);color:#bbf7d0">' + escapeHtml(successMessage) + '</div></div>' : ''
   ].join('');
-  let html = "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"UTF-8\" />\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n<title>Nebula Sports — Live sports for Stremio</title>\n<style>\n  :root {\n    --ink: #e7ebf0;\n    --ink-soft: #aeb7c2;\n    --muted: #7c8794;\n    --line: #232a33;\n    --line-strong: #333c47;\n    --surface: #0e1116;\n    --surface-2: #161b22;\n    --surface-3: #1d232c;\n    --accent: #1faa6e;\n    --accent-hover: #28b878;\n    --accent-soft: rgba(31,170,110,.15);\n    --radius: 12px;\n    --radius-sm: 9px;\n    --shadow: 0 1px 2px rgba(15,20,25,.04), 0 8px 24px rgba(15,20,25,.05);\n    --font: \"Inter\", -apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, Helvetica, Arial, sans-serif;\n    --mono: ui-monospace, SFMono-Regular, \"SF Mono\", Menlo, Consolas, monospace;\n  }\n\n  * { box-sizing: border-box; }\n  html { scroll-behavior: smooth; }\n  body {\n    margin: 0;\n    font-family: var(--font);\n    color: var(--ink);\n    background: var(--surface);\n    line-height: 1.55;\n    -webkit-font-smoothing: antialiased;\n    text-rendering: optimizeLegibility;\n  }\n  h1, h2, h3 { letter-spacing: -0.02em; line-height: 1.15; margin: 0; }\n  p { margin: 0; }\n  a { color: inherit; text-decoration: none; }\n\n  .wrap { width: 100%; max-width: 1080px; margin: 0 auto; padding: 0 24px; }\n\n  /* ---------- Header ---------- */\n  header.site {\n    position: sticky; top: 0; z-index: 50;\n    background: rgba(14,17,22,.82);\n    backdrop-filter: saturate(180%) blur(12px);\n    border-bottom: 1px solid var(--line);\n  }\n  .nav { display: flex; align-items: center; justify-content: space-between; height: 64px; }\n  .brand { display: flex; align-items: center; gap: 10px; font-weight: 650; font-size: 16px; }\n  .brand .mark {\n    width: 28px; height: 28px; border-radius: 8px;\n    background: var(--accent); color: #fff;\n    display: grid; place-items: center; font-weight: 700; font-size: 15px;\n  }\n  .brand .tag {\n    font-size: 11px; font-weight: 600; color: var(--muted);\n    border: 1px solid var(--line-strong); border-radius: 999px;\n    padding: 2px 9px; margin-left: 4px; letter-spacing: .01em;\n  }\n  .nav-links { display: flex; align-items: center; gap: 28px; }\n  .nav-links a { font-size: 14px; color: var(--ink-soft); font-weight: 500; }\n  .nav-links a:hover { color: var(--ink); }\n\n  .btn {\n    display: inline-flex; align-items: center; justify-content: center; gap: 8px;\n    font-family: inherit; font-size: 14px; font-weight: 600; cursor: pointer;\n    border-radius: var(--radius-sm); padding: 10px 18px; border: 1px solid transparent;\n    transition: background .15s ease, border-color .15s ease, color .15s ease, transform .05s ease;\n  }\n  .btn:active { transform: translateY(1px); }\n  .btn-primary { background: var(--accent); color: #fff; }\n  .btn-primary:hover { background: var(--accent-hover); }\n  .btn-ghost { background: transparent; color: var(--ink); border-color: var(--line-strong); }\n  .btn-ghost:hover { background: var(--surface-2); }\n  .btn-block { width: 100%; padding: 12px 18px; }\n\n  /* ---------- Hero ---------- */\n  .hero { padding: 92px 0 64px; border-bottom: 1px solid var(--line); }\n  .hero .eyebrow {\n    display: inline-flex; align-items: center; gap: 8px;\n    font-size: 13px; font-weight: 600; color: var(--accent);\n    background: var(--accent-soft); border-radius: 999px; padding: 5px 13px;\n    margin-bottom: 22px;\n  }\n  .hero .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }\n  .hero h1 { font-size: 52px; max-width: 14ch; }\n  .hero p.lead { font-size: 18px; color: var(--ink-soft); max-width: 60ch; margin-top: 20px; }\n  .hero .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 32px; }\n\n  /* ---------- Stats ---------- */\n  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 56px; }\n  .stat {\n    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);\n    padding: 22px 24px;\n  }\n  .stat .num { font-size: 34px; font-weight: 700; letter-spacing: -0.03em; }\n  .stat .lbl { font-size: 13px; color: var(--muted); margin-top: 4px; font-weight: 500; }\n\n  /* ---------- Sections ---------- */\n  section.block { padding: 72px 0; border-bottom: 1px solid var(--line); }\n  .section-head { margin-bottom: 36px; }\n  .section-head .kicker { font-size: 13px; font-weight: 650; color: var(--accent); text-transform: uppercase; letter-spacing: .06em; }\n  .section-head h2 { font-size: 30px; margin-top: 10px; }\n  .section-head p { color: var(--ink-soft); font-size: 16px; margin-top: 10px; max-width: 60ch; }\n\n  /* sports chips */\n  .chips { display: flex; flex-wrap: wrap; gap: 10px; }\n  .chip {\n    font-size: 14px; font-weight: 550; color: var(--ink-soft);\n    background: var(--surface-2); border: 1px solid var(--line);\n    border-radius: 999px; padding: 9px 16px;\n  }\n  .chip:hover { border-color: var(--line-strong); color: var(--ink); }\n\n  /* events */\n  .events { display: grid; gap: 0; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }\n  .event { display: flex; align-items: center; gap: 18px; padding: 18px 22px; border-bottom: 1px solid var(--line); background: var(--surface); }\n  .event:last-child { border-bottom: 0; }\n  .event:hover { background: var(--surface-2); }\n  .event .name { font-weight: 600; font-size: 15px; flex: 1; }\n  .event .meta { font-size: 13px; color: var(--muted); white-space: nowrap; }\n  .event .cat {\n    font-size: 11px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase;\n    color: var(--ink-soft); background: var(--surface-3);\n    border-radius: 6px; padding: 4px 9px; white-space: nowrap;\n  }\n\n  /* pricing */\n  .pricing { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; max-width: 760px; }\n  .plan { border: 1px solid var(--line); border-radius: var(--radius); padding: 30px; background: var(--surface); position: relative; }\n  .plan.featured { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 8px 30px rgba(0,0,0,.35); }\n  .plan .badge {\n    position: absolute; top: 22px; right: 22px;\n    font-size: 11px; font-weight: 650; color: var(--accent);\n    background: var(--accent-soft); border-radius: 999px; padding: 4px 11px;\n  }\n  .plan .pname { font-size: 15px; font-weight: 650; color: var(--ink-soft); }\n  .plan .price { font-size: 42px; font-weight: 700; letter-spacing: -0.03em; margin-top: 10px; }\n  .plan .price span { font-size: 16px; font-weight: 500; color: var(--muted); }\n  .plan .pdesc { font-size: 14px; color: var(--ink-soft); margin-top: 14px; min-height: 42px; }\n  .plan .btn { margin-top: 22px; }\n\n  /* steps */\n  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }\n  .step { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 26px; }\n  .step .n { width: 30px; height: 30px; border-radius: 8px; background: var(--accent); color: #fff; display: grid; place-items: center; font-weight: 700; font-size: 14px; }\n  .step h3 { font-size: 16px; margin-top: 16px; }\n  .step p { font-size: 14px; color: var(--ink-soft); margin-top: 8px; }\n\n  /* ---------- Auth / forms ---------- */\n  .auth { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }\n  .card { border: 1px solid var(--line); border-radius: var(--radius); padding: 30px; background: var(--surface); }\n  .card h3 { font-size: 19px; }\n  .card .hint { font-size: 13.5px; color: var(--muted); margin-top: 8px; }\n  .field { margin-top: 16px; }\n  .field label { display: block; font-size: 13px; font-weight: 600; color: var(--ink-soft); margin-bottom: 6px; }\n  .field input {\n    width: 100%; font-family: inherit; font-size: 14.5px; color: var(--ink);\n    background: var(--surface); border: 1px solid var(--line-strong);\n    border-radius: var(--radius-sm); padding: 11px 13px; transition: border-color .15s ease, box-shadow .15s ease;\n  }\n  .field input::placeholder { color: #5f6a76; }\n  .field input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }\n  .field input.mono { font-family: var(--mono); letter-spacing: .02em; }\n\n  .trial {\n    border: 1px solid var(--line); border-radius: var(--radius); padding: 30px 32px;\n    background: var(--surface-2); display: flex; align-items: center; justify-content: space-between; gap: 28px; flex-wrap: wrap;\n  }\n  .trial .copy h3 { font-size: 20px; }\n  .trial .copy p { font-size: 14px; color: var(--ink-soft); margin-top: 8px; max-width: 46ch; }\n  .trial form { display: flex; gap: 10px; flex: 1; min-width: 280px; }\n  .trial form input { flex: 1; }\n\n  /* ---------- Footer ---------- */\n  footer.site { padding: 44px 0; }\n  .foot { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }\n  .foot .muted { font-size: 13px; color: var(--muted); }\n  .foot .links { display: flex; gap: 22px; }\n  .foot .links a { font-size: 13px; color: var(--ink-soft); }\n  .foot .links a:hover { color: var(--ink); }\n\n  @media (max-width: 820px) {\n    .nav-links { display: none; }\n    .hero { padding: 64px 0 48px; }\n    .hero h1 { font-size: 38px; }\n    .stats, .pricing, .steps, .auth { grid-template-columns: 1fr; }\n    .stats { margin-top: 40px; }\n  }\n</style>\n</head>\n<body>\n\n<header class=\"site\">\n  <div class=\"wrap nav\">\n    <div class=\"brand\">\n      <span class=\"mark\">N</span>\n      Nebula Sports\n      <span class=\"tag\">NebulaStreams addon</span>\n    </div>\n    <nav class=\"nav-links\">\n      <a href=\"#sports\">Sports</a>\n      <a href=\"#events\">Events</a>\n      <a href=\"#pricing\">Pricing</a>\n      <a href=\"#account\">Account</a>\n    </nav>\n    <a class=\"btn btn-primary\" href=\"#account\">Sign in</a>\n  </div>\n</header>\n\n<main>\n  <!-- HERO -->\n  <section class=\"hero\">\n    <div class=\"wrap\">\n      <span class=\"eyebrow\"><span class=\"dot\"></span> Private sports addon</span>\n      <h1>Live sports events for Stremio.</h1>\n      <p class=\"lead\">A private sports addon with clean catalogs, a small manifest, and username/password access. Built separately from the main NebulaStreams addon so sports catalogs stay fast on TV clients.</p>\n      <div class=\"actions\">\n        <a class=\"btn btn-primary\" href=\"#trial\">Start 24-hour free trial</a>\n        <a class=\"btn btn-ghost\" href=\"#pricing\">View pricing</a>\n      </div>\n\n      <div class=\"stats\">\n        <div class=\"stat\"><div class=\"num\">10</div><div class=\"lbl\">Sports accounts</div></div>\n        <div class=\"stat\"><div class=\"num\">6</div><div class=\"lbl\">Active now</div></div>\n        <div class=\"stat\"><div class=\"num\">18</div><div class=\"lbl\">Catalogs</div></div>\n      </div>\n    </div>\n  </section>\n\n  <!-- SPORTS -->\n  <section class=\"block\" id=\"sports\">\n    <div class=\"wrap\">\n      <div class=\"section-head\">\n        <div class=\"kicker\">Coverage</div>\n        <h2>Sports included</h2>\n        <p>Live, today, and popular catalogs, plus dedicated catalogs for every sport below.</p>\n      </div>\n      <div class=\"chips\">\n        <span class=\"chip\">FIFA World Cup</span>\n        <span class=\"chip\">Basketball</span>\n        <span class=\"chip\">Football</span>\n        <span class=\"chip\">American Football</span>\n        <span class=\"chip\">Hockey</span>\n        <span class=\"chip\">Baseball</span>\n        <span class=\"chip\">Motor Sports</span>\n        <span class=\"chip\">Fight (UFC, Boxing)</span>\n        <span class=\"chip\">Tennis</span>\n        <span class=\"chip\">Rugby</span>\n        <span class=\"chip\">Golf</span>\n        <span class=\"chip\">Billiards</span>\n        <span class=\"chip\">AFL</span>\n        <span class=\"chip\">Darts</span>\n      </div>\n    </div>\n  </section>\n\n  <!-- EVENTS -->\n  <section class=\"block\" id=\"events\">\n    <div class=\"wrap\">\n      <div class=\"section-head\">\n        <div class=\"kicker\">Live feed</div>\n        <h2>Trending events</h2>\n        <p>Preview updates pulled from current Streamed event data.</p>\n      </div>\n      <div class=\"events\">\n        <div class=\"event\"><span class=\"name\">FIFA World Cup 2026</span><span class=\"meta\">2026 tournament coverage</span><span class=\"cat\">Football</span></div>\n        <div class=\"event\"><span class=\"name\">Spring Nationals — North Georgia</span><span class=\"meta\">Jun 19, 2026 · 00:00 UTC</span><span class=\"cat\">Other</span></div>\n        <div class=\"event\"><span class=\"name\">betr Darwin Triple Crown — Race 17</span><span class=\"meta\">Jun 19, 2026 · 00:00 UTC</span><span class=\"cat\">Motor Sports</span></div>\n        <div class=\"event\"><span class=\"name\">Summer Nationals Late Models — Dubuque</span><span class=\"meta\">Jun 19, 2026 · 00:10 UTC</span><span class=\"cat\">Other</span></div>\n        <div class=\"event\"><span class=\"name\">NARC Super Dirt Cup — Skagit</span><span class=\"meta\">Jun 19, 2026 · 01:00 UTC</span><span class=\"cat\">Other</span></div>\n        <div class=\"event\"><span class=\"name\">MotoGP Czech Republic Grand Prix</span><span class=\"meta\">Jun 19, 2026 · 07:00 UTC</span><span class=\"cat\">Motor Sports</span></div>\n      </div>\n    </div>\n  </section>\n\n  <!-- PRICING -->\n  <section class=\"block\" id=\"pricing\">\n    <div class=\"wrap\">\n      <div class=\"section-head\">\n        <div class=\"kicker\">Pricing</div>\n        <h2>Simple, one-off pricing</h2>\n        <p>Pay through Ko-fi and include &ldquo;Nebula Sports&rdquo; in the note. Your access token is emailed automatically.</p>\n      </div>\n      <div class=\"pricing\">\n        <div class=\"plan\">\n          <div class=\"pname\">Monthly</div>\n          <div class=\"price\">$1<span> / month</span></div>\n          <p class=\"pdesc\">Access stays active while the subscription is running. Include &ldquo;Nebula Sports&rdquo; in your Ko-fi note.</p>\n          <a class=\"btn btn-ghost btn-block\" href=\"#account\">Choose monthly</a>\n        </div>\n        <div class=\"plan featured\">\n          <span class=\"badge\">Best value</span>\n          <div class=\"pname\">Lifetime</div>\n          <div class=\"price\">$3<span> / once</span></div>\n          <p class=\"pdesc\">One payment, permanent access. The webhook treats a $3 sports payment as lifetime access.</p>\n          <a class=\"btn btn-primary btn-block\" href=\"#account\">Get lifetime access</a>\n        </div>\n      </div>\n    </div>\n  </section>\n\n  <!-- HOW IT WORKS -->\n  <section class=\"block\" id=\"how\">\n    <div class=\"wrap\">\n      <div class=\"section-head\">\n        <div class=\"kicker\">Getting started</div>\n        <h2>How it works</h2>\n      </div>\n      <div class=\"steps\">\n        <div class=\"step\">\n          <div class=\"n\">1</div>\n          <h3>Pay on Ko-fi</h3>\n          <p>After payment, the Ko-fi webhook emails you a one-use secret token.</p>\n        </div>\n        <div class=\"step\">\n          <div class=\"n\">2</div>\n          <h3>Create your account</h3>\n          <p>Set a username and password here, then paste the token to verify.</p>\n        </div>\n        <div class=\"step\">\n          <div class=\"n\">3</div>\n          <h3>Install your manifest</h3>\n          <p>Add your private manifest to Stremio and start streaming live sports.</p>\n        </div>\n      </div>\n    </div>\n  </section>\n\n  <!-- TRIAL -->\n  <section class=\"block\" id=\"trial\">\n    <div class=\"wrap\">\n      <div class=\"trial\">\n        <div class=\"copy\">\n          <h3>Try free for 24 hours</h3>\n          <p>Enter your email. If eligible, a one-use trial token arrives by email. One trial per user.</p>\n        </div>\n        <form method=\"post\" action=\"/sports/trial\">\n          <input type=\"email\" name=\"email\" placeholder=\"you@email.com\" required />\n          <button class=\"btn btn-primary\" type=\"submit\">Get free trial</button>\n        </form>\n      </div>\n    </div>\n  </section>\n\n  <!-- ACCOUNT -->\n  <section class=\"block\" id=\"account\">\n    <div class=\"wrap\">\n      <div class=\"section-head\">\n        <div class=\"kicker\">Access</div>\n        <h2>Sign in or create your account</h2>\n      </div>\n      <div class=\"auth\">\n        <div class=\"card\">\n          <h3>Sign in</h3>\n          <p class=\"hint\">Use the username and password you created.</p>\n          <form method=\"post\" action=\"/sports/login\">\n            <div class=\"field\">\n              <label for=\"si-user\">Username</label>\n              <input id=\"si-user\" type=\"text\" name=\"username\" placeholder=\"username\" autocomplete=\"username\" required />\n            </div>\n            <div class=\"field\">\n              <label for=\"si-pass\">Password</label>\n              <input id=\"si-pass\" type=\"password\" name=\"password\" placeholder=\"••••••••\" autocomplete=\"current-password\" required />\n            </div>\n            <button class=\"btn btn-ghost btn-block\" style=\"margin-top:18px\" type=\"submit\">Sign in</button>\n          </form>\n        </div>\n\n        <div class=\"card\">\n          <h3>Create account</h3>\n          <p class=\"hint\">Use the one-use token from your Nebula Sports email.</p>\n          <form method=\"post\" action=\"/sports/register\">\n            <div class=\"field\">\n              <label for=\"ca-user\">Username</label>\n              <input id=\"ca-user\" type=\"text\" name=\"username\" placeholder=\"choose a username\" autocomplete=\"username\" required />\n            </div>\n            <div class=\"field\">\n              <label for=\"ca-pass\">Password</label>\n              <input id=\"ca-pass\" type=\"password\" name=\"password\" placeholder=\"choose a password\" autocomplete=\"new-password\" required />\n            </div>\n            <div class=\"field\">\n              <label for=\"ca-token\">Secret token</label>\n              <input id=\"ca-token\" class=\"mono\" type=\"text\" name=\"token\" placeholder=\"paste your one-use token\" required />\n            </div>\n            <button class=\"btn btn-primary btn-block\" style=\"margin-top:18px\" type=\"submit\">Create account</button>\n          </form>\n        </div>\n      </div>\n    </div>\n  </section>\n</main>\n\n<footer class=\"site\">\n  <div class=\"wrap foot\">\n    <span class=\"muted\">© 2026 Nebula Sports · A NebulaStreams addon</span>\n    <div class=\"links\">\n      <a href=\"#pricing\">Pricing</a>\n      <a href=\"#how\">How it works</a>\n      <a href=\"#account\">Sign in</a>\n    </div>\n  </div>\n</footer>\n\n</body>\n</html>\n";
+  let html = "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"UTF-8\" />\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n<title>Nebula Sports — Live sports for Stremio</title>\n<style>\n  :root {\n    --ink: #e7ebf0;\n    --ink-soft: #aeb7c2;\n    --muted: #7c8794;\n    --line: #232a33;\n    --line-strong: #333c47;\n    --surface: #0e1116;\n    --surface-2: #161b22;\n    --surface-3: #1d232c;\n    --accent: #1faa6e;\n    --accent-hover: #28b878;\n    --accent-soft: rgba(31,170,110,.15);\n    --radius: 12px;\n    --radius-sm: 9px;\n    --shadow: 0 1px 2px rgba(15,20,25,.04), 0 8px 24px rgba(15,20,25,.05);\n    --font: \"Inter\", -apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, Helvetica, Arial, sans-serif;\n    --mono: ui-monospace, SFMono-Regular, \"SF Mono\", Menlo, Consolas, monospace;\n  }\n\n  * { box-sizing: border-box; }\n  html { scroll-behavior: smooth; }\n  body {\n    margin: 0;\n    font-family: var(--font);\n    color: var(--ink);\n    background: var(--surface);\n    line-height: 1.55;\n    -webkit-font-smoothing: antialiased;\n    text-rendering: optimizeLegibility;\n  }\n  h1, h2, h3 { letter-spacing: -0.02em; line-height: 1.15; margin: 0; }\n  p { margin: 0; }\n  a { color: inherit; text-decoration: none; }\n\n  .wrap { width: 100%; max-width: 1080px; margin: 0 auto; padding: 0 24px; }\n\n  /* ---------- Header ---------- */\n  header.site {\n    position: sticky; top: 0; z-index: 50;\n    background: rgba(14,17,22,.82);\n    backdrop-filter: saturate(180%) blur(12px);\n    border-bottom: 1px solid var(--line);\n  }\n  .nav { display: flex; align-items: center; justify-content: space-between; height: 64px; }\n  .brand { display: flex; align-items: center; gap: 10px; font-weight: 650; font-size: 16px; }\n  .brand .mark {\n    width: 30px; height: 30px; border-radius: 9px;\n    display: grid; place-items: center; overflow: hidden;\n    background: #0b0f14; border: 1px solid var(--line-strong);\n  }\n  .brand .mark img { width: 100%; height: 100%; object-fit: cover; display: block; }\n  .brand .tag {\n    font-size: 11px; font-weight: 600; color: var(--muted);\n    border: 1px solid var(--line-strong); border-radius: 999px;\n    padding: 2px 9px; margin-left: 4px; letter-spacing: .01em;\n  }\n  .nav-links { display: flex; align-items: center; gap: 28px; }\n  .nav-links a { font-size: 14px; color: var(--ink-soft); font-weight: 500; }\n  .nav-links a:hover { color: var(--ink); }\n\n  .btn {\n    display: inline-flex; align-items: center; justify-content: center; gap: 8px;\n    font-family: inherit; font-size: 14px; font-weight: 600; cursor: pointer;\n    border-radius: var(--radius-sm); padding: 10px 18px; border: 1px solid transparent;\n    transition: background .15s ease, border-color .15s ease, color .15s ease, transform .05s ease;\n  }\n  .btn:active { transform: translateY(1px); }\n  .btn-primary { background: var(--accent); color: #fff; }\n  .btn-primary:hover { background: var(--accent-hover); }\n  .btn-ghost { background: transparent; color: var(--ink); border-color: var(--line-strong); }\n  .btn-ghost:hover { background: var(--surface-2); }\n  .btn-block { width: 100%; padding: 12px 18px; }\n\n  /* ---------- Hero ---------- */\n  .hero { padding: 92px 0 64px; border-bottom: 1px solid var(--line); }\n  .hero .eyebrow {\n    display: inline-flex; align-items: center; gap: 8px;\n    font-size: 13px; font-weight: 600; color: var(--accent);\n    background: var(--accent-soft); border-radius: 999px; padding: 5px 13px;\n    margin-bottom: 22px;\n  }\n  .hero .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }\n  .hero h1 { font-size: 52px; max-width: 14ch; }\n  .hero p.lead { font-size: 18px; color: var(--ink-soft); max-width: 60ch; margin-top: 20px; }\n  .hero .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 32px; }\n\n  /* ---------- Stats ---------- */\n  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 56px; }\n  .stat {\n    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);\n    padding: 22px 24px;\n  }\n  .stat .num { font-size: 34px; font-weight: 700; letter-spacing: -0.03em; }\n  .stat .lbl { font-size: 13px; color: var(--muted); margin-top: 4px; font-weight: 500; }\n\n  /* ---------- Sections ---------- */\n  section.block { padding: 72px 0; border-bottom: 1px solid var(--line); }\n  .section-head { margin-bottom: 36px; }\n  .section-head .kicker { font-size: 13px; font-weight: 650; color: var(--accent); text-transform: uppercase; letter-spacing: .06em; }\n  .section-head h2 { font-size: 30px; margin-top: 10px; }\n  .section-head p { color: var(--ink-soft); font-size: 16px; margin-top: 10px; max-width: 60ch; }\n\n  /* sports chips */\n  .chips { display: flex; flex-wrap: wrap; gap: 10px; }\n  .chip {\n    font-size: 14px; font-weight: 550; color: var(--ink-soft);\n    background: var(--surface-2); border: 1px solid var(--line);\n    border-radius: 999px; padding: 9px 16px;\n  }\n  .chip:hover { border-color: var(--line-strong); color: var(--ink); }\n\n  /* events */\n  .events { display: grid; gap: 0; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }\n  .event { display: flex; align-items: center; gap: 18px; padding: 18px 22px; border-bottom: 1px solid var(--line); background: var(--surface); }\n  .event:last-child { border-bottom: 0; }\n  .event:hover { background: var(--surface-2); }\n  .event .name { font-weight: 600; font-size: 15px; flex: 1; }\n  .event .meta { font-size: 13px; color: var(--muted); white-space: nowrap; }\n  .event .cat {\n    font-size: 11px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase;\n    color: var(--ink-soft); background: var(--surface-3);\n    border-radius: 6px; padding: 4px 9px; white-space: nowrap;\n  }\n\n  /* pricing */\n  .pricing { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; max-width: 760px; }\n  .plan { border: 1px solid var(--line); border-radius: var(--radius); padding: 30px; background: var(--surface); position: relative; }\n  .plan.featured { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 8px 30px rgba(0,0,0,.35); }\n  .plan .badge {\n    position: absolute; top: 22px; right: 22px;\n    font-size: 11px; font-weight: 650; color: var(--accent);\n    background: var(--accent-soft); border-radius: 999px; padding: 4px 11px;\n  }\n  .plan .pname { font-size: 15px; font-weight: 650; color: var(--ink-soft); }\n  .plan .price { font-size: 42px; font-weight: 700; letter-spacing: -0.03em; margin-top: 10px; }\n  .plan .price span { font-size: 16px; font-weight: 500; color: var(--muted); }\n  .plan .pdesc { font-size: 14px; color: var(--ink-soft); margin-top: 14px; min-height: 42px; }\n  .plan .btn { margin-top: 22px; }\n\n  /* steps */\n  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }\n  .step { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 26px; }\n  .step .n { width: 30px; height: 30px; border-radius: 8px; background: var(--accent); color: #fff; display: grid; place-items: center; font-weight: 700; font-size: 14px; }\n  .step h3 { font-size: 16px; margin-top: 16px; }\n  .step p { font-size: 14px; color: var(--ink-soft); margin-top: 8px; }\n\n  /* ---------- Auth / forms ---------- */\n  .auth { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }\n  .card { border: 1px solid var(--line); border-radius: var(--radius); padding: 30px; background: var(--surface); }\n  .card h3 { font-size: 19px; }\n  .card .hint { font-size: 13.5px; color: var(--muted); margin-top: 8px; }\n  .field { margin-top: 16px; }\n  .field label { display: block; font-size: 13px; font-weight: 600; color: var(--ink-soft); margin-bottom: 6px; }\n  .field input {\n    width: 100%; font-family: inherit; font-size: 14.5px; color: var(--ink);\n    background: var(--surface); border: 1px solid var(--line-strong);\n    border-radius: var(--radius-sm); padding: 11px 13px; transition: border-color .15s ease, box-shadow .15s ease;\n  }\n  .field input::placeholder { color: #5f6a76; }\n  .field input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }\n  .field input.mono { font-family: var(--mono); letter-spacing: .02em; }\n\n  .trial {\n    border: 1px solid var(--line); border-radius: var(--radius); padding: 30px 32px;\n    background: var(--surface-2); display: flex; align-items: center; justify-content: space-between; gap: 28px; flex-wrap: wrap;\n  }\n  .trial .copy h3 { font-size: 20px; }\n  .trial .copy p { font-size: 14px; color: var(--ink-soft); margin-top: 8px; max-width: 46ch; }\n  .trial form { display: flex; gap: 10px; flex: 1; min-width: 280px; }\n  .trial form input { flex: 1; }\n\n  /* ---------- Footer ---------- */\n  footer.site { padding: 44px 0; }\n  .foot { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }\n  .foot .muted { font-size: 13px; color: var(--muted); }\n  .foot .links { display: flex; gap: 22px; }\n  .foot .links a { font-size: 13px; color: var(--ink-soft); }\n  .foot .links a:hover { color: var(--ink); }\n\n  @media (max-width: 820px) {\n    .nav-links { display: none; }\n    .hero { padding: 64px 0 48px; }\n    .hero h1 { font-size: 38px; }\n    .stats, .pricing, .steps, .auth { grid-template-columns: 1fr; }\n    .stats { margin-top: 40px; }\n  }\n</style>\n</head>\n<body>\n\n<header class=\"site\">\n  <div class=\"wrap nav\">\n    <div class=\"brand\">\n      <span class=\"mark\"><img src=\"/assets/nebula-sports-logo.png\" alt=\"\"></span>\n      Nebula Sports\n      <span class=\"tag\">NebulaStreams addon</span>\n    </div>\n    <nav class=\"nav-links\">\n      <a href=\"#sports\">Sports</a>\n      <a href=\"#events\">Events</a>\n      <a href=\"#pricing\">Pricing</a>\n      <a href=\"#account\">Account</a>\n    </nav>\n    <a class=\"btn btn-primary\" href=\"#account\">Sign in</a>\n  </div>\n</header>\n\n<main>\n  <!-- HERO -->\n  <section class=\"hero\">\n    <div class=\"wrap\">\n      <span class=\"eyebrow\"><span class=\"dot\"></span> Private sports addon</span>\n      <h1>Live sports events for Stremio.</h1>\n      <p class=\"lead\">A private sports addon with clean catalogs, a small manifest, and username/password access. Built separately from the main NebulaStreams addon so sports catalogs stay fast on TV clients.</p>\n      <div class=\"actions\">\n        <a class=\"btn btn-primary\" href=\"#trial\">Start 24-hour free trial</a>\n        <a class=\"btn btn-ghost\" href=\"#pricing\">View pricing</a>\n      </div>\n\n      <div class=\"stats\">\n        <div class=\"stat\"><div class=\"num\">10</div><div class=\"lbl\">Sports accounts</div></div>\n        <div class=\"stat\"><div class=\"num\">6</div><div class=\"lbl\">Active now</div></div>\n        <div class=\"stat\"><div class=\"num\">18</div><div class=\"lbl\">Catalogs</div></div>\n      </div>\n    </div>\n  </section>\n\n  <!-- SPORTS -->\n  <section class=\"block\" id=\"sports\">\n    <div class=\"wrap\">\n      <div class=\"section-head\">\n        <div class=\"kicker\">Coverage</div>\n        <h2>Sports included</h2>\n        <p>Live, today, and popular catalogs, plus dedicated catalogs for every sport below.</p>\n      </div>\n      <div class=\"chips\">\n        <span class=\"chip\">FIFA World Cup</span>\n        <span class=\"chip\">Basketball</span>\n        <span class=\"chip\">Football</span>\n        <span class=\"chip\">American Football</span>\n        <span class=\"chip\">Hockey</span>\n        <span class=\"chip\">Baseball</span>\n        <span class=\"chip\">Motor Sports</span>\n        <span class=\"chip\">Fight (UFC, Boxing)</span>\n        <span class=\"chip\">Tennis</span>\n        <span class=\"chip\">Rugby</span>\n        <span class=\"chip\">Golf</span>\n        <span class=\"chip\">Billiards</span>\n        <span class=\"chip\">AFL</span>\n        <span class=\"chip\">Darts</span>\n      </div>\n    </div>\n  </section>\n\n  <!-- EVENTS -->\n  <section class=\"block\" id=\"events\">\n    <div class=\"wrap\">\n      <div class=\"section-head\">\n        <div class=\"kicker\">Live feed</div>\n        <h2>Trending events</h2>\n        <p>Preview updates pulled from current Streamed event data.</p>\n      </div>\n      <div class=\"events\">\n        <div class=\"event\"><span class=\"name\">FIFA World Cup 2026</span><span class=\"meta\">2026 tournament coverage</span><span class=\"cat\">Football</span></div>\n        <div class=\"event\"><span class=\"name\">Spring Nationals — North Georgia</span><span class=\"meta\">Jun 19, 2026 · 00:00 UTC</span><span class=\"cat\">Other</span></div>\n        <div class=\"event\"><span class=\"name\">betr Darwin Triple Crown — Race 17</span><span class=\"meta\">Jun 19, 2026 · 00:00 UTC</span><span class=\"cat\">Motor Sports</span></div>\n        <div class=\"event\"><span class=\"name\">Summer Nationals Late Models — Dubuque</span><span class=\"meta\">Jun 19, 2026 · 00:10 UTC</span><span class=\"cat\">Other</span></div>\n        <div class=\"event\"><span class=\"name\">NARC Super Dirt Cup — Skagit</span><span class=\"meta\">Jun 19, 2026 · 01:00 UTC</span><span class=\"cat\">Other</span></div>\n        <div class=\"event\"><span class=\"name\">MotoGP Czech Republic Grand Prix</span><span class=\"meta\">Jun 19, 2026 · 07:00 UTC</span><span class=\"cat\">Motor Sports</span></div>\n      </div>\n    </div>\n  </section>\n\n  <!-- PRICING -->\n  <section class=\"block\" id=\"pricing\">\n    <div class=\"wrap\">\n      <div class=\"section-head\">\n        <div class=\"kicker\">Pricing</div>\n        <h2>Simple, one-off pricing</h2>\n        <p>Pay through Ko-fi and include &ldquo;Nebula Sports&rdquo; in the note. Your access token is emailed automatically.</p>\n      </div>\n      <div class=\"pricing\">\n        <div class=\"plan\">\n          <div class=\"pname\">Monthly</div>\n          <div class=\"price\">$1<span> / month</span></div>\n          <p class=\"pdesc\">Access stays active while the subscription is running. Include &ldquo;Nebula Sports&rdquo; in your Ko-fi note.</p>\n          <a class=\"btn btn-ghost btn-block\" href=\"#account\">Choose monthly</a>\n        </div>\n        <div class=\"plan featured\">\n          <span class=\"badge\">Best value</span>\n          <div class=\"pname\">Lifetime</div>\n          <div class=\"price\">$3<span> / once</span></div>\n          <p class=\"pdesc\">One payment, permanent access. The webhook treats a $3 sports payment as lifetime access.</p>\n          <a class=\"btn btn-primary btn-block\" href=\"#account\">Get lifetime access</a>\n        </div>\n      </div>\n    </div>\n  </section>\n\n  <!-- HOW IT WORKS -->\n  <section class=\"block\" id=\"how\">\n    <div class=\"wrap\">\n      <div class=\"section-head\">\n        <div class=\"kicker\">Getting started</div>\n        <h2>How it works</h2>\n      </div>\n      <div class=\"steps\">\n        <div class=\"step\">\n          <div class=\"n\">1</div>\n          <h3>Pay on Ko-fi</h3>\n          <p>After payment, the Ko-fi webhook emails you a one-use secret token.</p>\n        </div>\n        <div class=\"step\">\n          <div class=\"n\">2</div>\n          <h3>Create your account</h3>\n          <p>Set a username and password here, then paste the token to verify.</p>\n        </div>\n        <div class=\"step\">\n          <div class=\"n\">3</div>\n          <h3>Install your manifest</h3>\n          <p>Add your private manifest to Stremio and start streaming live sports.</p>\n        </div>\n      </div>\n    </div>\n  </section>\n\n  <!-- TRIAL -->\n  <section class=\"block\" id=\"trial\">\n    <div class=\"wrap\">\n      <div class=\"trial\">\n        <div class=\"copy\">\n          <h3>Try free for 24 hours</h3>\n          <p>Enter your email. If eligible, a one-use trial token arrives by email. One trial per user.</p>\n        </div>\n        <form method=\"post\" action=\"/sports/trial\">\n          <input type=\"email\" name=\"email\" placeholder=\"you@email.com\" required />\n          <button class=\"btn btn-primary\" type=\"submit\">Get free trial</button>\n        </form>\n      </div>\n    </div>\n  </section>\n\n  <!-- ACCOUNT -->\n  <section class=\"block\" id=\"account\">\n    <div class=\"wrap\">\n      <div class=\"section-head\">\n        <div class=\"kicker\">Access</div>\n        <h2>Sign in or create your account</h2>\n      </div>\n      <div class=\"auth\">\n        <div class=\"card\">\n          <h3>Sign in</h3>\n          <p class=\"hint\">Use the username and password you created.</p>\n          <form method=\"post\" action=\"/sports/login\">\n            <div class=\"field\">\n              <label for=\"si-user\">Username</label>\n              <input id=\"si-user\" type=\"text\" name=\"username\" placeholder=\"username\" autocomplete=\"username\" required />\n            </div>\n            <div class=\"field\">\n              <label for=\"si-pass\">Password</label>\n              <input id=\"si-pass\" type=\"password\" name=\"password\" placeholder=\"••••••••\" autocomplete=\"current-password\" required />\n            </div>\n            <button class=\"btn btn-ghost btn-block\" style=\"margin-top:18px\" type=\"submit\">Sign in</button>\n          </form>\n        </div>\n\n        <div class=\"card\">\n          <h3>Create account</h3>\n          <p class=\"hint\">Use the one-use token from your Nebula Sports email.</p>\n          <form method=\"post\" action=\"/sports/register\">\n            <div class=\"field\">\n              <label for=\"ca-user\">Username</label>\n              <input id=\"ca-user\" type=\"text\" name=\"username\" placeholder=\"choose a username\" autocomplete=\"username\" required />\n            </div>\n            <div class=\"field\">\n              <label for=\"ca-pass\">Password</label>\n              <input id=\"ca-pass\" type=\"password\" name=\"password\" placeholder=\"choose a password\" autocomplete=\"new-password\" required />\n            </div>\n            <div class=\"field\">\n              <label for=\"ca-token\">Secret token</label>\n              <input id=\"ca-token\" class=\"mono\" type=\"text\" name=\"token\" placeholder=\"paste your one-use token\" required />\n            </div>\n            <button class=\"btn btn-primary btn-block\" style=\"margin-top:18px\" type=\"submit\">Create account</button>\n          </form>\n        </div>\n      </div>\n    </div>\n  </section>\n</main>\n\n<footer class=\"site\">\n  <div class=\"wrap foot\">\n    <span class=\"muted\">© 2026 Nebula Sports · A NebulaStreams addon</span>\n    <div class=\"links\">\n      <a href=\"#pricing\">Pricing</a>\n      <a href=\"#how\">How it works</a>\n      <a href=\"#account\">Sign in</a>\n    </div>\n  </div>\n</footer>\n\n</body>\n</html>\n";
 
   html = html
     .replace('.pricing { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; max-width: 760px; }', '.pricing { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; max-width: 1080px; }')
@@ -3707,6 +3842,8 @@ const isBotProtectionIgnoredPath = (pathName) =>
   || pathName === '/watch-together/api/live-count'
   || pathName === '/webhooks/kofi'
   || pathName === '/webhooks/ko-fi'
+  || pathName === '/webhooks/lemon-squeezy'
+  || pathName === '/webhooks/lemonsqueezy'
   || pathName === '/webhooks/smtp2go'
   || pathName.startsWith('/admin')
   || pathName.startsWith('/assets/')
@@ -4395,7 +4532,14 @@ const bootstrap = async () => {
     userTracker.trackRequest(req);
     next();
   });
-  app.use(express.json({ limit: '32kb' }));
+  app.use(express.json({
+    limit: '32kb',
+    verify: (req, _res, buffer) => {
+      if (req.path === '/webhooks/lemon-squeezy' || req.path === '/webhooks/lemonsqueezy') {
+        req.rawBody = Buffer.from(buffer);
+      }
+    }
+  }));
   app.use(express.urlencoded({ extended: false, limit: '8kb' }));
   app.use('/assets', express.static('assets', {
     maxAge: '7d',
@@ -5240,7 +5384,7 @@ const bootstrap = async () => {
       const isChannelCatalogRequest = requestedCatalogId === DLHD_CHANNEL_CATALOG_ID;
       const catalogCacheKey = getSportsCatalogResponseCacheKey(req, account, sportsConfig);
       const cachedCatalogResponse = sportsCatalogResponseCache.get(catalogCacheKey);
-      const cacheControl = isChannelCatalogRequest ? 'private, max-age=21600' : 'private, max-age=120';
+      const cacheControl = 'private, max-age=120';
       if (cachedCatalogResponse?.expiresAt > Date.now()) {
         sportsRouteMetrics.cacheStats.catalog.hits += 1;
         void sportsSupporterService.increment(account.id, 'catalogs', 1).catch((error) => {
@@ -5467,7 +5611,7 @@ const bootstrap = async () => {
   const SPORTS_STREAM_EMPTY_TTL_MS = 4_000;
   const SPORTS_CATALOG_RESPONSE_CACHE_MAX = 300;
   const SPORTS_CATALOG_RESPONSE_TTL_MS = 120_000;
-  const SPORTS_CHANNEL_CATALOG_RESPONSE_TTL_MS = 6 * 60 * 60 * 1000;
+  const SPORTS_CHANNEL_CATALOG_RESPONSE_TTL_MS = 2 * 60 * 1000;
   const SPORTS_ROUTE_METRIC_MAX = 500;
   const SPORTS_ROUTE_ERROR_MAX = 25;
   const SPORTS_LIVE_PREWARM_INTERVAL_MS = 25_000;
@@ -7444,6 +7588,99 @@ render();
       res.status(200).json({ ok: true, ...result });
     } catch (error) {
       logger.error('smtp2go webhook failed', { error });
+      next(error);
+    }
+  });
+
+  app.post(['/webhooks/lemon-squeezy', '/webhooks/lemonsqueezy'], async (req, res, next) => {
+    let transactionId = '';
+    try {
+      if (!config.LEMON_SQUEEZY_WEBHOOK_SECRET) {
+        res.status(503).json({ ok: false, error: 'Lemon Squeezy webhook not configured' });
+        return;
+      }
+
+      const payload = req.body || {};
+      if (!verifyLemonSqueezySignature(req.rawBody || Buffer.from(JSON.stringify(payload)), req.get('x-signature'), config.LEMON_SQUEEZY_WEBHOOK_SECRET)) {
+        res.status(401).json({ ok: false, error: 'Invalid Lemon Squeezy signature' });
+        return;
+      }
+
+      const eventName = getLemonSqueezyEventName(payload, req);
+      transactionId = getLemonSqueezyTransactionId(payload);
+      if (!transactionId) {
+        res.status(400).json({ ok: false, error: 'Missing Lemon Squeezy transaction id' });
+        return;
+      }
+
+      if (!shouldFulfillLemonSqueezyEvent(eventName)) {
+        res.status(200).json({ ok: true, ignored: true, event: eventName || 'unknown' });
+        return;
+      }
+
+      const email = getLemonSqueezyEmail(payload);
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(email)) {
+        res.status(400).json({ ok: false, error: 'Missing supporter email' });
+        return;
+      }
+
+      if (!emailService.isConfigured()) {
+        res.status(503).json({ ok: false, error: 'Sports email not configured' });
+        return;
+      }
+
+      if (sportsSupporterService.hasPayment(transactionId)) {
+        res.status(200).json({ ok: true, duplicate: true, product: 'sports' });
+        return;
+      }
+
+      const sportsTier = getLemonSqueezySportsTier(payload);
+      const created = await sportsSupporterService.createToken({
+        label: getLemonSqueezyName(payload) || email,
+        email,
+        tier: sportsTier,
+        months: sportsTier === 'lifetime' || sportsTier === 'premium-future'
+          ? 36
+          : config.KOFI_SUPPORTER_CODE_MONTHS
+      });
+
+      try {
+        await emailService.sendSportsToken({
+          to: email,
+          name: getLemonSqueezyName(payload),
+          code: created.code,
+          expiresAt: created.expiresAt,
+          baseUrl: getPublicBaseUrl(req),
+          tier: sportsTier
+        });
+      } catch (error) {
+        await sportsSupporterService.revokeToken(created.hash);
+        throw error;
+      }
+
+      await sportsSupporterService.recordPayment({
+        transactionId,
+        email,
+        amount: String(getLemonSqueezyAmount(payload) || ''),
+        currency: getLemonSqueezyCurrency(payload),
+        paymentType: `Lemon Squeezy ${eventName || 'payment'}`,
+        tokenHash: created.hash,
+        emailSentAt: new Date().toISOString()
+      });
+
+      logger.info('lemon squeezy sports token sent', {
+        transactionId,
+        emailMasked: maskEmailAddress(email),
+        eventName,
+        sportsTier,
+        variantId: getLemonSqueezyVariantId(payload)
+      });
+      res.status(200).json({ ok: true, product: 'sports' });
+    } catch (error) {
+      logger.error('lemon squeezy webhook failed', {
+        error,
+        transactionId
+      });
       next(error);
     }
   });
