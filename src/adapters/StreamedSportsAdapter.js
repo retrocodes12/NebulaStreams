@@ -3280,11 +3280,7 @@ export class StreamedSportsAdapter {
       }
       if (normalizeIdPart(source.source) === 'sportzx') {
         if (!this.sportzXStreamSource) return [];
-        const streams = (await this.sportzXStreamSource.getChannelStreams(source.id, signal))
-          .map((stream) => {
-            const directHlsUrl = extractDirectHlsUrl(stream.embedUrl);
-            return directHlsUrl ? { ...stream, directHlsUrl } : stream;
-          });
+        const streams = await this.sportzXStreamSource.getChannelStreams(source.id, signal);
         this.streamCache.set(key, {
           value: streams,
           expiresAt: Date.now() + CACHE_TTL_MS
@@ -5353,7 +5349,7 @@ export class StreamedSportsAdapter {
     const cards = displayStreams.map((stream) => {
         const hls = playableHlsByKey.get(`${stream.source}:${stream.id}:${stream.streamNo || 1}`);
         const privateUrl = this.getPrivateStreamUrl(stream, { baseUrl, privateConfigId });
-        const directPlaybackUrl = hls?.directPlayback ? hls.url : '';
+        const directPlaybackUrl = '';
         const playbackUrl = directPlaybackUrl || (privateUrl && hls?.url
           ? (hls.resolveOnPlayback
             ? privateUrl
@@ -5368,15 +5364,22 @@ export class StreamedSportsAdapter {
           name: sourceLabel ? `NebulaStreams ${sourceLabel}` : 'NebulaStreams Streamed',
           title: this.buildPlaybackCardTitle(stream, hls),
           url: playbackUrl,
-          behaviorHints: {
-            bingeGroup: `streamed-${match.normalizedTitle}`,
-            ...(directPlaybackUrl
-              ? {
-                notWebReady: false,
-                ...(hls.headers ? { proxyHeaders: { request: hls.headers } } : {})
-              }
-              : {})
-          }
+	          behaviorHints: {
+	            bingeGroup: `streamed-${match.normalizedTitle}`,
+	            ...(directPlaybackUrl
+	              ? {
+	                notWebReady: false,
+	                proxyHeaders: {
+	                  request: {
+	                    Accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,text/plain,*/*',
+	                    Origin: CDNLIVETV_ORIGIN,
+	                    Referer: hls.contextUrl || stream.contextUrl || stream.embedUrl || `${CDNLIVETV_ORIGIN}/`,
+	                    'User-Agent': BROWSER_USER_AGENT
+	                  }
+	                }
+	              }
+	              : {})
+	          }
 	        };
 	      }).filter(Boolean);
     const externalCards = await externalCardsPromise;
@@ -5463,7 +5466,7 @@ export class StreamedSportsAdapter {
   }
 
   getTrustedDirectHlsResults(streams = [], existingKeys = new Set()) {
-    const trustedSources = new Set([FLIX_DLSTREAMS_SOURCE, CDNLIVETV_SOURCE, SPORTSBITE_SOURCE, STREAMFREE_SOURCE, REXDEX_SOURCE, 'sportzx']);
+    const trustedSources = new Set([FLIX_DLSTREAMS_SOURCE, CDNLIVETV_SOURCE, SPORTSBITE_SOURCE, STREAMFREE_SOURCE, REXDEX_SOURCE]);
     const sourceCounts = new Map();
     const results = [];
     for (const stream of streams) {
@@ -5483,7 +5486,6 @@ export class StreamedSportsAdapter {
           url: stream.directHlsUrl,
           contextUrl: stream.contextUrl || stream.embedUrl,
           headers: stream.headers || this.getBrowserFetchHeaders(),
-          directPlayback: sourceKey === 'sportzx',
           resolveOnPlayback: this.shouldResolveDirectHlsOnPlayback(stream.source),
           playbackProfile: stream.playbackProfile || this.inferStreamPlaybackProfile(stream)
         }
